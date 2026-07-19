@@ -137,6 +137,10 @@ static void
 cdrom_generate_name(const int type, char *name, const int internal)
 {
     char  elements[3][512] = { 0 };
+    const char *model = cdrom_drive_types[type].model;
+
+    if (!internal)
+        model = cdrom_get_display_model(type);
 
     memcpy(elements[0], cdrom_drive_types[type].vendor,
            strlen(cdrom_drive_types[type].vendor) + 1);
@@ -146,12 +150,11 @@ cdrom_generate_name(const int type, char *name, const int internal)
 
     if (internal) {
         int j = 0;
-        for (int i = 0; i <= strlen(cdrom_drive_types[type].model); i++)
-            if (cdrom_drive_types[type].model[i] != ':')
-                elements[1][j++] = cdrom_drive_types[type].model[i];
+        for (int i = 0; i <= strlen(model); i++)
+            if (model[i] != ':')
+                elements[1][j++] = model[i];
     } else
-        memcpy(elements[1], cdrom_drive_types[type].model,
-               strlen(cdrom_drive_types[type].model) + 1);
+        memcpy(elements[1], model, strlen(model) + 1);
     char *s = strstr(elements[1], "  ");
     if (s != NULL)
         s[0] = 0x00;
@@ -1237,6 +1240,17 @@ cdrom_get_model(const int type, char *name, const int id)
         sprintf(name, "%s", cdrom_drive_types[type].model);
 }
 
+const char *
+cdrom_get_display_model(const int type)
+{
+    const char *display_model = cdrom_drive_types[type].display_model;
+
+    if ((display_model == NULL) || (display_model[0] == '\0'))
+        return cdrom_drive_types[type].model;
+
+    return display_model;
+}
+
 char *
 cdrom_get_revision(const int type)
 {
@@ -1277,6 +1291,12 @@ int
 cdrom_get_speed(const int type)
 {
     return cdrom_drive_types[type].speed;
+}
+
+int
+cdrom_get_cache_size(const int type)
+{
+    return cdrom_drive_types[type].cache_size;
 }
 
 int
@@ -3192,10 +3212,14 @@ cdrom_hard_reset(void)
             dev->id       = i;
 
             const char *vendor = cdrom_drive_types[dev->type].vendor;
+            const char *model  = cdrom_drive_types[dev->type].model;
 
             dev->is_early   = cdrom_is_early(dev->type);
+            /* Retain legacy BCD handling for existing NEC ATAPI profiles;
+               DRIVE:284 is a normal later ATAPI drive. */
             dev->is_bcd     = (dev->bus_type == CDROM_BUS_ATAPI) &&
-                              !strcmp(vendor, "NEC");
+                              !strcmp(vendor, "NEC") &&
+                              strcmp(model, "CD-ROM DRIVE:284");
             dev->is_nec     = (dev->bus_type == CDROM_BUS_SCSI) &&
                               !strcmp(vendor, "NEC");
             dev->is_chinon  = !strcmp(vendor, "CHINON");

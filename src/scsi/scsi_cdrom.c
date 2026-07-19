@@ -524,6 +524,12 @@ scsi_cdrom_mode_sense(const scsi_cdrom_t *dev, uint8_t *buf, uint32_t pos,
                                 buf[pos++] = ((dev->drv->real_speed * 176) & 0xff);
                             else
                                 buf[pos++] = ((dev->drv->real_speed * 176) >> 8);
+                        } else if ((i == GPMODE_CAPABILITIES_PAGE) && (j >= 10) &&
+                                   (j <= 11)) {
+                            if (j & 1)
+                                buf[pos++] = (cdrom_get_cache_size(dev->drv->type) & 0xff);
+                            else
+                                buf[pos++] = (cdrom_get_cache_size(dev->drv->type) >> 8);
                         } else if ((i == GPMODE_CAPABILITIES_PAGE) && (j >= 12) &&
                                    (j <= 13)) {
                             if (j & 1)
