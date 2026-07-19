@@ -33,6 +33,10 @@
  * Aztech Sound Galaxy Clinton 16
  * ...and other OEM names
  *
+ * TYPE 0x12:
+ * Aztech Sound Galaxy Pro 16 II
+ * Packard Bell Sound II (sound function of the sound/modem card)
+ *
  * Also works more or less for drivers of other models with the same chipsets.
  *
  * Copyright (c) 2020 Eluan Costa Miranda <eluancm@gmail.com> All rights reserved.
@@ -2451,6 +2455,21 @@ const device_t azt2316r_device = {
     .speed_changed = azt_speed_changed,
     .force_redraw  = NULL,
     .alias         = "AZT2316R",
+    .config        = azt2316r_config
+};
+
+const device_t pb_sound2_device = {
+    .name          = "Packard Bell Sound II",
+    .internal_name = "pb_sound2",
+    .flags         = DEVICE_ISA16,
+    .local         = SB_SUBTYPE_CLONE_AZT2316R_0X12,
+    .init          = azt_init,
+    .close         = azt_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = azt_speed_changed,
+    .force_redraw  = NULL,
+    .alias         = "Aztech AZT2316/AZT2316R",
     .config        = azt2316r_config
 };
 
