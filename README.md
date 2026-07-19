@@ -1,13 +1,5 @@
-(We need help in developing this emulator! See https://github.com/86Box/86Box/issues/7386 for details. Any and all help is appreciated.)
-
-86Box
+86GPTBox
 =====
-
-[![Build Status](https://ci.86box.net/job/86Box/badge/icon)](https://ci.86box.net/job/86Box/)
-[![License](https://img.shields.io/github/license/86Box/86Box)](COPYING)
-[![Latest release](https://img.shields.io/github/release/86Box/86Box.svg)](https://github.com/86Box/86Box/releases)
-[![Downloads](https://img.shields.io/github/downloads/86Box/86Box/total.svg)](https://github.com/86Box/86Box/releases)
-[![Translation status](https://weblate.86box.net/widget/86box/86box/language-badge.svg)](https://weblate.86box.net/engage/86box/)
 
 **86Box** is a low level x86 emulator that runs older operating systems and software designed for IBM PC systems and compatibles from 1981 through fairly recent system designs based on the PCI bus.
 
@@ -49,23 +41,6 @@ Getting started
 
 See [our documentation](https://86box.readthedocs.io/en/latest/index.html) for an overview of the emulator's features and user interface.
 
-Community
----------
-
-We operate an IRC channel and a Discord server for discussing 86Box, its development, and anything related to retro computing. We look forward to hearing from you!
-
-[![Visit our IRC channel](https://kiwiirc.com/buttons/irc.ringoflightning.net/86Box.png)](https://kiwiirc.com/client/irc.ringoflightning.net/?nick=86box|?#86Box)
-
-[![Visit our Discord server](https://discordapp.com/api/guilds/262614059009048590/embed.png)](https://discord.gg/QXK9XTv)
-
-[Forum: SoftHistory](https://forum.softhistory.org/)
-
-[Wiki: SoftHistory](https://wiki.softhistory.org/)
-
-[Twitter: @86BoxEmulator](https://twitter.com/86BoxEmulator)
-
-[YouTube: 86Box](https://youtube.com/c/86Box)
-
 Contributions
 -------------
 
@@ -78,20 +53,6 @@ For instructions on how to build 86Box from source, see the [build guide](https:
 Licensing
 ---------
 
-86Box is released under the [GNU General Public License, version 2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html) or later. For more information, see the `COPYING` file in the root of the repository.
+86GPTBox is released under the [GNU General Public License, version 2](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html) or later. For more information, see the `COPYING` file in the root of the repository.
 
 The emulator can also optionally make use of [munt](https://github.com/munt/munt), [FluidSynth](https://www.fluidsynth.org/), [Ghostscript](https://www.ghostscript.com/) and [Discord Game SDK](https://discord.com/developers/docs/game-sdk/sdk-starter-guide), which are distributed under their respective licenses.
-
-Donations
----------
-
-We do not charge you for the emulator but donations are still welcome:
-<https://paypal.me/86Box>.
-You can also support the project on Patreon:
-<https://www.patreon.com/86box>.
-
-Acknowledgments
----------------
-
-### Powered by
-[![JetBrains logo.](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSource)
