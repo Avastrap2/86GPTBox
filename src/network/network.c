@@ -490,7 +490,8 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
     }
 
     const char *nic_name = network_card_get_internal_name(net_cards_conf[net_card_current].device_num);
-    if ((!strcmp(nic_name, "modem") || !strcmp(nic_name, "plip")) && (net_type >= NET_TYPE_PCAP)) {
+    if ((!strcmp(nic_name, "modem") || !strcmp(nic_name, "pb_rocky2_modem") ||
+         !strcmp(nic_name, "plip")) && (net_type >= NET_TYPE_PCAP)) {
         /* Force SLiRP here. Modem and PLIP only operate on non-Ethernet frames. */
         net_type = NET_TYPE_SLIRP;
     }
