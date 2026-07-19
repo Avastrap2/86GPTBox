@@ -35,7 +35,8 @@
  *
  * TYPE 0x12:
  * Aztech Sound Galaxy Pro 16 II
- * Packard Bell Sound II (sound function of the sound/modem card)
+ * Packard Bell Sound II 144 AM/SP (Rocky 2)
+ * The Rocky 2 sound and modem functions are independent ISA devices.
  *
  * Also works more or less for drivers of other models with the same chipsets.
  *
@@ -2459,7 +2460,7 @@ const device_t azt2316r_device = {
 };
 
 const device_t pb_sound2_device = {
-    .name          = "Packard Bell Sound II",
+    .name          = "Packard Bell Sound II 144 AM/SP (Rocky 2)",
     .internal_name = "pb_sound2",
     .flags         = DEVICE_ISA16,
     .local         = SB_SUBTYPE_CLONE_AZT2316R_0X12,
@@ -2469,7 +2470,7 @@ const device_t pb_sound2_device = {
     .available     = NULL,
     .speed_changed = azt_speed_changed,
     .force_redraw  = NULL,
-    .alias         = "Aztech AZT2316/AZT2316R",
+    .alias         = "Aztech AZT2316R",
     .config        = azt2316r_config
 };
 

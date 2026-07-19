@@ -1618,6 +1618,84 @@ static const device_config_t modem_config[] = {
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
+
+static const device_config_t pb_rocky2_modem_config[] = {
+    {
+        .name           = "port",
+        .description    = "Serial Port",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "COM1", .value = 0 },
+            { .description = "COM2", .value = 1 },
+            { .description = "COM3", .value = 2 },
+            { .description = "COM4", .value = 3 },
+            { .description = ""                 }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "baudrate",
+        .description    = "Baud Rate",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 14400,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "14400", .value = 14400 },
+            { .description =  "9600", .value =  9600 },
+            { .description =  "7200", .value =  7200 },
+            { .description =  "4800", .value =  4800 },
+            { .description =  "2400", .value =  2400 },
+            { .description =  "1800", .value =  1800 },
+            { .description =  "1200", .value =  1200 },
+            { .description =   "600", .value =   600 },
+            { .description =   "300", .value =   300 },
+            { .description = ""                        }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "listen_port",
+        .description    = "TCP/IP listening port",
+        .type           = CONFIG_SPINNER,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = {
+            .min =     0,
+            .max = 32767
+        },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "phonebook_file",
+        .description    = "Phonebook File",
+        .type           = CONFIG_FNAME,
+        .default_string = NULL,
+        .file_filter    = "Text files (*.txt)|*.txt",
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "telnet_mode",
+        .description    = "Telnet emulation",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
 // clang-format on
 
 const device_t modem_device = {
@@ -1632,4 +1710,19 @@ const device_t modem_device = {
     .speed_changed = modem_speed_changed,
     .force_redraw  = NULL,
     .config        = modem_config
+};
+
+const device_t pb_rocky2_modem_device = {
+    .name          = "Packard Bell Sound II 144 AM/SP (Rocky 2) Modem",
+    .internal_name = "pb_rocky2_modem",
+    .flags         = DEVICE_COM,
+    .local         = 0,
+    .init          = modem_init,
+    .close         = modem_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = modem_speed_changed,
+    .force_redraw  = NULL,
+    .alias         = "Rockwell 14.4K",
+    .config        = pb_rocky2_modem_config
 };

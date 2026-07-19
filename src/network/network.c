@@ -100,6 +100,7 @@ static const NETWORK_CARD net_cards[] = {
     { &wd8013ebt_device           },
     /* COM */
     { &modem_device               },
+    { &pb_rocky2_modem_device     },
     /* LPT */
     { &plip_device                },
     /* ISA16 */

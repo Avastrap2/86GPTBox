@@ -242,6 +242,7 @@ extern const device_t pcnet_am79c973_onboard_device;
 
 /* Modem */
 extern const device_t modem_device;
+extern const device_t pb_rocky2_modem_device;
 
 /* PLIP */
 extern const device_t plip_device;
