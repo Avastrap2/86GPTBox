@@ -52,6 +52,10 @@ cdrom_t cdrom[CDROM_NUM] = { 0 };
 
 uint16_t subq_crc16_table[256] = { 0 };
 
+uint8_t  __attribute__((aligned(16))) cdrom_scramble_table[2352] = {
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
+
 int cdrom_interface_current;
 int cdrom_assigned_letters = 0;
 
@@ -491,9 +495,7 @@ cdrom_get_subchannel(cdrom_t *dev, const uint32_t lba, const int cooked)
 
     if (dev->subc_sector == -1) {
         subchannel_t *subc  = &dev->cached_subc;
-        uint8_t       q[16]    = { 0 };
-        uint8_t       adr      = 0x00;
-        int           crc_good = 1;
+        uint8_t       q[16] = { 0 };
 
         (void) read_data(dev, lba, 0);
 
@@ -501,14 +503,6 @@ cdrom_get_subchannel(cdrom_t *dev, const uint32_t lba, const int cooked)
             for (int j = 0; j < 8; j++)
                 q[i] |= ((dev->raw_buffer[dev->cur_buf][RAW_SECTOR_SIZE +
                                           (i << 3) + j] >> 6) & 0x01) << (7 - j);
-
-        adr = q[0] & 0x0f;
-
-        if (!dev->no_check && (dev->cd_status != CD_STATUS_DVD) &&
-            ((q[12] & 0x0f) >= 0x01) && ((q[12] & 0x0f) <= 0x05)) {
-            const uint16_t q_sub_crc16 = cdrom_crc16(0xffff, q, 10);
-            crc_good = crc_good && (q_sub_crc16 == bswap16(*(uint16_t *) &q[10]));
-        }
 
         if (cooked) {
             uint8_t temp = (q[0] >> 4) | ((q[0] & 0xf) << 4);
@@ -520,8 +514,7 @@ cdrom_get_subchannel(cdrom_t *dev, const uint32_t lba, const int cooked)
             }
         }
 
-        if (crc_good && (adr == 0x01))
-            memcpy(subc, q, 10);
+        memcpy(subc, q, 10);
 
         dev->subc_sector = dev->cached_sector;
     }
@@ -2516,7 +2509,7 @@ cdrom_msf_to_lba(const int sector, const int ismsf,
     int      pos = sector;
     uint32_t lba;
 
-    if ((cdrom_sector_type & 0x0f) >= 0x08) {
+    if ((cdrom_sector_type & 0x0f) >= 0x08 && !ismsf) {
         mult               = cdrom_sector_type >> 4;
         pos               /= mult;
     }
@@ -2527,6 +2520,11 @@ cdrom_msf_to_lba(const int sector, const int ismsf,
         const int f = pos & 0xff;
 
         lba = MSFtoLBA(m, s, f) - 150;
+
+        if ((cdrom_sector_type & 0x0f) >= 0x08) {
+            mult  = cdrom_sector_type >> 4;
+            lba  /= mult;
+        }
     } else {
         switch (vendor_type) {
             case 0x00:
@@ -2566,6 +2564,39 @@ cdrom_is_track_audio(cdrom_t *dev, const int sector,
     audio        &= CD_TRACK_AUDIO;
 
     return audio;
+}
+
+void
+cdrom_generate_scramble_lut(uint8_t *b)
+{
+    /* 15 bits wide (0x0001 is the preset value). */
+    uint16_t shift_reg = 0x0001;
+    uint8_t  tbl_val;
+
+    for (int32_t i = 12; i < 2352; i++) {
+        tbl_val = 0;
+
+        for (int32_t j = 0; j < 8; j++) {
+            /* Get the 1st and 2nd LSBs from the shift register. */
+            uint8_t s0 = ((shift_reg) & (1 << 0)) ? 1 : 0;
+            uint8_t s1 = ((shift_reg) & (1 << 1)) ? 1 : 0;
+
+            /* Perform the XOR operation. */
+            uint8_t xor_res = s0 ^ s1;
+
+            /* Shift the register right by 1 bit. */
+            shift_reg >>= 1;
+
+            /* Push the XOR result into the MSB of the shift register. */
+            if (xor_res != 0) 
+                shift_reg += 16384; // Set bit 15
+
+            /* Set the bit in the table byte. */
+            tbl_val |= (s0 << j);
+        }
+
+        b[i] = tbl_val;
+    }
 }
 
 int
@@ -3133,6 +3164,8 @@ cdrom_load(cdrom_t *dev, const char *fn, const int skip_insert)
     if ((strlen(dev->image_path) != 0) &&
         (strstr(dev->image_path, "ioctl://") == dev->image_path))
         dev->local = ioctl_open(dev, dev->image_path);
+    else if (cdrom_image_is_ccd(dev->image_path))
+        dev->local = ccd_image_open(dev, dev->image_path);
     else if (cdrom_image_is_chd(dev->image_path))
         dev->local = chd_image_open(dev, dev->image_path);
     else if (cdrom_image_is_aaru(dev->image_path))
@@ -3204,6 +3237,9 @@ cdrom_global_init(void)
 
     /* Initialize the CRC16-CCITT table */
     crc16_setup(subq_crc16_table, 0x1021);
+
+    /* Initialize the scramble table. */
+    cdrom_generate_scramble_lut(cdrom_scramble_table);
 
     for (uint8_t i = 0; i < CDROM_NUM; i++) {
         cdrom[i].cached_sector = -1;
