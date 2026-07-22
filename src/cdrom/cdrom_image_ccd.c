@@ -9,13 +9,13 @@
  *          Support for CloneCD images.
  *
  *
- * Authors: TheCollector1995, <mariogplayer@gmail.com>,
- *          Miran Grca, <mgrca8@gmail.com>
+ * Authors: Miran Grca, <mgrca8@gmail.com>
+ *          The Domesday Project (The (de)scrambling code), <https://www.domesday86.com/?page_id=2678>
  *          Cacodemon345
  *
- *          Copyright 2023 TheCollector1995.
- *          Copyright 2023 Miran Grca.
- *          Copyright 2026 Cacodemon345.
+ *          Copyright 2026 Miran Grca.
+ *          Copyright 2026 The Domesday Project.
+ *          Copyright 2025-2026 Cacodemon345.
  */
 
 #define __STDC_FORMAT_MACROS
@@ -32,6 +32,7 @@
 #include <wchar.h>
 #include <errno.h>
 #include <limits.h>
+#include <ctype.h>
 #ifndef _WIN32
 #    include <libgen.h>
 #endif
@@ -424,6 +425,11 @@ int
 cdrom_image_is_ccd(const char *fn)
 {
     int res = 0;
+    if (tolower(fn[strlen(fn) - 1]) != 'd'
+    || tolower(fn[strlen(fn) - 2]) != 'c'
+    || tolower(fn[strlen(fn) - 3]) != 'c')
+        return res;
+
     ini_t ccd_ini = ini_read(fn);
     if (ccd_ini && ini_find_section(ccd_ini, "CloneCD")) {
         res = 1;
