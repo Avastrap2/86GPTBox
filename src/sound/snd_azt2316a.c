@@ -33,6 +33,11 @@
  * Aztech Sound Galaxy Clinton 16
  * ...and other OEM names
  *
+ * TYPE 0x12:
+ * Aztech Sound Galaxy Pro 16 II
+ * Packard Bell Sound II 144 AM/SP (Rocky 2)
+ * The Rocky 2 sound and modem functions are independent ISA devices.
+ *
  * Also works more or less for drivers of other models with the same chipsets.
  *
  * Copyright (c) 2020 Eluan Costa Miranda <eluancm@gmail.com> All rights reserved.
@@ -197,6 +202,7 @@ aztech_log(void *priv, const char *fmt, ...)
 
 static int azt2316a_wss_dma[4] = { 0, 0, 1, 3 };
 static int azt2316a_wss_irq[8] = { 5, 7, 9, 10, 11, 12, 14, 15 }; /* W95 only uses 7-10, others may be wrong */
+#define AZT_MODEL_PB_ROCKY2 0x100
 #if 0
 static uint16_t azt2316a_wss_addr[4] = {0x530, 0x604, 0xe80, 0xf40};
 #endif
@@ -205,6 +211,7 @@ static double aztpr16_vols_5bits[32];
 
 typedef struct azt2316a_t {
     int type;
+    int is_pb_rocky2;
 
     uint8_t wss_config;
 
@@ -1454,10 +1461,11 @@ azt_init(const device_t *info)
     int         i;
     int         loaded_from_eeprom = 0;
     uint16_t    addr_setting;
-    uint8_t     read_eeprom[AZTECH_EEPROM_SIZE];
+    uint8_t     read_eeprom[AZTECH_EEPROM_SIZE] = { 0 };
     azt2316a_t *azt2316a = calloc(1, sizeof(azt2316a_t));
 
-    azt2316a->type = info->local;
+    azt2316a->type         = info->local & 0xff;
+    azt2316a->is_pb_rocky2 = !!(info->local & AZT_MODEL_PB_ROCKY2);
 
     azt2316a->log = log_open("AztechWSS");
 
@@ -1468,30 +1476,32 @@ azt_init(const device_t *info)
     } else if (azt2316a->type == SB_SUBTYPE_CLONE_AZTPR16_0X09) {
         fn = "aztpr16.nvr";
     }
+    if (azt2316a->is_pb_rocky2)
+        fn = "pb_sound2.nvr";
 
     /* config */
-    if (azt2316a->type != SB_SUBTYPE_CLONE_AZT2316R_0X12) {
+    if (fn != NULL) {
         fp = nvr_fopen(fn, "rb");
         if (fp) {
             uint8_t checksum = 0x7f;
             uint8_t saved_checksum;
-            size_t  res;
 
-            res = fread(read_eeprom, AZTECH_EEPROM_SIZE, 1, fp);
-            for (i = 0; i < AZTECH_EEPROM_SIZE; i++)
-                checksum += read_eeprom[i];
+            if (fread(read_eeprom, AZTECH_EEPROM_SIZE, 1, fp) == 1) {
+                for (i = 0; i < AZTECH_EEPROM_SIZE; i++)
+                    checksum += read_eeprom[i];
 
-            res = fread(&saved_checksum, sizeof(saved_checksum), 1, fp);
-            (void) res;
+                if ((fread(&saved_checksum, sizeof(saved_checksum), 1, fp) == 1) &&
+                    (checksum == saved_checksum))
+                    loaded_from_eeprom = 1;
+            }
 
             fclose(fp);
-
-            if (checksum == saved_checksum)
-                loaded_from_eeprom = 1;
         }
     }
 
     if (!loaded_from_eeprom) {
+        memset(read_eeprom, 0, sizeof(read_eeprom));
+
         if ((azt2316a->type == SB_SUBTYPE_CLONE_AZT2316A_0X11) || (azt2316a->type == SB_SUBTYPE_CLONE_AZT2316R_0X12)) {
             read_eeprom[0]  = 0xee; /* SB Voice mixer value */
             read_eeprom[1]  = 0x00; /* SB Mic mixer value (bits 2-0) */
@@ -2055,8 +2065,10 @@ azt_close(void *priv)
     } else if (azt2316a->type == SB_SUBTYPE_CLONE_AZTPR16_0X09) {
         fn = "aztpr16.nvr";
     }
+    if (azt2316a->is_pb_rocky2)
+        fn = "pb_sound2.nvr";
 
-    if (azt2316a->type != SB_SUBTYPE_CLONE_AZT2316R_0X12) {
+    if (fn != NULL) {
         /* always save to eeprom (recover from bad values) */
         fp = nvr_fopen(fn, "wb");
         if (fp) {
@@ -2451,6 +2463,21 @@ const device_t azt2316r_device = {
     .speed_changed = azt_speed_changed,
     .force_redraw  = NULL,
     .alias         = "AZT2316R",
+    .config        = azt2316r_config
+};
+
+const device_t pb_sound2_device = {
+    .name          = "Packard Bell Sound II 144 AM/SP (Rocky 2)",
+    .internal_name = "pb_sound2",
+    .flags         = DEVICE_ISA16,
+    .local         = SB_SUBTYPE_CLONE_AZT2316R_0X12 | AZT_MODEL_PB_ROCKY2,
+    .init          = azt_init,
+    .close         = azt_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = azt_speed_changed,
+    .force_redraw  = NULL,
+    .alias         = "Aztech AZT2316R",
     .config        = azt2316r_config
 };
 

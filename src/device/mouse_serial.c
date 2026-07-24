@@ -882,10 +882,13 @@ sermouse_init(const device_t *info)
                                      double transmit_period);
 
     if (info->local == MOUSE_TYPE_MSYSTEMSB) {
-        uintptr_t irqbase = ((device_get_config_int("irq") << 16) |
-                             (device_get_config_hex16("addr") << 20)) |
-                             ns16450_device.local;
-        device_add_params(&ns16450_device, (void *) irqbase);
+        if (com_ports[SERIAL_MAX - 1].serial == NULL) {
+            uintptr_t irqbase = ((device_get_config_int("irq") << 16) |
+                                 (device_get_config_hex16("addr") << 20)) |
+                                 ns16450_device.local;
+            device_add_params(&ns16450_device, (void *) irqbase);
+        } else
+            warning("Mouse Systems Bus Mouse: internal serial slot is already in use\n");
     }
 
     dev->name = info->name;

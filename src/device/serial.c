@@ -791,7 +791,7 @@ serial_remove(serial_t *dev)
     if (dev == NULL)
         return;
 
-    if (!com_ports[dev->inst].enabled)
+    if (!com_ports[dev->inst].enabled && (dev->inst != (SERIAL_MAX - 1)))
         return;
 
     if (!dev->base_address)
@@ -807,12 +807,12 @@ serial_remove(serial_t *dev)
 void
 serial_setup(serial_t *dev, uint16_t addr, uint8_t irq)
 {
-    serial_log("Adding serial port %i at %04X...\n", dev->inst, addr);
-
     if (dev == NULL)
         return;
 
-    if (!com_ports[dev->inst].enabled)
+    serial_log("Adding serial port %i at %04X...\n", dev->inst, addr);
+
+    if (!com_ports[dev->inst].enabled && (dev->inst != (SERIAL_MAX - 1)))
         return;
     if (dev->base_address != 0x0000)
         serial_remove(dev);
@@ -995,10 +995,24 @@ serial_close(void *priv)
 {
     serial_t *dev = (serial_t *) priv;
 
+    if (dev->base_address != 0x0000) {
+        io_removehandler(dev->base_address, 0x0008,
+                         serial_read, NULL, NULL, serial_write, NULL, NULL, dev);
+        dev->base_address = 0x0000;
+    }
+
     if (dev->sd || dev->char_port.type) {
         if (dev->sd)
             memset(dev->sd, 0, sizeof(serial_device_t));
-        fifo_close(dev->rcvr_fifo);
+        if (dev->rcvr_fifo != NULL)
+            fifo_close(dev->rcvr_fifo);
+        if (dev->xmit_fifo != NULL)
+            fifo_close(dev->xmit_fifo);
+    }
+
+    if ((dev->inst < SERIAL_MAX) && (com_ports[dev->inst].serial == dev)) {
+        com_ports[dev->inst].serial    = NULL;
+        com_ports[dev->inst].hotunplug = CHAR_PORT_DETACHED;
     }
 
     free(dev);
@@ -1044,14 +1058,20 @@ serial_init(const device_t *info)
     serial_t *dev = (serial_t *) calloc(1, sizeof(serial_t));
     int orig_inst = next_inst;
 
-    if (info->local & 0xFFF00000)
+    if (info->local & 0xFFF00000) {
+        if (com_ports[SERIAL_MAX - 1].serial != NULL) {
+            warning("UART: internal serial slot is already in use\n");
+            free(dev);
+            return NULL;
+        }
         next_inst = SERIAL_MAX - 1;
+    }
 
     dev->inst = next_inst;
 
     if (com_ports[next_inst].enabled || (info->local & 0xFFF00000)) {
         serial_log("Adding serial port %i...\n", next_inst);
-        dev->type = info->local;
+        dev->type       = (uint8_t) (info->local & 0xff);
         dev->sd         = &(serial_devices[next_inst]);
 
         com_ports[next_inst].serial    = dev;

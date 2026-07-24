@@ -755,7 +755,7 @@ VMManagerSystem::setupVars()
                 else
                     cdrom_speed = QString("%1x ").arg(cdrom_speed);
                 cdrom_bus   = QString(" (%1)").arg(cdrom_bus);
-                cdromDevices.append(QString("%1%2 %3 %4%5").arg(cdrom_speed, cdrom_drive_types[cdrom_type].vendor, cdrom_drive_types[cdrom_type].model, cdrom_drive_types[cdrom_type].revision, cdrom_bus));
+                cdromDevices.append(QString("%1%2 %3 %4%5").arg(cdrom_speed, cdrom_drive_types[cdrom_type].vendor, cdrom_get_display_model(cdrom_type), cdrom_drive_types[cdrom_type].revision, cdrom_bus));
             }
         }
     }

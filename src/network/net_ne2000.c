@@ -9,6 +9,7 @@
  *          Implementation of the following network controllers:
  *              - Novell NE1000 (ISA 8-bit);
  *              - Novell NE2000 (ISA 16-bit);
+ *              - IBM PS/ValuePoint ISA Ethernet Adapter (ISA 16-bit);
  *              - Novell NE/2 compatible (NetWorth Inc. Ethernext/MC) (MCA 16-bit);
  *              - Realtek RTL8019AS (ISA 16-bit, PnP);
  *              - Realtek RTL8029AS (PCI).
@@ -72,10 +73,11 @@
 #include "cpu.h"
 
 /* ROM BIOS file paths. */
-#define ROM_PATH_NE1000  "roms/network/ne1000/ne1000.rom"
-#define ROM_PATH_NE2000  "roms/network/ne2000/ne2000.rom"
-#define ROM_PATH_RTL8019 "roms/network/rtl8019as/rtl8019as.rom"
-#define ROM_PATH_RTL8029 "roms/network/rtl8029as/rtl8029as.rom"
+#define ROM_PATH_NE1000         "roms/network/ne1000/ne1000.rom"
+#define ROM_PATH_NE2000         "roms/network/ne2000/ne2000.rom"
+#define ROM_PATH_IBM_VALUEPOINT "roms/network/ibm_valuepoint/10G3714.BIN"
+#define ROM_PATH_RTL8019        "roms/network/rtl8019as/rtl8019as.rom"
+#define ROM_PATH_RTL8029        "roms/network/rtl8029as/rtl8029as.rom"
 
 /* PCI info. */
 #define PCI_VENDID  0x10ec /* Realtek, Inc */
@@ -115,6 +117,7 @@ typedef struct nic_t {
     int         base_irq;
     int         irq_level;
     int         has_bios;
+    int         io_active;
 
     uint32_t    base_address;
     uint32_t    bios_addr;
@@ -130,6 +133,8 @@ typedef struct nic_t {
 
     nmc93cxx_eeprom_t *eeprom;
 } nic_t;
+
+static void ibm_valuepoint_apply_eeprom(nic_t *dev);
 
 #ifdef ENABLE_NE2K_LOG
 int ne2k_do_log = ENABLE_NE2K_LOG;
@@ -200,6 +205,11 @@ nic_reset(void *priv)
     nic_t *dev = (nic_t *) priv;
 
     nelog(1, "%s: reset\n", dev->name);
+
+    /* The ValuePoint adapter latches its software-configured resources
+       from the serial EEPROM when the board is restarted. */
+    if (dev->board == NE2K_IBM_VALUEPOINT)
+        ibm_valuepoint_apply_eeprom(dev);
 
     dp8390_reset(dev->dp8390);
 
@@ -291,6 +301,11 @@ asic_read(nic_t *dev, uint32_t off, unsigned int len)
             nic_soft_reset(dev);
             break;
 
+        case 0x0e: /* IBM/D-Link DL2516 NM93C46 serial EEPROM */
+            if ((dev->board == NE2K_IBM_VALUEPOINT) && dev->eeprom)
+                retval = nmc93cxx_eeprom_read(dev->eeprom) ? 0x01 : 0x00;
+            break;
+
         default:
             nelog(3, "%s: ASIC read invalid address %04x\n",
                   dev->name, (unsigned) off);
@@ -348,6 +363,12 @@ asic_write(nic_t *dev, uint32_t off, uint32_t val, unsigned len)
 
         case 0x0f: /* Reset register */
             /* end of reset pulse */
+            break;
+
+        case 0x0e: /* DL2516 EEPROM: bit 3 CS, bit 2 SK, bit 1 DI */
+            if ((dev->board == NE2K_IBM_VALUEPOINT) && dev->eeprom)
+                nmc93cxx_eeprom_write(dev->eeprom, !!(val & 0x08),
+                                      !!(val & 0x04), !!(val & 0x02));
             break;
     }
 }
@@ -749,6 +770,8 @@ nic_ioset(nic_t *dev, uint16_t addr)
                           nic_writeb, nic_writew, NULL, dev);
         }
     }
+
+    dev->io_active = 1;
 }
 
 static void
@@ -772,6 +795,118 @@ nic_ioremove(nic_t *dev, uint16_t addr)
                              nic_writeb, nic_writew, NULL, dev);
         }
     }
+
+    dev->io_active = 0;
+}
+
+/*
+ * IBM's VPETHER 1.32 driver identifies a D-Link DL2516 design and accesses
+ * an NM93C46 at ASIC offset 0x0e.  Its EEPROM layout is:
+ *   words 0-2: station address; word 3: media/I/O/ROM configuration;
+ *   word 4: IRQ index; words 5-6: board data/checksum.
+ * The seven words have an 8-bit additive checksum of 0xff.
+ */
+static void
+ibm_valuepoint_eeprom_init(nic_t *dev, const device_t *info)
+{
+    static const uint16_t io_map[8] = {
+        0x300, 0x320, 0x340, 0x360, 0x800, 0x1800, 0x2800, 0x3800
+    };
+    static const uint32_t rom_map[16] = {
+        0xc0000, 0xc2000, 0xc4000, 0xc6000,
+        0xc8000, 0xca000, 0xcc000, 0xce000,
+        0xd0000, 0xd2000, 0xd4000, 0xd6000,
+        0xd8000, 0xda000, 0xdc000, 0x00000
+    };
+    static const uint8_t irq_map[8] = { 15, 3, 4, 5, 9, 10, 11, 14 };
+    nmc93cxx_eeprom_params_t params;
+    uint16_t                *words     = (uint16_t *) dev->eeprom_data;
+    char                     filename[1024] = { 0 };
+    unsigned                 io_index  = 0;
+    unsigned                 rom_index = 15;
+    unsigned                 irq_index = 1;
+    unsigned                 checksum  = 0;
+    int                      inst      = device_get_instance();
+
+    for (unsigned i = 0; i < 8; i++) {
+        if (io_map[i] == dev->base_address)
+            io_index = i;
+        if (irq_map[i] == dev->base_irq)
+            irq_index = i;
+    }
+    for (unsigned i = 0; i < 16; i++) {
+        if (rom_map[i] == dev->bios_addr)
+            rom_index = i;
+    }
+
+    memset(dev->eeprom_data, 0x00, sizeof(dev->eeprom_data));
+    words[0] = dev->maclocal[0] | (dev->maclocal[1] << 8);
+    words[1] = dev->maclocal[2] | (dev->maclocal[3] << 8);
+    words[2] = dev->maclocal[4] | (dev->maclocal[5] << 8);
+    words[3] = 0x2000 | (io_index << 4) | rom_index; /* 10Base2 */
+    words[4] = irq_index;
+    words[5] = 0x0000;
+    for (unsigned i = 0; i < 12; i++)
+        checksum += dev->eeprom_data[i];
+    words[6] = (uint8_t) (0xff - checksum);
+
+    params.type            = NMC_93C46_x16_64;
+    params.default_content = dev->eeprom_data;
+    params.filename        = filename;
+    snprintf(filename, sizeof(filename), "nmc93cxx_eeprom_%s_%d.nvr",
+             info->internal_name, inst);
+    dev->eeprom = device_add_inst_params(&nmc93cxx_device, inst, &params);
+}
+
+static void
+ibm_valuepoint_apply_eeprom(nic_t *dev)
+{
+    static const uint16_t io_map[8] = {
+        0x300, 0x320, 0x340, 0x360, 0x800, 0x1800, 0x2800, 0x3800
+    };
+    static const uint32_t rom_map[16] = {
+        0xc0000, 0xc2000, 0xc4000, 0xc6000,
+        0xc8000, 0xca000, 0xcc000, 0xce000,
+        0xd0000, 0xd2000, 0xd4000, 0xd6000,
+        0xd8000, 0xda000, 0xdc000, 0x00000
+    };
+    static const uint8_t irq_map[8] = { 15, 3, 4, 5, 9, 10, 11, 14 };
+    const uint16_t       *words;
+    uint16_t              new_base;
+    uint32_t              new_bios;
+    int                   was_active;
+
+    if (!dev->eeprom)
+        return;
+
+    words      = nmc93cxx_eeprom_data(dev->eeprom);
+    new_base   = io_map[(words[3] >> 4) & 0x07];
+    new_bios   = rom_map[words[3] & 0x0f];
+    was_active = dev->io_active;
+
+    if (new_base != dev->base_address) {
+        if (was_active)
+            nic_ioremove(dev, dev->base_address);
+        dev->base_address = new_base;
+        if (was_active)
+            nic_ioset(dev, dev->base_address);
+    }
+
+    dev->base_irq = irq_map[words[4] & 0x07];
+    dev->bios_addr = new_bios;
+    dev->has_bios  = !!new_bios;
+    if (dev->bios_size) {
+        if (new_bios)
+            mem_mapping_set_addr(&dev->bios_rom.mapping, new_bios, dev->bios_size);
+        else
+            mem_mapping_disable(&dev->bios_rom.mapping);
+    }
+
+    for (unsigned i = 0; i < 3; i++) {
+        dev->maclocal[i * 2]     = words[i] & 0xff;
+        dev->maclocal[i * 2 + 1] = words[i] >> 8;
+    }
+    memcpy(dev->dp8390->physaddr, dev->maclocal, sizeof(dev->maclocal));
 }
 
 static void
@@ -1106,7 +1241,8 @@ nic_init(const device_t *info)
             dev->base_address = device_get_config_hex16("base");
             dev->base_irq     = device_get_config_int("irq");
             if ((dev->board == NE2K_NE2000) || (dev->board == NE2K_NE2000_COMPAT) ||
-                (dev->board == NE2K_NE2000_COMPAT_8BIT) ) {
+                (dev->board == NE2K_NE2000_COMPAT_8BIT) ||
+                (dev->board == NE2K_IBM_VALUEPOINT)) {
                 dev->bios_addr = device_get_config_hex20("bios_addr");
                 dev->has_bios  = !!dev->bios_addr;
             } else {
@@ -1202,6 +1338,17 @@ nic_init(const device_t *info)
             rom              = NULL;
             dp8390_set_defaults(dev->dp8390, DP8390_FLAG_EVEN_MAC | DP8390_FLAG_CHECK_CR | DP8390_FLAG_CLEAR_IRQ);
             dp8390_mem_alloc(dev->dp8390, 0x4000, 0x4000);
+            break;
+
+        case NE2K_IBM_VALUEPOINT:
+            dev->maclocal[0] = 0x08; /* IBM OUI used on production adapters */
+            dev->maclocal[1] = 0x00;
+            dev->maclocal[2] = 0x5a;
+            rom              = ROM_PATH_IBM_VALUEPOINT;
+            dp8390_set_defaults(dev->dp8390, DP8390_FLAG_EVEN_MAC | DP8390_FLAG_CHECK_CR | DP8390_FLAG_CLEAR_IRQ);
+            dp8390_mem_alloc(dev->dp8390, 0x4000, 0x4000);
+            ibm_valuepoint_eeprom_init(dev, info);
+            ibm_valuepoint_apply_eeprom(dev);
             break;
 
         case NE2K_DE220P:
@@ -1759,6 +1906,87 @@ static const device_config_t ne2000_compat_config[] = {
     { .name = "", .description = "", .type = CONFIG_END }
 };
 
+static const device_config_t ibm_valuepoint_config[] = {
+    {
+        .name           = "base",
+        .description    = "Address",
+        .type           = CONFIG_HEX16,
+        .default_string = NULL,
+        .default_int    = 0x300,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            /* IBM PS/2 Hardware Maintenance Manual, October 1993. */
+            { .description = "0x300",  .value = 0x300  },
+            { .description = "0x320",  .value = 0x320  },
+            { .description = "0x800",  .value = 0x800  },
+            { .description = "0x1800", .value = 0x1800 },
+            { .description = "0x2800", .value = 0x2800 },
+            { .description = "0x3800", .value = 0x3800 },
+            { .description = ""                         }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "irq",
+        .description    = "IRQ",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 3,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            /* IRQ 10 is additionally offered by IBM's VPETHER F1MAC.NIF. */
+            { .description = "IRQ 3",  .value =  3 },
+            { .description = "IRQ 4",  .value =  4 },
+            { .description = "IRQ 5",  .value =  5 },
+            { .description = "IRQ 9",  .value =  9 },
+            { .description = "IRQ 10", .value = 10 },
+            { .description = "IRQ 11", .value = 11 },
+            { .description = ""                    }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "mac",
+        .description    = "MAC Address",
+        .type           = CONFIG_MAC,
+        .default_string = NULL,
+        .default_int    = -1,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "bios_addr",
+        .description    = "BIOS address",
+        .type           = CONFIG_HEX20,
+        .default_string = NULL,
+        .default_int    = 0xd0000,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            /* Each address selects a 16 KiB window, as documented by IBM. */
+            { .description = "Disabled", .value = 0x00000 },
+            { .description = "C800",     .value = 0xc8000 },
+            { .description = "CA00",     .value = 0xca000 },
+            { .description = "CC00",     .value = 0xcc000 },
+            { .description = "CE00",     .value = 0xce000 },
+            { .description = "D000",     .value = 0xd0000 },
+            { .description = "D200",     .value = 0xd2000 },
+            { .description = "D400",     .value = 0xd4000 },
+            { .description = "D600",     .value = 0xd6000 },
+            { .description = "D800",     .value = 0xd8000 },
+            { .description = "DA00",     .value = 0xda000 },
+            { .description = "DC00",     .value = 0xdc000 },
+            { .description = ""                           }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
+
 static const device_config_t ne2000_compat_8bit_config[] = {
     {
         .name           = "base",
@@ -1997,6 +2225,20 @@ const device_t ethernext_mc_device = {
     .speed_changed = NULL,
     .force_redraw  = NULL,
     .config        = mca_mac_config
+};
+
+const device_t ibm_valuepoint_ethernet_device = {
+    .name          = "IBM PS/ValuePoint ISA Ethernet Adapter (10Base2)",
+    .internal_name = "ibm_valuepoint_ethernet",
+    .flags         = DEVICE_ISA16,
+    .local         = NE2K_IBM_VALUEPOINT,
+    .init          = nic_init,
+    .close         = nic_close,
+    .reset         = nic_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = ibm_valuepoint_config
 };
 
 const device_t rtl8019as_pnp_device = {

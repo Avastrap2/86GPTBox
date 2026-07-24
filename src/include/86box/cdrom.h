@@ -128,6 +128,11 @@ static const struct cdrom_drive_types_s {
     const int     caddy;
     const int     is_dvd;
     const int     transfer_max[4];
+    /* Buffer size in KiB reported by the ATAPI capabilities mode page. */
+    const int     cache_size;
+    /* Optional physical model shown in the UI when it differs from the
+       guest-visible INQUIRY/IDENTIFY product string. */
+    const char   *display_model;
 } cdrom_drive_types[] = {
     { EMU_NAME,   "86B_CD",           CDV,    "",          "86cd",           BUS_TYPE_BOTH, 2, -1, 36, 0, 0, {  4,  2,  2,  5 } },
     { EMU_NAME,   "86B_CD",           "1.00", "",          "86cd100",        BUS_TYPE_BOTH, 1, -1, 36, 1, 0, {  0, -1, -1, -1 } }, /* SCSI-1 / early ATAPI generic - second on purpose so the later variant is the default. */
@@ -225,8 +230,13 @@ static const struct cdrom_drive_types_s {
     { "NEC",      "CD-ROM DRIVE:273", "4.25", "",          "nec_273",        BUS_TYPE_IDE,  0,  4, 36, 0, 0, {  3, -1, -1, -1 } },
     { "NEC",      "CD-ROM DRIVE:280", "1.05", "",          "nec_280_early",  BUS_TYPE_IDE,  0,  6, 36, 1, 0, {  3,  2,  2, -1 } },
     { "NEC",      "CD-ROM DRIVE:280", "3.08", "",          "nec_280",        BUS_TYPE_IDE,  0,  8, 36, 1, 0, {  4,  2,  1, -1 } },
+    /* Real DRIVE:284 traces confirm 8x, a 128 KiB cache, and DMA;
+       transfer maxima currently follow the contemporary 8x DRIVE:280
+       pending an IDENTIFY dump. */
+    { "NEC",      "CD-ROM DRIVE:284", "3.51", "",          "nec_1400a",      BUS_TYPE_IDE,  0,  8, 36, 0, 0, {  4,  2,  1, -1 }, 128, "CDR-1400A" },
     { "NEC",      "CD-ROM DRIVE:289", "1.00", "",          "nec_289",        BUS_TYPE_IDE,  0, 24, 36, 0, 0, {  4,  2,  2,  0 } },
-    { "NEC",      "CDR-1300A",        "1.05", "",          "nec_1300a",      BUS_TYPE_IDE,  0,  6, 36, 0, 0, {  4,  2,  2, -1 } },
+    /* NEC's contemporary specifications give the CDR-1300A a 128 KiB buffer. */
+    { "NEC",      "CDR-1300A",        "1.05", "",          "nec_1300a",      BUS_TYPE_IDE,  0,  6, 36, 0, 0, {  4,  2,  2, -1 }, 128 },
     { "NEC",      "CDR-1801A",        "J111", "",          "nec_1801a",      BUS_TYPE_IDE,  0, 24, 36, 0, 0, {  4,  2,  2,  1 } },
     { "NEC",      "CDR-1900A",        "1.00", "",          "nec_1900a",      BUS_TYPE_IDE,  0, 32, 36, 0, 0, {  4,  2,  2,  1 } },
     { "NEC",      "CDR-3002A",        "C000", "",          "nec_3002a",      BUS_TYPE_IDE,  0, 52, 36, 0, 0, {  4,  2,  2,  4 } },
@@ -527,6 +537,7 @@ bcd2bin(int x)
 
 extern char           *cdrom_get_vendor(const int type);
 extern void            cdrom_get_model(const int type, char *name, const int id);
+extern const char     *cdrom_get_display_model(const int type);
 extern char           *cdrom_get_revision(const int type);
 extern int             cdrom_get_scsi_std(const int type);
 extern int             cdrom_is_early(const int type);
@@ -534,6 +545,7 @@ extern int             cdrom_is_dvd(const int type);
 extern int             cdrom_is_generic(const int type);
 extern int             cdrom_is_caddy(const int type);
 extern int             cdrom_get_speed(const int type);
+extern int             cdrom_get_cache_size(const int type);
 extern int             cdrom_get_inquiry_len(const int type);
 extern int             cdrom_has_dma(const int type);
 extern int             cdrom_get_transfer_max(const int type, const int mode);

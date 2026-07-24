@@ -79,6 +79,11 @@ enum modem_types {
     MODEM_TYPE_TCPIP = 3
 };
 
+enum modem_models {
+    MODEM_MODEL_GENERIC   = 0,
+    MODEM_MODEL_PB_ROCKY2 = 1
+};
+
 typedef enum modem_mode_t {
     MODEM_MODE_COMMAND = 0,
     MODEM_MODE_DATA    = 1
@@ -93,6 +98,8 @@ typedef enum modem_slip_stage_t {
 #define NUMBER_BUFFER_SIZE  128
 #define PHONEBOOK_SIZE      200
 
+static const uint16_t rocky2_com_addr[4] = { COM1_ADDR, COM2_ADDR, COM3_ADDR, COM4_ADDR };
+
 typedef struct modem_phonebook_entry_t {
     char phone[NUMBER_BUFFER_SIZE];
     char address[NUMBER_BUFFER_SIZE];
@@ -102,6 +109,9 @@ typedef struct modem_t {
     uint8_t   mac[6];
     serial_t *serial;
     uint32_t  baudrate;
+    uint8_t   model;
+    bool      owns_uart;
+    uintptr_t uart_params;
 
     modem_mode_t mode;
 
@@ -125,6 +135,7 @@ typedef struct modem_t {
     uint32_t cmdpos;
     uint32_t port;
     int      plusinc, flowcontrol;
+    int      compression, error_correction;
     int      in_warmup, dtrmode;
     int      dcdmode;
 
@@ -350,6 +361,17 @@ modem_send_number(modem_t *modem, uint32_t val)
 }
 
 static void
+modem_send_result_code(modem_t *modem, uint32_t val)
+{
+    char result[16];
+    const int len = snprintf(result, sizeof(result), "%u", val);
+
+    if (len > 0)
+        fifo8_push_all(&modem->data_pending, (uint8_t *) result, (size_t) len);
+    fifo8_push(&modem->data_pending, modem->reg[MREG_CR_CHAR]);
+}
+
+static void
 process_tx_packet(modem_t *modem, uint8_t *p, uint32_t len)
 {
     int      received            = 0;
@@ -535,6 +557,36 @@ modem_send_res(modem_t *modem, const ResTypes response)
         case ResCONNECT:
             code         = 1;
             response_str = response_str_connect;
+            if (modem->model == MODEM_MODEL_PB_ROCKY2) {
+                switch (modem->baudrate) {
+                    case 600:
+                        code = 9;
+                        break;
+                    case 1200:
+                        code = 5;
+                        break;
+                    case 2400:
+                        code = 10;
+                        break;
+                    case 4800:
+                        code = 11;
+                        break;
+                    case 7200:
+                        code = 13;
+                        break;
+                    case 9600:
+                        code = 12;
+                        break;
+                    case 12000:
+                        code = 14;
+                        break;
+                    case 14400:
+                        code = 15;
+                        break;
+                    default:
+                        break;
+                }
+            }
             break;
         case ResRING:
             code         = 2;
@@ -570,7 +622,10 @@ modem_send_res(modem_t *modem, const ResTypes response)
         }
         modem_log("Modem response: %s\n", response_str);
         if (modem->numericresponse && code != ~0) {
-            modem_send_number(modem, code);
+            if (modem->model == MODEM_MODEL_PB_ROCKY2)
+                modem_send_result_code(modem, code);
+            else
+                modem_send_number(modem, code);
         } else if (response_str != NULL) {
             modem_send_line(modem, response_str);
         }
@@ -647,20 +702,14 @@ modem_enter_connected_state(modem_t *modem)
     }
 }
 
-void
-modem_reset(modem_t *modem)
+static void
+modem_load_factory_profile(modem_t *modem)
 {
-    modem->dcdmode = 1;
-    modem_enter_idle_state(modem);
-    modem->cmdpos              = 0;
-    modem->cmdbuf[0]           = 0;
-    modem->prevcmdbuf[0]       = 0;
-    modem->lastnumber[0]       = 0;
-    modem->numberinprogress[0] = 0;
-    modem->flowcontrol         = 0;
-    modem->cmdpause            = 0;
-    modem->plusinc             = 0;
-    modem->dtrmode             = 2;
+    modem->dcdmode          = 1;
+    modem->flowcontrol      = 0;
+    modem->compression      = 1;
+    modem->error_correction = 1;
+    modem->dtrmode          = 2;
 
     memset(&modem->reg, 0, sizeof(modem->reg));
     modem->reg[MREG_AUTOANSWER_COUNT] = 0; // no autoanswer
@@ -675,6 +724,22 @@ modem_reset(modem_t *modem)
     modem->echo            = true;
     modem->doresponse      = 0;
     modem->numericresponse = false;
+}
+
+void
+modem_reset(modem_t *modem)
+{
+    modem->dcdmode = 1;
+    modem_enter_idle_state(modem);
+    modem->cmdpos              = 0;
+    modem->cmdbuf[0]           = 0;
+    modem->prevcmdbuf[0]       = 0;
+    modem->lastnumber[0]       = 0;
+    modem->numberinprogress[0] = 0;
+    modem->cmdpause            = 0;
+    modem->plusinc             = 0;
+
+    modem_load_factory_profile(modem);
 }
 
 void
@@ -906,6 +971,10 @@ modem_do_command(modem_t *modem, int repeat)
                 }
             case 'I': // Some strings about firmware
                 switch (modem_scan_number(&scanbuf)) {
+                    case 0:
+                        if (modem->model == MODEM_MODEL_PB_ROCKY2)
+                            modem_send_line(modem, "14400");
+                        break;
                     case 3:
                         modem_send_line(modem, "86Box Emulated Modem Firmware V1.00");
                         break;
@@ -1069,6 +1138,32 @@ modem_do_command(modem_t *modem, int repeat)
                                 }
                                 break;
                             }
+                        case 'F':
+                            {
+                                const uint32_t val = modem_scan_number(&scanbuf);
+                                if (val < 2)
+                                    modem_load_factory_profile(modem);
+                                else {
+                                    modem_send_res(modem, ResERROR);
+                                    return;
+                                }
+                                break;
+                            }
+                        case 'Q':
+                            /* Rockwell synchronous/error-control mode; accepted but
+                               the network-backed data path remains asynchronous. */
+                            if (modem_scan_number(&scanbuf) > 9) {
+                                modem_send_res(modem, ResERROR);
+                                return;
+                            }
+                            break;
+                        case 'W':
+                            /* Profile storage is volatile in the emulated modem. */
+                            if (modem_scan_number(&scanbuf) > 1) {
+                                modem_send_res(modem, ResERROR);
+                                return;
+                            }
+                            break;
                         case '\0':
                             // end of string
                             modem_send_res(modem, ResERROR);
@@ -1083,9 +1178,14 @@ modem_do_command(modem_t *modem, int repeat)
                     switch (cmdchar) {
                         case 'N':
                             // error correction stuff - not emulated
-                            if (modem_scan_number(&scanbuf) > 5) {
-                                modem_send_res(modem, ResERROR);
-                                return;
+                            {
+                                const uint32_t val = modem_scan_number(&scanbuf);
+                                if (val <= 7)
+                                    modem->error_correction = val;
+                                else {
+                                    modem_send_res(modem, ResERROR);
+                                    return;
+                                }
                             }
                             break;
                         case '\0':
@@ -1096,9 +1196,20 @@ modem_do_command(modem_t *modem, int repeat)
                     break;
                 }
             case '%': // % escaped commands
-                // Windows 98 modem prober sends unknown command AT%V
-                modem_send_res(modem, ResERROR);
-                return;
+                {
+                    const char cmdchar = modem_fetch_character(&scanbuf);
+                    if (cmdchar == 'C') {
+                        const uint32_t val = modem_scan_number(&scanbuf);
+                        if (val <= 3) {
+                            modem->compression = val;
+                            break;
+                        }
+                    }
+
+                    // Windows 98 modem prober sends unknown command AT%V
+                    modem_send_res(modem, ResERROR);
+                    return;
+                }
             case '\0':
                 modem_send_res(modem, ResOK);
                 return;
@@ -1488,16 +1599,70 @@ modem_cmdpause_timer_callback(void *priv)
 
 /* Initialize the device for use by the user. */
 static void *
-modem_init(UNUSED(const device_t *info))
+modem_init(const device_t *info)
 {
     modem_t    *modem          = (modem_t *) calloc(1, sizeof(modem_t));
     const char *phonebook_file = NULL;
     memset(modem->mac, 0xfc, 6);
 
+    modem->model       = info->local;
     modem->port        = device_get_config_int("port");
     modem->baudrate    = device_get_config_int("baudrate");
     modem->listen_port = device_get_config_int("listen_port");
     modem->telnet_mode = device_get_config_int("telnet_mode");
+
+    if (modem->model == MODEM_MODEL_PB_ROCKY2) {
+        if (modem->port >= 4) {
+            warning("Rocky 2 modem: invalid COM port selection %u\n", modem->port);
+            free(modem);
+            return NULL;
+        }
+
+        const uint16_t addr = rocky2_com_addr[modem->port];
+        const int      irq  = device_get_config_int("irq");
+
+        if ((irq != 2) && (irq != 3) && (irq != 4) && (irq != 5)) {
+            warning("Rocky 2 modem: invalid IRQ jumper selection %d\n", irq);
+            free(modem);
+            return NULL;
+        }
+
+        for (uint8_t i = 0; i < (SERIAL_MAX - 1); i++) {
+            if ((com_ports[i].serial != NULL) &&
+                (com_ports[i].serial->base_address == addr)) {
+                warning("Rocky 2 modem: COM%u address %04X is already in use; "
+                        "disable the conflicting serial port\n",
+                        modem->port + 1, addr);
+                free(modem);
+                return NULL;
+            }
+        }
+
+        if (com_ports[SERIAL_MAX - 1].serial != NULL) {
+            warning("Rocky 2 modem: internal UART slot is already in use\n");
+            free(modem);
+            return NULL;
+        }
+
+        modem->uart_params = ((uintptr_t) addr << 20) |
+                             ((uintptr_t) (uint8_t) irq << 16) |
+                             ns16550_device.local;
+        modem->serial = device_add_params(&ns16550_device,
+                                          (void *) modem->uart_params);
+        modem->port   = SERIAL_MAX - 1;
+        modem->owns_uart = true;
+    }
+
+    modem->serial = serial_attach_ex_2(modem->port, modem_rcr_cb, modem_write,
+                                       modem_dtr_callback, modem);
+
+    if ((modem->model == MODEM_MODEL_PB_ROCKY2) && (modem->serial == NULL)) {
+        warning("Rocky 2 modem: unable to attach its internal UART\n");
+        device_close_inst_params(&ns16550_device, 0,
+                                 (void *) modem->uart_params);
+        free(modem);
+        return NULL;
+    }
 
     modem->clientsocket = modem->serversocket = modem->waitingclientsocket = -1;
 
@@ -1508,7 +1673,6 @@ modem_init(UNUSED(const device_t *info))
     timer_add(&modem->host_to_serial_timer, host_to_modem_cb, modem, 0);
     timer_add(&modem->cmdpause_timer, modem_cmdpause_timer_callback, modem, 0);
     timer_on_auto(&modem->cmdpause_timer, 1000);
-    modem->serial = serial_attach_ex_2(modem->port, modem_rcr_cb, modem_write, modem_dtr_callback, modem);
 
     modem_reset(modem);
     modem->card = network_attach(modem, modem->mac, modem_rx, NULL);
@@ -1525,6 +1689,13 @@ void
 modem_close(void *priv)
 {
     modem_t *modem     = (modem_t *) priv;
+
+    if (modem->owns_uart) {
+        device_close_inst_params(&ns16550_device, 0,
+                                 (void *) modem->uart_params);
+        modem->serial = NULL;
+    }
+
     modem->listen_port = 0;
     modem_reset(modem);
     fifo8_destroy(&modem->data_pending);
@@ -1618,6 +1789,101 @@ static const device_config_t modem_config[] = {
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
+
+static const device_config_t pb_rocky2_modem_config[] = {
+    {
+        .name           = "port",
+        .description    = "Modem COM Address (disable matching system COM)",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "COM1 (0x3F8)", .value = 0 },
+            { .description = "COM2 (0x2F8)", .value = 1 },
+            { .description = "COM3 (0x3E8)", .value = 2 },
+            { .description = "COM4 (0x2E8)", .value = 3 },
+            { .description = ""                         }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "irq",
+        .description    = "Modem IRQ Jumper",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 4,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "IRQ 2", .value = 2 },
+            { .description = "IRQ 3", .value = 3 },
+            { .description = "IRQ 4", .value = 4 },
+            { .description = "IRQ 5", .value = 5 },
+            { .description = ""                  }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "baudrate",
+        .description    = "Maximum Line Speed",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 14400,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "14400", .value = 14400 },
+            { .description = "12000", .value = 12000 },
+            { .description =  "9600", .value =  9600 },
+            { .description =  "7200", .value =  7200 },
+            { .description =  "4800", .value =  4800 },
+            { .description =  "2400", .value =  2400 },
+            { .description =  "1200", .value =  1200 },
+            { .description =   "600", .value =   600 },
+            { .description =   "300", .value =   300 },
+            { .description = ""                        }
+        },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "listen_port",
+        .description    = "TCP/IP listening port",
+        .type           = CONFIG_SPINNER,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = {
+            .min =     0,
+            .max = 32767
+        },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "phonebook_file",
+        .description    = "Phonebook File",
+        .type           = CONFIG_FNAME,
+        .default_string = NULL,
+        .file_filter    = "Text files (*.txt)|*.txt",
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        .name           = "telnet_mode",
+        .description    = "Telnet emulation",
+        .type           = CONFIG_BINARY,
+        .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
 // clang-format on
 
 const device_t modem_device = {
@@ -1632,4 +1898,19 @@ const device_t modem_device = {
     .speed_changed = modem_speed_changed,
     .force_redraw  = NULL,
     .config        = modem_config
+};
+
+const device_t pb_rocky2_modem_device = {
+    .name          = "Packard Bell Sound II 144 AM/SP (Rocky 2) Modem",
+    .internal_name = "pb_rocky2_modem",
+    .flags         = DEVICE_ISA16,
+    .local         = MODEM_MODEL_PB_ROCKY2,
+    .init          = modem_init,
+    .close         = modem_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = modem_speed_changed,
+    .force_redraw  = NULL,
+    .alias         = "14.4K V.32bis modem",
+    .config        = pb_rocky2_modem_config
 };

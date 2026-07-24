@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdint.h>
+#include <io.h>
 
 #include <windows.h>
 
@@ -29,11 +30,11 @@ plat_unlock_volumes(plat_device_vol_locked_t* vol)
     uintptr_t i = 0;
     for (i = 0; i < vol->vol_nums; i++) {
         if (vol->handles_vols[i] != ((uintptr_t) (intptr_t) -1)) {
-            DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_DISMOUNT_VOLUME, 0, 0, 0, 0, &bytesRet, nullptr);
-            DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_UNLOCK_VOLUME, 0, 0, 0, 0, &bytesRet, nullptr);
+            DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_DISMOUNT_VOLUME, 0, 0, 0, 0, &bytesRet, NULL);
+            DeviceIoControl((HANDLE)vol->handles_vols[i], FSCTL_UNLOCK_VOLUME, 0, 0, 0, 0, &bytesRet, NULL);
         }
     }
-    DeviceIoControl((HANDLE)vol->handle_disk, IOCTL_DISK_UPDATE_PROPERTIES, 0, 0, 0, 0, &bytesRet, nullptr);
+    DeviceIoControl((HANDLE)vol->handle_disk, IOCTL_DISK_UPDATE_PROPERTIES, 0, 0, 0, 0, &bytesRet, NULL);
     (void)GetLogicalDrives();
     for (i = 0; i < vol->vol_nums; i++) {
         if (vol->handles_vols[i] != ((uintptr_t) (intptr_t) -1)) {

@@ -32,3 +32,7 @@ add_library(scsi OBJECT
     scsi_ql1xxx.c
     scsi_spock.c
 )
+
+if(STORAGE_COMMAND_LOG)
+    target_compile_definitions(scsi PRIVATE ENABLE_SCSI_CDROM_LOG=1)
+endif()
