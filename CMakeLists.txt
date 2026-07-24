@@ -136,6 +136,7 @@ option(SOUNDCANVAS  "Sound Canvas (CLAP)"                                       
 option(VNC          "VNC renderer"                                               OFF)
 option(MINITRACE    "Enable Chrome tracing using the modified minitrace library" OFF)
 option(GDBSTUB      "Enable GDB stub server for debugging"                       OFF)
+option(STORAGE_COMMAND_LOG "Enable ATA/ATAPI storage command logging"            OFF)
 option(DEV_BRANCH   "Development branch"                                         OFF)
 option(DISCORD      "Discord Rich Presence support"                              ON)
 option(DEBUGREGS486 "Enable debug register opeartion on 486+ CPUs"               OFF)

@@ -235,7 +235,8 @@ static const struct cdrom_drive_types_s {
        pending an IDENTIFY dump. */
     { "NEC",      "CD-ROM DRIVE:284", "3.51", "",          "nec_1400a",      BUS_TYPE_IDE,  0,  8, 36, 0, 0, {  4,  2,  1, -1 }, 128, "CDR-1400A" },
     { "NEC",      "CD-ROM DRIVE:289", "1.00", "",          "nec_289",        BUS_TYPE_IDE,  0, 24, 36, 0, 0, {  4,  2,  2,  0 } },
-    { "NEC",      "CDR-1300A",        "1.05", "",          "nec_1300a",      BUS_TYPE_IDE,  0,  6, 36, 0, 0, {  4,  2,  2, -1 } },
+    /* NEC's contemporary specifications give the CDR-1300A a 128 KiB buffer. */
+    { "NEC",      "CDR-1300A",        "1.05", "",          "nec_1300a",      BUS_TYPE_IDE,  0,  6, 36, 0, 0, {  4,  2,  2, -1 }, 128 },
     { "NEC",      "CDR-1801A",        "J111", "",          "nec_1801a",      BUS_TYPE_IDE,  0, 24, 36, 0, 0, {  4,  2,  2,  1 } },
     { "NEC",      "CDR-1900A",        "1.00", "",          "nec_1900a",      BUS_TYPE_IDE,  0, 32, 36, 0, 0, {  4,  2,  2,  1 } },
     { "NEC",      "CDR-3002A",        "C000", "",          "nec_3002a",      BUS_TYPE_IDE,  0, 52, 36, 0, 0, {  4,  2,  2,  4 } },

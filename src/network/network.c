@@ -107,6 +107,7 @@ static const NETWORK_CARD net_cards[] = {
     { &pcnet_am79c960_device      },
     { &pcnet_am79c961_device      },
     { &de220p_device              },
+    { &ibm_valuepoint_ethernet_device  },
     { &ne2000_compat_device       },
     { &pcnet_am79c960_eb_device   },
     /* MCA */

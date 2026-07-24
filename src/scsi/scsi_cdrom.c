@@ -3877,6 +3877,40 @@ scsi_cdrom_get_timings(const ide_t *ide, UNUSED(const int ide_has_dma), const in
     return ret;
 }
 
+static uint32_t
+scsi_cdrom_serial_hash(const scsi_cdrom_t *dev)
+{
+    const char *name = cdrom_get_internal_name(dev->drv->type);
+    uint32_t    hash = 2166136261U;
+
+    while (*name) {
+        hash ^= (uint8_t) *name++;
+        hash *= 16777619U;
+    }
+
+    return hash;
+}
+
+static int
+scsi_cdrom_ata_version(const scsi_cdrom_t *dev)
+{
+    const int max_pio  = cdrom_get_transfer_max(dev->drv->type, TYPE_PIO);
+    const int max_udma = cdrom_get_transfer_max(dev->drv->type, TYPE_UDMA);
+
+    if (dev->drv->is_early)
+        return 1;
+    if (max_udma >= 5)
+        return 6;
+    if (max_udma >= 3)
+        return 5;
+    if (max_udma >= 0)
+        return 4;
+    if (max_pio >= 3 || cdrom_has_dma(dev->drv->type))
+        return 2;
+
+    return 1;
+}
+
 /**
  * Fill in ide->buffer with the output of the "IDENTIFY PACKET DEVICE" command
  */
@@ -3885,7 +3919,9 @@ scsi_cdrom_identify(const ide_t *ide, UNUSED(const int ide_has_dma))
 {
     const scsi_cdrom_t *dev         = (scsi_cdrom_t *) ide->sc;
     char                model[2048] = { 0 };
+    char                serial[21]  = { 0 };
     const int           has_dma     = cdrom_has_dma(dev->drv->type);
+    const int           ata_version = scsi_cdrom_ata_version(dev);
 
     cdrom_get_identify_model(dev->drv->type, model, dev->id);
 
@@ -3895,7 +3931,9 @@ scsi_cdrom_identify(const ide_t *ide, UNUSED(const int ide_has_dma))
         ide->buffer[0] = 0x8000 | (5 << 8) | 0x80 | (1 << 5); /* ATAPI device, CD-ROM drive, removable media, interrupt DRQ */
     else
         ide->buffer[0] = 0x8000 | (5 << 8) | 0x80 | (2 << 5); /* ATAPI device, CD-ROM drive, removable media, accelerated DRQ */
-    ide_padstr((char *) (ide->buffer + 10), "", 20);                                   /* Serial Number */
+    snprintf(serial, sizeof(serial), "86B-%08X-%02u",
+             scsi_cdrom_serial_hash(dev), (unsigned int) dev->id);
+    ide_padstr((char *) (ide->buffer + 10), serial, 20);                               /* Serial Number */
 
     ide_padstr((char *) (ide->buffer + 23), cdrom_get_revision(dev->drv->type), 8);    /* Firmware */
     ide_padstr((char *) (ide->buffer + 27), model, 40);                                /* Model */
@@ -3906,9 +3944,10 @@ scsi_cdrom_identify(const ide_t *ide, UNUSED(const int ide_has_dma))
     if (has_dma) {
         ide->buffer[71] = 30;
         ide->buffer[72] = 30;
-        ide->buffer[80] = 0x7e; /*ATA-1 to ATA-6 supported*/
-        ide->buffer[81] = 0x19; /*ATA-6 revision 3a supported*/
     }
+
+    ide->buffer[80] = (uint16_t) ((1U << (ata_version + 1)) - 2U);
+    ide->buffer[81] = 0x0000;
 }
 
 void

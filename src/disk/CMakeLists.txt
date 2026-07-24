@@ -41,6 +41,10 @@ add_library(hdd OBJECT
     hdd_audio.c
 )
 
+if(STORAGE_COMMAND_LOG)
+    target_compile_definitions(hdd PRIVATE ENABLE_IDE_LOG=1)
+endif()
+
 add_library(rdisk OBJECT rdisk.c)
 
 add_library(mo OBJECT mo.c)

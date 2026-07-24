@@ -720,7 +720,7 @@ static hdd_preset_t hdd_speed_presets[] = {
     { .name = "[ATA-2] Western Digital Caviar 22100",             .internal_name = "AC22100",                          .model = "WDC AC22100H",                                                .zones =  8, .avg_spt = 140, .heads =  4, .rpm = 5200,  .full_stroke_ms = 30, .track_seek_ms = 3,   .rcache_num_seg =  8, .rcache_seg_size =  128, .max_multiple = 16 },
     { .name = "[ATA-2] Western Digital Caviar 22500",             .internal_name = "AC22500",                          .model = "WDC AC22500H",                                                .zones =  8, .avg_spt = 130, .heads =  2, .rpm = 5200,  .full_stroke_ms = 30, .track_seek_ms = 3,   .rcache_num_seg =  8, .rcache_seg_size =  128, .max_multiple = 16 },
     { .name = "[ATA-2] Western Digital Caviar 31000",             .internal_name = "AC31000",                          .model = "WDC AC31000F",                                                .zones =  8, .avg_spt = 110, .heads =  2, .rpm = 5200,  .full_stroke_ms = 30, .track_seek_ms = 3,   .rcache_num_seg =  8, .rcache_seg_size =  128, .max_multiple =  8 },
-    { .name = "[ATA-2] Western Digital Caviar 31200",             .internal_name = "AC31200",                          .model = "WDC AC31200F",                                                .zones =  8, .avg_spt = 210, .heads =  4, .rpm = 4500,  .full_stroke_ms = 12, .track_seek_ms = 4,   .rcache_num_seg =  8, .rcache_seg_size =   64, .max_multiple = 16 },
+    { .name = "[ATA-2] Western Digital Caviar 31200",             .internal_name = "AC31200",              .vendor = "WDC", .model = "WDC AC31200F", .version = "15.05F29",              .zones =  8, .avg_spt = 210, .heads =  6, .rpm = 4500,  .full_stroke_ms = 12, .track_seek_ms = 4,   .rcache_num_seg =  8, .rcache_seg_size =   16, .max_multiple = 16 },
     { .name = "[ATA-2] Western Digital Caviar 31600",             .internal_name = "AC31600",                          .model = "WDC AC31600H",                                                .zones =  8, .avg_spt = 220, .heads =  4, .rpm = 5200,  .full_stroke_ms = 12, .track_seek_ms = 4,   .rcache_num_seg =  8, .rcache_seg_size =   64, .max_multiple = 16 },
     { .name = "[ATA-2] Western Digital Caviar 32500",             .internal_name = "AC32500",                          .model = "WDC AC32500H",                                                .zones =  8, .avg_spt = 230, .heads =  3, .rpm = 5200,  .full_stroke_ms = 12, .track_seek_ms = 3,   .rcache_num_seg =  8, .rcache_seg_size =  128, .max_multiple = 16 },
     { .name = "[ATA-3] Fujitsu MPA3017AT",                        .internal_name = "MPA3017AT",                        .model = "FUJITSU MPA3017AT",                                           .zones =  5, .avg_spt = 210, .heads =  2, .rpm = 5400,  .full_stroke_ms = 35, .track_seek_ms = 3,   .rcache_num_seg =  8, .rcache_seg_size =  128, .max_multiple = 16 },
@@ -1050,6 +1050,47 @@ hdd_preset_get_rpm(int preset)
     if (preset < 0 || preset >= hdd_preset_get_num())
         return 0;
     return hdd_speed_presets[preset].rpm;
+}
+
+int
+hdd_preset_get_ata_version(int preset)
+{
+    const char *name;
+    const char *internal_name;
+    int         version = 0;
+
+    if (preset < 0 || preset >= hdd_preset_get_num())
+        return 0;
+
+    name          = hdd_speed_presets[preset].name;
+    internal_name = hdd_speed_presets[preset].internal_name;
+
+    if (sscanf(name, "[ATA-%d]", &version) == 1)
+        return (version >= 1 && version <= 8) ? version : 0;
+
+    /*
+       Generic presets do not encode an ATA generation in their display
+       names.  Associate them with the contemporary standard so their
+       IDENTIFY data remains coherent when used on an IDE controller.
+     */
+    if (!strcmp(internal_name, "ramdisk"))
+        return 6;
+    if (!strcmp(internal_name, "1989_3500rpm") ||
+        !strcmp(internal_name, "1992_3600rpm"))
+        return 1;
+    if (!strcmp(internal_name, "1994_4500rpm"))
+        return 2;
+    if (!strcmp(internal_name, "1996_5400rpm") ||
+        !strcmp(internal_name, "1997_5400rpm"))
+        return 3;
+    if (!strcmp(internal_name, "1998_5400rpm"))
+        return 4;
+    if (!strcmp(internal_name, "2000_7200rpm"))
+        return 5;
+    if (!strcmp(internal_name, "2004_10000rpm"))
+        return 6;
+
+    return 0;
 }
 
 int
