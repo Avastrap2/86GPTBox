@@ -100,12 +100,14 @@ static const NETWORK_CARD net_cards[] = {
     { &wd8013ebt_device           },
     /* COM */
     { &modem_device               },
+    { &pb_rocky2_modem_device     },
     /* LPT */
     { &plip_device                },
     /* ISA16 */
     { &pcnet_am79c960_device      },
     { &pcnet_am79c961_device      },
     { &de220p_device              },
+    { &ibm_valuepoint_ethernet_device  },
     { &ne2000_compat_device       },
     { &pcnet_am79c960_eb_device   },
     /* MCA */
@@ -489,7 +491,8 @@ network_attach(void *card_drv, uint8_t *mac, NETRXCB rx, NETSETLINKSTATE set_lin
     }
 
     const char *nic_name = network_card_get_internal_name(net_cards_conf[net_card_current].device_num);
-    if ((!strcmp(nic_name, "modem") || !strcmp(nic_name, "plip")) && (net_type >= NET_TYPE_PCAP)) {
+    if ((!strcmp(nic_name, "modem") || !strcmp(nic_name, "pb_rocky2_modem") ||
+         !strcmp(nic_name, "plip")) && (net_type >= NET_TYPE_PCAP)) {
         /* Force SLiRP here. Modem and PLIP only operate on non-Ethernet frames. */
         net_type = NET_TYPE_SLIRP;
     }

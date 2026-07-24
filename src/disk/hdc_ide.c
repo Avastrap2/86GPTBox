@@ -475,19 +475,136 @@ ide_is_ata4(const ide_board_t *board)
     return (!board->force_ata3 && (bm != NULL));
 }
 
+static bool
+ide_is_hdd_preset(const ide_t *ide, const char *internal_name)
+{
+    return (ide->type == IDE_HDD) &&
+           !strcmp(hdd_preset_get_internal_name(hdd[ide->hdd_num].speed_preset),
+                   internal_name);
+}
+
+static int
+ide_hdd_ata_version(const ide_t *ide)
+{
+    if (ide->type != IDE_HDD)
+        return 0;
+
+    return hdd_preset_get_ata_version(hdd[ide->hdd_num].speed_preset);
+}
+
+static uint16_t
+ide_ata_version_mask(const int version)
+{
+    if (version < 1 || version > 14)
+        return 0;
+
+    return (uint16_t) ((1U << (version + 1)) - 2U);
+}
+
+static uint32_t
+ide_hdd_serial_hash(const ide_t *ide)
+{
+    const char *name = hdd_preset_get_internal_name(hdd[ide->hdd_num].speed_preset);
+    uint32_t    hash = 2166136261U;
+
+    while (*name) {
+        hash ^= (uint8_t) *name++;
+        hash *= 16777619U;
+    }
+
+    hash ^= hdd[ide->hdd_num].tracks;
+    hash *= 16777619U;
+    hash ^= hdd[ide->hdd_num].hpc;
+    hash *= 16777619U;
+    hash ^= hdd[ide->hdd_num].spt;
+
+    return hash;
+}
+
+/*
+ * Return the selected HDD preset's own transfer limit.  -2 means that the
+ * preset does not describe an ATA generation, while -1 means unsupported.
+ */
+static int
+ide_get_hdd_drive_max(const ide_t *ide, const int type)
+{
+    const int version = ide_hdd_ata_version(ide);
+    int       ret     = -2;
+
+    if (version) {
+        switch (type) {
+            case TYPE_PIO:
+                ret = (version == 1) ? 2 : 4;
+                break;
+            case TYPE_SDMA:
+                ret = -1;
+                break;
+            case TYPE_MDMA:
+                ret = (version == 1) ? -1 : 2;
+                break;
+            case TYPE_UDMA:
+                if (version < 4)
+                    ret = -1;
+                else if (version == 4)
+                    ret = 2;
+                else if (version == 5)
+                    ret = 4;
+                else
+                    ret = 5;
+                break;
+        }
+    }
+
+    /* The AC31200 manual specifies PIO mode 3 and multiword DMA mode 1. */
+    if (ide_is_hdd_preset(ide, "AC31200")) {
+        if (type == TYPE_PIO)
+            ret = 3;
+        else if (type == TYPE_MDMA)
+            ret = 1;
+        else if (type == TYPE_SDMA || type == TYPE_UDMA)
+            ret = -1;
+    }
+
+    return ret;
+}
+
 static int
 ide_get_max(const ide_t *ide, const int type)
 {
     const int       ata_4     = ide_is_ata4(ide_boards[ide->board]);
     const int       max[2][4] = { { 3, -1, -1, -1 }, { 4, -1, 2, 5 } };
     int             ret;
+    int             drive_max;
 
     if (ide->type == IDE_ATAPI)
         ret = ide->get_max(ide, !IDE_ATAPI_IS_EARLY && ata_4, type);
     else
         ret = max[ata_4][type];
 
+    /*
+       An HDD's transfer capabilities come from the selected drive preset,
+       not from the controller.  The controller can reduce those capabilities
+       further, but must not make an older drive claim later transfer modes.
+     */
+    drive_max = ide_get_hdd_drive_max(ide, type);
+
+    if (drive_max == -1)
+        ret = -1;
+    else if (drive_max >= 0 && ret > drive_max)
+        ret = drive_max;
+
     return ret;
+}
+
+static int
+ide_get_identify_max(const ide_t *ide, const int type)
+{
+    const int drive_max = ide_get_hdd_drive_max(ide, type);
+
+    if (ide->type == IDE_HDD && drive_max != -2)
+        return drive_max;
+
+    return ide_get_max(ide, type);
 }
 
 static int
@@ -505,6 +622,22 @@ ide_get_timings(const ide_t *ide, const int type)
     return ret;
 }
 
+static int
+ide_get_identify_timings(const ide_t *ide, const int type, const int max_pio)
+{
+    static const int pio_cycle_time[5] = { 600, 383, 240, 180, 120 };
+
+    if (ide->type == IDE_HDD && ide_hdd_ata_version(ide)) {
+        if (type == TIMINGS_PIO_FC)
+            return pio_cycle_time[(max_pio < 0) ? 0 : MIN(max_pio, 4)];
+        if (type == TIMINGS_DMA)
+            return (ide_get_hdd_drive_max(ide, TYPE_MDMA) >= 0 ||
+                    ide_get_hdd_drive_max(ide, TYPE_UDMA) >= 0) ? 120 : 0;
+    }
+
+    return ide_get_timings(ide, type);
+}
+
 /**
  * Fill in ide->buffer with the output of the "IDENTIFY DEVICE" command
  */
@@ -512,7 +645,10 @@ static void
 ide_hd_identify(const ide_t *ide)
 {
     char device_identify[9] = { '8', '6', 'B', '_', 'H', 'D', '0', '0', 0 };
+    char serial[21]         = { 0 };
     const ide_bm_t *bm      = ide_boards[ide->board]->bm;
+    const bool is_ac31200   = ide_is_hdd_preset(ide, "AC31200");
+    const int ata_version   = ide_hdd_ata_version(ide);
     uint64_t full_size      = (((uint64_t) hdd[ide->hdd_num].tracks) *
                               hdd[ide->hdd_num].hpc * hdd[ide->hdd_num].spt);
 
@@ -551,7 +687,20 @@ ide_hd_identify(const ide_t *ide)
     ide_log("Default CHS translation: %i, %i, %i\n", ide->buffer[1], ide->buffer[3], ide->buffer[6]);
 
     /* Serial Number */
-    ide_padstr((char *) (ide->buffer + 10), "", 20);
+    if (is_ac31200) {
+        /* Stable synthetic serial in the format used by surviving drives. */
+        snprintf(serial, sizeof(serial), "WD-WT860000%04u",
+                 (unsigned int) ide->hdd_num);
+    } else {
+        /*
+           Real images do not contain a physical drive serial.  Supply a
+           deterministic emulator-owned value so software can distinguish
+           identical presets without pretending it came from the vendor.
+         */
+        snprintf(serial, sizeof(serial), "86B-%08X-%02u",
+                 ide_hdd_serial_hash(ide), (unsigned int) ide->hdd_num);
+    }
+    ide_padstr((char *) (ide->buffer + 10), serial, 20);
     /* Firmware */
     if (hdd[ide->hdd_num].version)
         ide_padstr((char *) (ide->buffer + 23), hdd[ide->hdd_num].version, 8);
@@ -572,7 +721,8 @@ ide_hd_identify(const ide_t *ide)
     ide->buffer[50] = 0x4000;
     ide->buffer[59] = ide->blocksize ? (ide->blocksize | 0x100) : 0;
 
-    if (ide->is_jride || (ide->tracks >= 1024) || (ide->hpc > 16) || (ide->spt > 63)) {
+    if (ide->is_jride || (ata_version >= 2) ||
+        (ide->tracks >= 1024) || (ide->hpc > 16) || (ide->spt > 63)) {
         /* JR-IDE requires IDENTIFY word 49 bit 9 even for small CHS-only geometries. */
         ide->buffer[49] = (1 << 9);
         ide_log("LBA supported\n");
@@ -613,15 +763,20 @@ ide_hd_identify(const ide_t *ide)
 
     /* Max sectors on multiple transfer command */
     ide->buffer[47] = hdd[ide->hdd_num].max_multiple_block | 0x8000;
-    if (!ide_boards[ide->board]->force_ata3 && (bm != NULL)) {
+    if (ata_version) {
+        ide->buffer[80] = ide_ata_version_mask(ata_version);
+        ide->buffer[81] = 0x0000;
+    } else if (!ide_boards[ide->board]->force_ata3 && (bm != NULL)) {
         ide->buffer[80] = 0x7e; /*ATA-1 to ATA-6 supported*/
         ide->buffer[81] = 0x19; /*ATA-6 revision 3a supported*/
     } else
         ide->buffer[80] = 0x0e; /*ATA-1 to ATA-3 supported*/
 
-    ide->buffer[83] = ide->buffer[84] = 0x4000;
-    ide->buffer[86] = 0x0000;
-    ide->buffer[87] = 0x4000;
+    if (!ata_version || ata_version >= 4) {
+        ide->buffer[83] = ide->buffer[84] = 0x4000;
+        ide->buffer[86] = 0x0000;
+        ide->buffer[87] = 0x4000;
+    }
 }
 
 static void
@@ -649,14 +804,14 @@ ide_identify(ide_t *ide)
         return;
     }
 
-    max_pio  = ide_get_max(ide, TYPE_PIO);
+    max_pio  = ide_get_identify_max(ide, TYPE_PIO);
 #ifdef REPORT_SDMA
-    max_sdma = ide_get_max(ide, TYPE_SDMA);
+    max_sdma = ide_get_identify_max(ide, TYPE_SDMA);
 #else
     max_sdma = -1;
 #endif
-    max_mdma = ide_get_max(ide, TYPE_MDMA);
-    max_udma = ide_get_max(ide, TYPE_UDMA);
+    max_mdma = ide_get_identify_max(ide, TYPE_MDMA);
+    max_udma = ide_get_identify_max(ide, TYPE_UDMA);
     ide_log("IDE %i: max_pio = %i, max_sdma = %i, max_mdma = %i, max_udma = %i\n",
             ide->channel, max_pio, max_sdma, max_mdma, max_udma);
 
@@ -665,15 +820,15 @@ ide_identify(ide_t *ide)
     ide->buffer[51] = ((max_pio > 2) ? 2 : max_pio) << 8;
     ide->buffer[53] &= 0xfff9;
     ide->buffer[52] = ide->buffer[62] = ide->buffer[63] = ide->buffer[64] = 0x0000;
-    ide->buffer[65] = ide->buffer[66] = ide_get_timings(ide, TIMINGS_DMA);
+    ide->buffer[65] = ide->buffer[66] = ide_get_identify_timings(ide, TIMINGS_DMA, max_pio);
     ide->buffer[67] = ide->buffer[68] = 0x0000;
     ide->buffer[88]                   = 0x0000;
 
     if (max_pio >= 3) {
         ide->buffer[49] |= 0x0c00;
         ide->buffer[53] |= 0x0002;
-        ide->buffer[67] = ide_get_timings(ide, TIMINGS_PIO_FC);
-        ide->buffer[68] = ide_get_timings(ide, TIMINGS_PIO_FC);
+        ide->buffer[67] = ide_get_identify_timings(ide, TIMINGS_PIO_FC, max_pio);
+        ide->buffer[68] = ide_get_identify_timings(ide, TIMINGS_PIO_FC, max_pio);
         for (i = 3; i <= max_pio; i++)
             ide->buffer[64] |= (1 << (i - 3));
     }
@@ -706,12 +861,12 @@ ide_identify(ide_t *ide)
     if ((max_sdma != -1) || (max_mdma != -1) || (max_udma != -1)) {
         /* DMA supported */
         ide->buffer[49] |= 0x100;
-        ide->buffer[52] = ide_get_timings(ide, TIMINGS_DMA);
+        ide->buffer[52] = ide_get_identify_timings(ide, TIMINGS_DMA, max_pio);
     }
 
     if ((max_mdma != -1) || (max_udma != -1)) {
-        ide->buffer[65] = ide_get_timings(ide, TIMINGS_DMA);
-        ide->buffer[66] = ide_get_timings(ide, TIMINGS_DMA);
+        ide->buffer[65] = ide_get_identify_timings(ide, TIMINGS_DMA, max_pio);
+        ide->buffer[66] = ide_get_identify_timings(ide, TIMINGS_DMA, max_pio);
     }
 
     if (ide->mdma_mode != -1) {
@@ -723,6 +878,23 @@ ide_identify(ide_t *ide)
         else if ((ide->mdma_mode & 0x300) == 0x300)
             ide->buffer[88] |= d;
         ide_log("PIDENTIFY DMA Mode: %04X, %04X\n", ide->buffer[62], ide->buffer[63]);
+    }
+
+    if (ide_is_hdd_preset(ide, "AC31200")) {
+        /*
+           AC31200 Technical Reference Manual: PIO mode 3 and multiword DMA
+           mode 1.  These are drive capabilities, so report them even when
+           the selected controller itself cannot perform DMA.
+         */
+        ide->buffer[49] |= 0x0f00; /* DMA, LBA, and IORDY supported. */
+        ide->buffer[53] = (ide->buffer[53] | 0x0002) & ~0x0004;
+        ide->buffer[62] = 0x0000;
+        ide->buffer[63] = (ide->buffer[63] & 0x0300) | 0x0003;
+        ide->buffer[64] = 0x0001;
+        ide->buffer[65] = ide->buffer[66] = 150;
+        ide->buffer[67] = ide->buffer[68] = 180;
+        ide->buffer[88] = 0x0000;
+        ide->buffer[93] = 0x0000;
     }
 }
 

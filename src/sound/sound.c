@@ -174,6 +174,7 @@ static const SOUND_CARD sound_cards[] = {
     { &azt1605_device               },
     { &azt2316a_device              },
     { &azt2316r_device              },
+    { &pb_sound2_device             },
     { &azt2320_device               },
     { &sb_goldfinch_device          },
     { &cs4232_device                },

@@ -227,6 +227,7 @@ extern const device_t ne2000_device;
 extern const device_t ne2000_compat_device;
 extern const device_t ne2000_compat_8bit_device;
 extern const device_t ethernext_mc_device;
+extern const device_t ibm_valuepoint_ethernet_device;
 extern const device_t rtl8019as_pnp_device;
 extern const device_t de220p_device;
 extern const device_t rtl8029as_device;
@@ -242,6 +243,7 @@ extern const device_t pcnet_am79c973_onboard_device;
 
 /* Modem */
 extern const device_t modem_device;
+extern const device_t pb_rocky2_modem_device;
 
 /* PLIP */
 extern const device_t plip_device;
