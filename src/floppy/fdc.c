@@ -1180,7 +1180,7 @@ fdc_write(uint16_t addr, uint8_t val, void *priv)
                             fdc_callback(fdc);
                             break;
                         case 0x12: /*Set perpendicular mode*/
-                            if ((fdc->flags & FDC_FLAG_AT) && !(fdc->flags & FDC_FLAG_PCJR)) {
+                            if ((fdc->flags & FDC_FLAG_AT) && !(fdc->flags & (FDC_FLAG_PCJR | FDC_FLAG_NEC))) {
                                 fdc->pnum = 0;
                                 fdc->ptot = 1;
                                 fdc->stat |= 0x90;
@@ -2478,7 +2478,11 @@ fdc_set_base(fdc_t *fdc, int base)
         io_sethandler(base + 0x0005, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
     } else {
         if ((fdc->flags & FDC_FLAG_AT) || (fdc->flags & FDC_FLAG_AMSTRAD)) {
-            io_sethandler(base + (super_io ? 2 : 0), super_io ? 0x0004 : 0x0006, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+            if (fdc->flags & FDC_FLAG_NO_TDR) {
+                io_sethandler(base + 2, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+                io_sethandler(base + 4, 0x0002, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+            } else
+                io_sethandler(base + (super_io ? 2 : 0), super_io ? 0x0004 : 0x0006, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
             io_sethandler(base + 7, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
         } else {
             if (fdc->flags & FDC_FLAG_PCJR)
@@ -2520,7 +2524,11 @@ fdc_remove(fdc_t *fdc)
         io_removehandler(fdc->base_address + 5, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
     } else {
         if ((fdc->flags & FDC_FLAG_AT) || (fdc->flags & FDC_FLAG_AMSTRAD)) {
-            io_removehandler(fdc->base_address + (super_io ? 2 : 0), super_io ? 0x0004 : 0x0006, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+            if (fdc->flags & FDC_FLAG_NO_TDR) {
+                io_removehandler(fdc->base_address + 2, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+                io_removehandler(fdc->base_address + 4, 0x0002, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
+            } else
+                io_removehandler(fdc->base_address + (super_io ? 2 : 0), super_io ? 0x0004 : 0x0006, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
             io_removehandler(fdc->base_address + 7, 0x0001, fdc_read, NULL, NULL, fdc_write, NULL, NULL, fdc);
         } else {
             if (fdc->flags & FDC_FLAG_PCJR)
@@ -2857,6 +2865,20 @@ const device_t fdc_at_device = {
     .internal_name = "fdc_at",
     .flags         = DEVICE_ISA,
     .local         = FDC_FLAG_AT,
+    .init          = fdc_init,
+    .close         = fdc_close,
+    .reset         = fdc_reset,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t fdc_at_nec_device = {
+    .name          = "PC/AT FDC (NEC uPD765A)",
+    .internal_name = "fdc_at_nec",
+    .flags         = DEVICE_ISA,
+    .local         = FDC_FLAG_AT | FDC_FLAG_NEC | FDC_FLAG_NO_TDR,
     .init          = fdc_init,
     .close         = fdc_close,
     .reset         = fdc_reset,

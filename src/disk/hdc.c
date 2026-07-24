@@ -83,6 +83,7 @@ static const struct {
     { &ide_ter_device                       },
     { &ide_qua_device                       },
     { &st506_at_wd1003_device               },
+    { &st506_at_wd1003_wa2_device           },
     { &esdi_at_wd1007vse1_device            },
     /* MCA */
     { &esdi_ps2_device                      },
