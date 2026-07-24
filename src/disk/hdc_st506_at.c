@@ -34,6 +34,8 @@
 #include <86box/timer.h>
 #include <86box/plat.h>
 #include <86box/ui.h>
+#include <86box/fdd.h>
+#include <86box/fdc.h>
 #include <86box/hdc.h>
 #include <86box/hdd.h>
 
@@ -71,6 +73,11 @@
 #define CMD_SEEK           0x70
 #define CMD_DIAGNOSE       0x90
 #define CMD_SET_PARAMETERS 0x91
+
+enum {
+    WD1003_WAH = 0,
+    WD1003_WA2
+};
 
 typedef struct drive_t {
     int8_t  present;  /* drive is present */
@@ -753,7 +760,7 @@ loadhd(mfm_t *mfm, int c, int d, UNUSED(const char *fn))
 }
 
 static void *
-mfm_init(UNUSED(const device_t *info))
+mfm_init(const device_t *info)
 {
     mfm_t *mfm;
     int    c;
@@ -776,6 +783,14 @@ mfm_init(UNUSED(const device_t *info))
 
     mfm->status = STAT_READY | STAT_DSC; /* drive is ready */
     mfm->error  = 1;                     /* no errors */
+
+    /*
+     * The WD1003-WA2 adds a NEC uPD765A-compatible floppy section to the
+     * WD1003-WAH hard-disk design. The board has no option ROM and its
+     * factory configuration uses the primary AT FDC ports, IRQ 6 and DMA 2.
+     */
+    if (info->local == WD1003_WA2)
+        device_add(&fdc_at_nec_device);
 
     io_sethandler(0x01f0, 1,
                   mfm_read, mfm_readw, NULL, mfm_write, mfm_writew, NULL, mfm);
@@ -813,7 +828,21 @@ const device_t st506_at_wd1003_device = {
     .name          = "WD1003-WAH (MFM/RLL)",
     .internal_name = "st506_at",
     .flags         = DEVICE_ISA16,
-    .local         = 0,
+    .local         = WD1003_WAH,
+    .init          = mfm_init,
+    .close         = mfm_close,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = NULL
+};
+
+const device_t st506_at_wd1003_wa2_device = {
+    .name          = "WD1003-WA2 (MFM, FDC)",
+    .internal_name = "st506_at_wd1003_wa2",
+    .flags         = DEVICE_ISA16,
+    .local         = WD1003_WA2,
     .init          = mfm_init,
     .close         = mfm_close,
     .reset         = NULL,
