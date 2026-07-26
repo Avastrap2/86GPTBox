@@ -1462,13 +1462,17 @@ extern int             machine_ps1_m2121_init(const machine_t *);
 /* m_ps1_hdc.c */
 #ifdef EMU_DEVICE_H
 extern void            ps1_hdc_inform(void *, uint8_t *);
+extern void            ps1_hdc_set_enabled(void *, int);
 extern const device_t  ps1_hdc_device;
+extern const device_t  ps2_m25_hdc_device;
 #endif
 
 /* m_ps2_isa.c */
 #ifdef EMU_DEVICE_H
+extern const device_t  ps2_m25_device;
 extern const device_t  ps2_m30_286_device;
 #endif
+extern int             machine_ps2_m25_init(const machine_t *);
 extern int             machine_ps2_m30_286_init(const machine_t *);
 
 /* m_ps2_mca.c */
