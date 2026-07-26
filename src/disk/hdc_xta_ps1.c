@@ -371,7 +371,6 @@ typedef struct hdc_t {
     uint16_t base; /* controller base I/O address */
     int8_t   irq;  /* controller IRQ channel */
     int8_t   dma;  /* controller DMA channel */
-    uint8_t  enabled;
 
     /* Registers. */
     uint8_t attn;    /* ATTENTION register */
@@ -504,7 +503,7 @@ set_intr(hdc_t *dev, int raise)
 {
     if (raise) {
         dev->status |= ASR_INT_REQ;
-        if (dev->enabled && (dev->ctrl & ACR_INT_EN))
+        if (dev->ctrl & ACR_INT_EN)
             picint(1 << dev->irq);
     } else {
         dev->status &= ~ASR_INT_REQ;
@@ -1179,9 +1178,8 @@ hdc_read(uint16_t port, void *priv)
     hdc_t  *dev = (hdc_t *) priv;
     uint8_t ret = 0xff;
 
-    /* PS/1 TRM: tell the system board that the controller was selected. */
-    if (dev->reg_91)
-        *dev->reg_91 |= 0x01;
+    /* TRM: tell system board we are alive. */
+    *dev->reg_91 |= 0x01;
 
     switch (port & 7) {
         case 0: /* DATA register */
@@ -1232,9 +1230,8 @@ hdc_write(uint16_t port, uint8_t val, void *priv)
 
     ps1_hdc_log("[%04X:%08X] [W] %04X = %02X\n", CS, cpu_state.pc, port, val);
 
-    /* PS/1 TRM: tell the system board that the controller was selected. */
-    if (dev->reg_91)
-        *dev->reg_91 |= 0x01;
+    /* TRM: tell system board we are alive. */
+    *dev->reg_91 |= 0x01;
 
     switch (port & 7) {
         case 0: /* DATA register */
@@ -1346,7 +1343,7 @@ hdc_write(uint16_t port, uint8_t val, void *priv)
 }
 
 static void *
-ps1_hdc_init(const device_t *info)
+ps1_hdc_init(UNUSED(const device_t *info))
 {
     drive_t *drive;
     hdc_t   *dev;
@@ -1355,13 +1352,9 @@ ps1_hdc_init(const device_t *info)
     /* Allocate and initialize device block. */
     dev = calloc(1, sizeof(hdc_t));
 
-    /*
-     * The PS/2 Model 25 direct-bus attachment uses IRQ5.  The later
-     * AT-compatible PS/1/PS/2 implementation uses IRQ14.  Both use DMA3
-     * and the same five-register attachment interface at 0320h.
-     */
+    /* Set up controller parameters for PS/1 2011. */
     dev->base = 0x0320;
-    dev->irq  = info->local ? 5 : 14;
+    dev->irq  = 14;
     dev->dma  = 3;
 
     ps1_hdc_log("HDC: initializing (I/O=%04X, IRQ=%d, DMA=%d)\n",
@@ -1408,7 +1401,6 @@ ps1_hdc_init(const device_t *info)
     /* Enable the I/O block. */
     io_sethandler(dev->base, 5,
                   hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
-    dev->enabled = 1;
 
     /* Create a timer for command delays. */
     timer_add(&dev->timer, hdc_callback, dev, 0);
@@ -1423,9 +1415,8 @@ ps1_hdc_close(void *priv)
     const drive_t *drive;
 
     /* Remove the I/O handler. */
-    if (dev->enabled)
-        io_removehandler(dev->base, 5,
-                         hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
+    io_removehandler(dev->base, 5,
+                     hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
 
     /* Close all disks and their images. */
     for (uint8_t d = 0; d < XTA_NUM; d++) {
@@ -1452,42 +1443,6 @@ const device_t ps1_hdc_device = {
     .force_redraw  = NULL,
     .config        = NULL
 };
-
-const device_t ps2_m25_hdc_device = {
-    .name          = "IBM PS/2 Model 25 Fixed Disk Controller",
-    .internal_name = "ps2_m25_hdc",
-    .flags         = DEVICE_ISA | DEVICE_ONBOARD,
-    .local         = 1,
-    .init          = ps1_hdc_init,
-    .close         = ps1_hdc_close,
-    .reset         = NULL,
-    .available     = NULL,
-    .speed_changed = NULL,
-    .force_redraw  = NULL,
-    .config        = NULL
-};
-
-void
-ps1_hdc_set_enabled(void *priv, int enabled)
-{
-    hdc_t *dev = (hdc_t *) priv;
-
-    enabled = !!enabled;
-    if (dev->enabled == enabled)
-        return;
-
-    dev->enabled = enabled;
-    if (enabled) {
-        io_sethandler(dev->base, 5,
-                      hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
-        if ((dev->status & ASR_INT_REQ) && (dev->ctrl & ACR_INT_EN))
-            picint(1 << dev->irq);
-    } else {
-        io_removehandler(dev->base, 5,
-                         hdc_read, NULL, NULL, hdc_write, NULL, NULL, dev);
-        picintc(1 << dev->irq);
-    }
-}
 
 /*
  * Very nasty.

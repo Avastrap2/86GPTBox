@@ -37,7 +37,6 @@ typedef struct {
 
     void     *kbc;
     void     *mcga;
-    void     *hdc;
     fdc_t    *fdc;
     serial_t *uart;
     lpt_t    *lpt;
@@ -184,11 +183,6 @@ ps2_m25_set_control(ps2_m25_t *dev, uint8_t val)
             lpt_port_remove(dev->lpt);
     }
 
-    if ((old ^ dev->port_65) & 0x01) {
-        if (dev->hdc)
-            ps1_hdc_set_enabled(dev->hdc, dev->port_65 & 0x01);
-    }
-
     if ((old ^ dev->port_65) & 0x80)
         lpt_set_output_enabled(dev->lpt, dev->port_65 & 0x80);
 }
@@ -237,7 +231,7 @@ ps2_m25_read(uint16_t port, void *priv)
 
         case 0x0062:
             return (ppispeakon ? 0x20 : 0x00) |
-                   (dev->hdc ? 0x00 : 0x04) |
+                   0x04 |
                    (hasfpu ? 0x02 : 0x00);
 
         case 0x0065:
@@ -600,9 +594,6 @@ machine_ps2_m25_init(const machine_t *model)
 
     if (fdc_current[0] == FDC_INTERNAL)
         dev->fdc = device_add(&fdc_ps2_device);
-
-    if (hdc_current[0] == HDC_INTERNAL)
-        dev->hdc = device_add(&ps2_m25_hdc_device);
 
     if (gfxcard[0] == VID_INTERNAL)
         dev->mcga = device_add(&mcga_device);
