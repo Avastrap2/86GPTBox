@@ -8,13 +8,14 @@
  *
  *          IBM PS/2 Model 25 MCGA video subsystem.
  *
- * The Model 25 predates the VGA register interface.  Its two proprietary
- * gate arrays provide CGA-compatible text and graphics modes plus 640x480
- * monochrome and 320x200 256-colour modes.  Register and storage behaviour
- * here follows the June 1987 IBM Personal System/2 Model 25 Technical
- * Reference.
+ * The Model 25 MCGA does not implement the VGA register interface. Its two
+ * proprietary gate arrays provide CGA-compatible text and graphics modes
+ * plus 640x480 monochrome and 320x200 256-colour modes. Register and storage
+ * behaviour follows the IBM Personal System/2 Model 25 Technical Reference,
+ * first edition (June 1987).
  */
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <86box/86box.h>
@@ -431,9 +432,13 @@ mcga_io_write(uint16_t addr, uint8_t val, void *priv)
                     break;
 
                 case 0x13:
-                    if ((val == 0x00) || (val == 0x10) ||
-                        (val == 0x20) || (val == 0x30))
-                        dev->crtc[0x13] = val;
+                    /*
+                     * All eight register latches are readable/writable.  The
+                     * documented font-table pointers use only bits 5-4
+                     * (00h, 10h, 20h, or 30h); mcga_load_font() masks those
+                     * bits when turning the latched value into an address.
+                     */
+                    dev->crtc[0x13] = val;
                     break;
 
                 default:

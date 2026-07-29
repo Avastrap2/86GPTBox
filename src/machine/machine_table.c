@@ -3054,8 +3054,8 @@ const machine_t machines[] = {
         .nvrmask                  = 0,
         .jumpered_ecp_dma         = 0,
         .default_jumpered_ecp_dma = -1,
-        .kbc_device               = &kbc_at_device,
-        .kbc_params               = KBC_VEN_IBM,
+        .kbc_device               = &kbc_ps2_m25_device,
+        .kbc_params               = 0x00000000,
         .nvr_device               = NULL,
         .nvr_params               = 0x00000000,
         .sio_device               = NULL,
@@ -3591,7 +3591,7 @@ const machine_t machines[] = {
         .vid_device               = NULL,
         .snd_device               = NULL,
         .net_device               = NULL,
-        .aliases                  = { "" }
+        .aliases                  = { "IBM PS/2 model 25-386", "" }
     },
     /* Has IBM AT KBC firmware. */
     {
