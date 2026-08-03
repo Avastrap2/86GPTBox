@@ -302,7 +302,7 @@ mitsumi_cdrom_read_sector(mcd_t *dev, int first)
 
     dev->data      = 1;
     dev->readcount--;
-    if ((dev->enable_irq & IRQ_DATAREADY) && first)
+    if ((dev->enable_irq & IRQ_DATAREADY) && first && !dev->early_status)
         picint(1 << dev->irq);
     return 1;
 }
@@ -333,13 +333,9 @@ mitsumi_cdrom_in(uint16_t port, void *priv)
                 ret = (dev->buf_idx < ((dev->mode & 0x80) ? RAW_SECTOR_SIZE : 2048)) ? dev->buf[dev->buf_idx] : 0;
                 dev->buf_idx++;
                 dev->buf_count--;
-                if (!dev->buf_count)
+                if (!dev->buf_count) {
+                    pclog("buf_idx = %d\n", dev->buf_idx);
                     mitsumi_cdrom_read_sector(dev, 0);
-
-                if (!dev->buf_count && dev->early_status) {
-                    dev->cmdbuf[0] = STAT_SPIN | STAT_READY | dev->stat;
-                    dev->cmdbuf_idx = 0;
-                    dev->cmdbuf_count = 1;
                 }
 
                 //pclog("Read port 0 data\n");
@@ -495,8 +491,9 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                         switch (dev->cmdrd_count) {
                             case 0:
                                 dev->readcount |= val;
-                                if (!dev->readcount && dev->early_status)
-                                    dev->readcount = 1;
+                                if (!dev->readcount && dev->early_status) {
+                                    dev->readcount = 0xFFFFFFFF; // keep fetching sectors indefinitely.
+                                }
                                 read_res = mitsumi_cdrom_read_sector(dev, 1);
                                 if (dev->enable_dma && read_res > 0) {
                                     do {
@@ -521,6 +518,8 @@ mitsumi_cdrom_out(uint16_t port, uint8_t val, void *priv)
                             case 2:
                                 dev->readcount    = ((val & 0x0f) << 16);
                                 dev->early_status = ((val & 0xf0) == 0xf0);
+                                if (dev->early_status)
+                                    pclog("Early Status Read\n");
                                 break;
                             case 5:
                                 dev->readmsf = 0;
