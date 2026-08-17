@@ -21,6 +21,7 @@
 #include "x86_flags.h"
 #include <86box/io.h>
 #include <86box/mem.h>
+#include <86box/machine.h>
 #include <86box/nmi.h>
 #include <86box/pic.h>
 #include <86box/gdbstub.h>

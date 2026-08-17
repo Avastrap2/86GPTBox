@@ -2483,6 +2483,102 @@ machine_at_ms5172_init(const machine_t *model)
     return ret;
 }
 
+/* ALi ALADDiN IV */
+static const device_config_t v58xa_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "r05-e0",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Acer BIOS V2.1 R05-E0",
+                .internal_name = "r05-e0",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/v58xa/r05-e0.bin", "" }
+            },
+            {
+                .name          = "Acer BIOS V2.1 R02-H0",
+                .internal_name = "r02-h0",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 131072,
+                .files         = { "roms/machines/v58xa/r02-h0.bin", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t v58xa_device = {
+    .name          = "Acer V58XA",
+    .internal_name = "v58xa",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = v58xa_config
+};
+
+int aptiva_int15_enable = 0;
+
+int
+machine_at_v58xa_init(const machine_t *model)
+{
+    int         ret = 0;
+    const char *fn;
+
+    /* No ROMs available */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000e0000, 131072, 0);
+    device_context_restore();
+
+    if (bios_only || !ret)
+        return ret;
+
+    /* Enable IBM Aptiva INT 15h AX=2310h OEM handler */
+    aptiva_int15_enable = 1;
+
+    machine_at_common_init(model);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE,     1, 2, 3, 4);
+    pci_register_slot(0x02, PCI_CARD_SOUTHBRIDGE,     1, 2, 3, 4);
+    pci_register_slot(0x0B, PCI_CARD_SOUTHBRIDGE_IDE, 1, 2, 3, 4);
+    pci_register_slot(0x03, PCI_CARD_NORMAL,          1, 2, 3, 4);
+    pci_register_slot(0x04, PCI_CARD_NORMAL,          2, 3, 4, 1);
+    pci_register_slot(0x05, PCI_CARD_NORMAL,          3, 4, 1, 2);
+    pci_register_slot(0x06, PCI_CARD_NORMAL,          4, 1, 2, 3);
+
+    if ((sound_card_current[0] == SOUND_INTERNAL) && machine_get_snd_device(machine))
+        machine_snd = device_add(machine_get_snd_device(machine));
+
+    device_add(&ali1531_device);
+    device_add(&ali1543_device);
+    spd_register(SPD_TYPE_SDRAM, 0x3, 64);
+
+    return ret;
+}
+
 /* ALi ALADDiN IV+ */
 static const device_config_t m5ata_config[] = {
     // clang-format off
