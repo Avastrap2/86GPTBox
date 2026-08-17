@@ -39,6 +39,14 @@ opINT(uint32_t fetchdat)
     UN_USED(cycles_old);
     uint8_t temp = getbytef();
 
+    if ((temp == 0x15) && (AX == 0x2310) && aptiva_int15_enable) {
+        AH = 0x00;
+        flags_rebuild();
+        cpu_state.flags &= ~C_FLAG;
+        PREFETCH_RUN(cycles_old - cycles, 2, -1, 0, 0, 0, 0, 0);
+        return 1;
+    }
+
     if ((cr0 & 1) && (cpu_state.eflags & VM_FLAG) && (IOPL != 3)) {
         if (cr4 & CR4_VME) {
             uint16_t t;

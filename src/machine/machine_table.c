@@ -88,6 +88,7 @@ const machine_filter_t machine_chipsets[] = {
     { "ALi M1429",                  MACHINE_CHIPSET_ALI_M1429           },
     { "ALi M1429G",                 MACHINE_CHIPSET_ALI_M1429G          },
     { "ALi M1489",                  MACHINE_CHIPSET_ALI_M1489           },
+    { "ALi ALADDiN IV",             MACHINE_CHIPSET_ALI_ALADDIN_IV      },
     { "ALi ALADDiN IV+",            MACHINE_CHIPSET_ALI_ALADDIN_IV_PLUS },
     { "ALi ALADDiN V",              MACHINE_CHIPSET_ALI_ALADDIN_V       },
     { "ALi ALADDiN-PRO II",         MACHINE_CHIPSET_ALI_ALADDIN_PRO_II  },
@@ -17624,6 +17625,55 @@ const machine_t machines[] = {
     },
 
     /* Socket 7 (Dual Voltage) machines */
+    /* ALi ALADDiN IV */
+    /* Has the ALi M1543 southbridge with on-chip KBC. */
+    {
+        .name              = "[ALi ALADDiN IV] Acer V58XA",
+        .internal_name     = "v58xa",
+        .type              = MACHINE_TYPE_SOCKET7,
+        .chipset           = MACHINE_CHIPSET_ALI_ALADDIN_IV,
+        .init              = machine_at_v58xa_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET5_7,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 50000000,
+            .max_bus     = 66666667,
+            .min_voltage = 2100,
+            .max_voltage = 3520,
+            .min_multi   = 1.5,
+            .max_multi   = 4.5
+        },
+        .bus_flags = MACHINE_PS2_PCI | MACHINE_BUS_USB,
+        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_USB | MACHINE_SOUND,
+        .ram       = {
+            .min  = 8192,
+            .max  = 262144,
+            .step = 8192
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = NULL,
+        .kbc_params               = 0x00000000,
+        .nvr_device               = NULL,
+        .nvr_params               = 0x00000000,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x00000cf0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = &v58xa_device,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = NULL,
+        .snd_device               = &cs4237b_device,
+        .net_device               = NULL,
+        .aliases                  = { "IBM Aptiva 2137", "IBM Aptiva 2138", "Acer V58XA", "" }
+    },
     /* ALi ALADDiN IV+ */
     /* Has the ALi M1543 southbridge with on-chip KBC. */
     {
