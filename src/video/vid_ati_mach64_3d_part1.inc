@@ -88,6 +88,13 @@ typedef struct mach64_3d_ctx_t {
     uint32_t regs[256];
     int trail_x;
     int trail_valid;
+    /*
+     * GT-only register writes are consumed outside the mature Mach64 FIFO.
+     * Remember whether an ordinary 2D/shared write has been handed to that
+     * FIFO since the last synchronization.  We only need to drain once when
+     * crossing back into GT state/commands, not once for every 3D register.
+     */
+    int legacy_fifo_pending;
 } mach64_3d_ctx_t;
 
 typedef struct r3d_trace_event_t {
