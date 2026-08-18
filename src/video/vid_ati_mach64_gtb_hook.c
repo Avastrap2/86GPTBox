@@ -23,8 +23,12 @@ extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, vo
 
 typedef struct mach64_gtb_state_t {
     int used;
+    int ports_attached;
     mach64_t *dev;
     uint8_t control[0x100];
+    uint8_t genena;
+    uint8_t genvs;
+    uint8_t pci_ioconfig;
 } mach64_gtb_state_t;
 
 typedef struct mach64_gtb_io_hook_t {
@@ -72,6 +76,11 @@ mach64_gtb_get_state(mach64_t *mach64, int create)
     memset(free_state, 0, sizeof(*free_state));
     free_state->used = 1;
     free_state->dev = mach64;
+    /* Add-in VGA power-on defaults: VGA enabled, GENVS writes locked. */
+    free_state->genena = 0x08;
+    free_state->genvs = 0x01;
+    free_state->pci_ioconfig = (uint8_t) ((mach64->use_block_decoded_io & 0x04) |
+                                          (mach64->io_base & 0x03));
     return free_state;
 }
 
@@ -155,6 +164,37 @@ mach64_gtb_clock_lane(const mach64_gtb_io_hook_t *hook, uint16_t port)
 }
 
 static int
+mach64_gtb_bank_readb(const mach64_t *mach64, uint16_t offset, uint8_t *val)
+{
+    uint32_t page;
+
+    if (!mach64 || offset < 0xb4 || offset > 0xbb)
+        return 0;
+
+    switch (offset) {
+        case 0xb4:
+            page = (uint32_t) mach64->bank_w[0] >> 15;
+            break;
+        case 0xb6:
+            page = (uint32_t) mach64->bank_w[1] >> 15;
+            break;
+        case 0xb8:
+            page = (uint32_t) mach64->bank_r[0] >> 15;
+            break;
+        case 0xba:
+            page = (uint32_t) mach64->bank_r[1] >> 15;
+            break;
+        default:
+            page = 0;
+            break;
+    }
+
+    if (val)
+        *val = page & 0xff;
+    return 1;
+}
+
+static int
 mach64_gtb_calc_vclk(mach64_t *mach64, unsigned clock, double *freq)
 {
     uint8_t ref_div;
@@ -175,6 +215,10 @@ mach64_gtb_calc_vclk(mach64_t *mach64, unsigned clock, double *freq)
 
     *freq = (2.0 * 14318184.0 * (double) fb_div) /
             ((double) ref_div * (double) gtb_postdiv[post_index]);
+
+    /* Also rejects NaN: both comparisons are false for NaN. */
+    if (!(*freq > 1000000.0 && *freq < 250000000.0))
+        return 0;
     return 1;
 }
 
@@ -204,7 +248,11 @@ mach64_gtb_hook_special(const mach64_gtb_io_hook_t *hook, uint16_t port)
 
     if (mach64_gtb_clock_lane(hook, port) >= 0)
         return 1;
-    return mach64_gtb_block_offset(hook, port, &offset) && mach64_gtb_shadow_offset(offset);
+    if (!mach64_gtb_block_offset(hook, port, &offset))
+        return 0;
+    if (offset >= 0xb4 && offset <= 0xbb)
+        return 1;
+    return mach64_gtb_shadow_offset(offset);
 }
 
 static uint8_t
@@ -217,6 +265,12 @@ mach64_gtb_hook_inb(uint16_t port, void *priv)
 
     if (mach64_gtb_is_card(mach64) && lane == 2)
         return mach64->pll_regs[mach64->pll_addr & 0x0f];
+
+    if (mach64_gtb_is_card(mach64) && mach64_gtb_block_offset(hook, port, &offset)) {
+        uint8_t bank;
+        if (mach64_gtb_bank_readb(mach64, offset, &bank))
+            return bank;
+    }
 
     if (mach64_gtb_is_card(mach64) &&
         mach64_gtb_block_offset(hook, port, &offset) &&
@@ -430,8 +484,12 @@ mach64_ics2595_setclock_dispatch(void *priv, double clock)
         }
     }
 
-    if (mach64 && mach64_gtb_calc_vclk(mach64, mach64->clock_cntl & 3, &corrected))
-        clock = corrected;
+    if (mach64) {
+        if (mach64_gtb_calc_vclk(mach64, mach64->clock_cntl & 3, &corrected))
+            clock = corrected;
+        else if (!(clock > 1000000.0 && clock < 250000000.0))
+            return; /* Do not feed the SVGA timer a transient 0/NaN PLL clock. */
+    }
     ics2595_setclock(priv, clock);
 }
 
@@ -470,6 +528,101 @@ mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val)
     if (state)
         state->control[offset] = val;
     return 1;
+}
+
+/*
+ * Fixed VGA setup registers used by ARS2D before it touches standard VGA I/O.
+ * GENENA[4] unlocks GENVS writes; GENENA[3] and GENVS[0] together enable VGA.
+ * We retain the state here.  The base VT2 core already owns the VGA handlers,
+ * so decode removal is deliberately left to CONFIG_CNTL/PCI mapping logic.
+ */
+static uint8_t
+mach64_gtb_genvs_in(uint16_t port, void *priv)
+{
+    mach64_gtb_state_t *state = (mach64_gtb_state_t *) priv;
+    (void) port;
+    return state ? state->genvs : 0xff;
+}
+
+static void
+mach64_gtb_genvs_out(uint16_t port, uint8_t val, void *priv)
+{
+    mach64_gtb_state_t *state = (mach64_gtb_state_t *) priv;
+    (void) port;
+    if (state && (state->genena & 0x10))
+        state->genvs = val & 0x01;
+}
+
+static uint8_t
+mach64_gtb_genena_in(uint16_t port, void *priv)
+{
+    mach64_gtb_state_t *state = (mach64_gtb_state_t *) priv;
+    (void) port;
+    if (!state)
+        return 0xff;
+    return (state->genena & ~0x08u) | (state->genvs ? 0x08u : 0x00u);
+}
+
+static void
+mach64_gtb_genena_out(uint16_t port, uint8_t val, void *priv)
+{
+    mach64_gtb_state_t *state = (mach64_gtb_state_t *) priv;
+    (void) port;
+    if (!state || (state->pci_ioconfig & 0x08))
+        return;
+    state->genena = val;
+}
+
+void
+mach64_gtb_state_attach(void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 1);
+
+    if (!state || state->ports_attached)
+        return;
+
+    io_sethandler(0x0102, 1, mach64_gtb_genvs_in, NULL, NULL,
+                  mach64_gtb_genvs_out, NULL, NULL, state);
+    io_sethandler(0x46e8, 1, mach64_gtb_genena_in, NULL, NULL,
+                  mach64_gtb_genena_out, NULL, NULL, state);
+    state->ports_attached = 1;
+
+    /* Keep a sane VGA dot clock until ARS2D has programmed a complete VPLL. */
+    if (mach64 && mach64->svga.clock_gen)
+        ics2595_setclock(mach64->svga.clock_gen, 25175000.0);
+}
+
+void
+mach64_gtb_state_detach(void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 0);
+
+    if (!state)
+        return;
+    if (state->ports_attached) {
+        io_removehandler(0x0102, 1, mach64_gtb_genvs_in, NULL, NULL,
+                         mach64_gtb_genvs_out, NULL, NULL, state);
+        io_removehandler(0x46e8, 1, mach64_gtb_genena_in, NULL, NULL,
+                         mach64_gtb_genena_out, NULL, NULL, state);
+    }
+    memset(state, 0, sizeof(*state));
+}
+
+uint8_t
+mach64_gtb_pci_ioconfig_read(void *priv)
+{
+    mach64_gtb_state_t *state = mach64_gtb_get_state((mach64_t *) priv, 1);
+    return state ? state->pci_ioconfig : 0;
+}
+
+void
+mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val)
+{
+    mach64_gtb_state_t *state = mach64_gtb_get_state((mach64_t *) priv, 1);
+    if (state)
+        state->pci_ioconfig = val & 0x0f;
 }
 
 /* Force a remap after BAR1/IOCONFIG writes; the legacy guard misses this. */
