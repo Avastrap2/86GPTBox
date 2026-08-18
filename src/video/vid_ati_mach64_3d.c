@@ -1,8 +1,33 @@
 /* ATI 3D RAGE / Rage II+ software renderer. */
+#include "vid_ati_mach64_3d.h"
+
+/* Keep the original attach/detach bodies from part1, then wrap them below so
+ * the diagnostic state can be reset and dumped without changing the renderer's
+ * public ABI. */
+#define mach64_3d_attach mach64_3d_attach_base
+#define mach64_3d_detach mach64_3d_detach_base
 #include "vid_ati_mach64_3d_part1.inc"
+#undef mach64_3d_attach
+#undef mach64_3d_detach
+
+#include "vid_ati_mach64_3d_debug.inc"
 #include "vid_ati_mach64_3d_part2.inc"
 #include "vid_ati_mach64_3d_part3.inc"
 #include "vid_ati_mach64_3d_part4.inc"
+
+void
+mach64_3d_attach(mach64_t *mach64)
+{
+    mach64_3d_attach_base(mach64);
+    r3d_debug_reset(mach64);
+}
+
+void
+mach64_3d_detach(mach64_t *mach64)
+{
+    r3d_debug_dump(mach64);
+    mach64_3d_detach_base(mach64);
+}
 
 /*
  * GTB control-register compatibility lives in vid_ati_mach64_gtb_hook.c.
