@@ -1,0 +1,21 @@
+/*
+ * 86GPTBox - ATI 3D RAGE (Mach64 GT/GTB) software 3D pipeline.
+ *
+ * This is intentionally kept separate from the mature Mach64 2D engine.
+ * The FIFO wrapper dispatches only GT-only register writes here.
+ */
+#ifndef VID_ATI_MACH64_3D_H
+#define VID_ATI_MACH64_3D_H
+
+#include "vid_ati_mach64.h"
+
+void mach64_3d_attach(mach64_t *mach64);
+void mach64_3d_detach(mach64_t *mach64);
+
+/*
+ * Returns non-zero when the write belongs to the 3D RAGE register file and
+ * has been consumed.  type is one of FIFO_WRITE_BYTE/WORD/DWORD.
+ */
+int mach64_3d_write(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
+
+#endif
