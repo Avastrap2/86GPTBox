@@ -332,8 +332,8 @@ r3d_debug_dump(mach64_t *m)
             (unsigned long long)s->total_sync_ticks,
             (unsigned long long)s->max_sync_ticks);
     fprintf(fp, "# final FIFO read=%u write=%u entries=%u blitter_busy=%d accel_busy=%d\n",
-            m->fifo_read_idx, m->fifo_write_idx,
-            m->fifo_write_idx - m->fifo_read_idx, m->blitter_busy, m->accel.busy);
+            (unsigned)m->fifo_read_idx, (unsigned)m->fifo_write_idx,
+            (unsigned)(m->fifo_write_idx - m->fifo_read_idx), (int)m->blitter_busy, m->accel.busy);
 
     fprintf(fp, "\n[access_first]\n");
     fprintf(fp, "# seq op width claimed addr value fifo dst_cntl dp_pix_width scale_3d_cntl\n");
@@ -354,7 +354,7 @@ r3d_debug_dump(mach64_t *m)
     draw_start = s->draw_seq - draw_count + 1;
     for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
         const r3d_debug_draw_t *d = &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
-        fprintf(fp, "%010llu %llu %llu %llu %llu %llu %llu %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %u %u %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
+        fprintf(fp, "%010llu %llu %llu %llu %llu %llu %llu %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %08X %u %u %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
                 (unsigned long long)d->seq,
                 (unsigned long long)(d->end_tick - d->start_tick),
                 (unsigned long long)d->candidate_pixels,
