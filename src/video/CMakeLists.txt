@@ -157,6 +157,13 @@ add_library(vid OBJECT
 set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
 
+# Keep the mature PCI implementation as the legacy callback while routing
+# Mach64 card registration through a small dispatcher.  The dispatcher only
+# changes PCI Revision ID for the Rage II+ GU/GTB identity (1002:4755); all
+# other Mach64 PCI accesses continue through the legacy implementation.
+set_source_files_properties(vid_ati_mach64.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;pci_add_card=mach64_pci_add_card_dispatch")
+
 # Until the card table is split into a generated registry, expose Rage II+ in
 # the existing Mach64 VT2 slot without editing the large static table here.
 # The legacy VT2 implementation is still linked and is reused by the shim.
