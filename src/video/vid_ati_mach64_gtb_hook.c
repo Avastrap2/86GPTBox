@@ -502,7 +502,27 @@ mach64_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val)
 
     if (!mach64_gtb_is_card(mach64) || !(addr & 0x400))
         return 0;
+
     offset = addr & 0xff;
+
+    /*
+     * Integrated PLL access is indirect.  The legacy VT2 reader exposes the
+     * cached CLOCK_CNTL byte at 0x92, but GT/GTB hardware returns the contents
+     * of the PLL register selected through CLOCK_CNTL_ADDR (0x91).  Windows
+     * MACH64.DRV performs read/modify/write sequences through MMIO while
+     * switching into accelerated modes, so returning the cached byte can
+     * corrupt VCLK_POST_DIV / PLL_EXT_CNTL programming and leave a black mode.
+     */
+    if (offset == 0x92) {
+        if (val)
+            *val = mach64->pll_regs[mach64->pll_addr & 0x0f];
+        return 1;
+    }
+
+    /* Match the byte-level bank selector readback already provided on I/O. */
+    if (offset >= 0xb4 && offset <= 0xbb)
+        return mach64_gtb_bank_readb(mach64, offset, val);
+
     if (!mach64_gtb_shadow_offset(offset))
         return 0;
 
