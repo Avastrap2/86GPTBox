@@ -9,16 +9,18 @@
 
 /*
  * ARS2D.bin is a complete ATI PCI option-ROM image for 1002:4755.  Its ROM
- * header declares 0x48 512-byte blocks = 36 KiB.  Keep a 64 KiB physical ROM
- * backing store so the mask remains a power of two, but preserve all 36 KiB
- * of the option-ROM image and fill the unused tail with 0xff.
+ * header declares 0x48 512-byte blocks = 36 KiB.  Allocate a 64 KiB backing
+ * buffer so the ROM mask stays a power of two, but expose only the declared
+ * 36 KiB image to the guest.  Mapping the whole backing buffer at C0000 would
+ * incorrectly cover C9000-CFFFF with 0xff and can break option-ROM scanning.
  *
  * The ROM stays external like the other 86Box video BIOS images; copyrighted
  * firmware is not embedded in the source tree.
  */
-#define BIOS_ROMGTB_PATH       "roms/video/mach64/ARS2D.bin"
-#define BIOS_ROMGTB_IMAGE_SIZE 0x9000u
-#define BIOS_ROMGTB_MAP_SIZE   0x10000u
+#define BIOS_ROMGTB_PATH         "roms/video/mach64/ARS2D.bin"
+#define BIOS_ROMGTB_IMAGE_SIZE   0x9000u
+#define BIOS_ROMGTB_MAP_SIZE     BIOS_ROMGTB_IMAGE_SIZE
+#define BIOS_ROMGTB_BACKING_SIZE 0x10000u
 
 extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
@@ -77,8 +79,8 @@ mach64rage2p_pci_read(int func, int addr, int len, void *priv)
 
 /*
  * The legacy Mach64 PCI writer maps every option ROM as 32 KiB.  ARS2D is a
- * 36 KiB image in a 64 KiB ROM address space, so let the legacy writer update
- * the BAR/register state first and then widen only the GU/GTB ROM mapping.
+ * 36 KiB image, so let the legacy writer update the BAR/register state first
+ * and then resize only the GU/GTB mapping to the image's declared length.
  */
 static void
 mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
@@ -291,17 +293,22 @@ mach64rage2p_install_vbios(mach64_t *mach64)
 
     if (mach64->bios_rom.rom) {
         /* VT2 successfully created the original mapping; retain that mapping. */
-        new_rom = realloc(mach64->bios_rom.rom, BIOS_ROMGTB_MAP_SIZE);
+        new_rom = realloc(mach64->bios_rom.rom, BIOS_ROMGTB_BACKING_SIZE);
         if (!new_rom)
             return 0;
 
         mach64->bios_rom.rom = new_rom;
-        memset(new_rom, 0xff, BIOS_ROMGTB_MAP_SIZE);
+        memset(new_rom, 0xff, BIOS_ROMGTB_BACKING_SIZE);
         if (!rom_load_linear(BIOS_ROMGTB_PATH, 0, BIOS_ROMGTB_IMAGE_SIZE, 0, new_rom))
             return 0;
 
+        /*
+         * sz is the guest-visible image length.  mask describes the backing
+         * allocation and can remain 64 KiB-1 because every visible offset is
+         * below 0x9000.
+         */
         mach64->bios_rom.sz   = BIOS_ROMGTB_MAP_SIZE;
-        mach64->bios_rom.mask = BIOS_ROMGTB_MAP_SIZE - 1;
+        mach64->bios_rom.mask = BIOS_ROMGTB_BACKING_SIZE - 1;
         mach64->bios_rom.mapping.size = BIOS_ROMGTB_MAP_SIZE;
         mem_mapping_set_exec(&mach64->bios_rom.mapping, new_rom);
         mem_mapping_disable(&mach64->bios_rom.mapping);
@@ -310,10 +317,10 @@ mach64rage2p_install_vbios(mach64_t *mach64)
          * Permit Rage II+ to work without requiring the unrelated VT2 ROM.
          * mach64vt2_init() leaves bios_rom zeroed if its ROM cannot be loaded.
          */
-        new_rom = calloc(1, BIOS_ROMGTB_MAP_SIZE);
+        new_rom = calloc(1, BIOS_ROMGTB_BACKING_SIZE);
         if (!new_rom)
             return 0;
-        memset(new_rom, 0xff, BIOS_ROMGTB_MAP_SIZE);
+        memset(new_rom, 0xff, BIOS_ROMGTB_BACKING_SIZE);
 
         if (!rom_load_linear(BIOS_ROMGTB_PATH, 0, BIOS_ROMGTB_IMAGE_SIZE, 0, new_rom)) {
             free(new_rom);
@@ -322,7 +329,7 @@ mach64rage2p_install_vbios(mach64_t *mach64)
 
         mach64->bios_rom.rom  = new_rom;
         mach64->bios_rom.sz   = BIOS_ROMGTB_MAP_SIZE;
-        mach64->bios_rom.mask = BIOS_ROMGTB_MAP_SIZE - 1;
+        mach64->bios_rom.mask = BIOS_ROMGTB_BACKING_SIZE - 1;
 
         mem_mapping_add(&mach64->bios_rom.mapping,
                         0xc0000, BIOS_ROMGTB_MAP_SIZE,
