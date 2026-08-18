@@ -26,6 +26,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     int64_t t0=(int64_t)(int32_t)ctx->regs[R3D_T_START>>2]<<5,txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
+    r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
     for(int row=0;row<len;row++){
         /* TRAP_FILL_DIR tells which edge is geometrically left/right.  Trust
          * it when the programmed edges agree, otherwise fall back to sorting
@@ -46,10 +47,11 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
-                    if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,ss,tt);if(!r3d_apply_tex_alpha(ctl,&texel,shade.a))draw=0;else src=r3d_texture_light(ctl,texel,shade);}
+                    dbg.candidate_pixels++;
+                    if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,ss,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
-                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;}
-                    if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);}
+                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
+                    if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);dbg.drawn_pixels++;}
                     da+=dbpp;if(z_enabled)za+=2;
                     rr+=rrstep;gg+=ggstep;bb+=bbstep;aa+=aastep;zz+=zzstep;
                     if(tex){ss+=ssstep;tt+=ttstep;ssstep+=sx2;ttstep+=tx2;}
@@ -62,6 +64,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         t0+=tyi;tyi+=ty2;txi+=txy2;
         y+=ydir;
     }
+    r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
     ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
     ctx->regs[R3D_S_START>>2]=(uint32_t)(s0>>5);ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
