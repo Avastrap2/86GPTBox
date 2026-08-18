@@ -858,11 +858,10 @@ mach64_gtb_state_attach(void *priv)
         return;
 
     /*
-     * Do not derive CNFG_CHIP_ID's ASIC revision from PCI Revision ID.
-     * Rage II+ init deliberately reports GT B2U2 (0x5a004755) in the Mach64
-     * chip register while PCI config space reports revision 0x9a.  They are
-     * separate hardware fields; overwriting the former here misidentifies the
-     * emulated board as the later B2U3 generation.
+     * CNFG_CHIP_ID belongs to the Rage II+ device model, not this I/O hook.
+     * PCI Revision ID and the Mach64 chip register are independent hardware
+     * fields even when this target uses the same 0x9a revision value for both.
+     * Keep identity initialization centralized in mach64rage2p_init().
      */
 
     io_sethandler(0x0102, 1, mach64_gtb_genvs_in, NULL, NULL,
