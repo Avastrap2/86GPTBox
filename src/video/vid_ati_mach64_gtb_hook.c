@@ -414,8 +414,13 @@ mach64_gtb_hook_special(const mach64_gtb_io_hook_t *hook, uint16_t port)
     return mach64_gtb_shadow_offset(offset);
 }
 
+/*
+ * Return one byte without adding a trace event.  Word/dword reads use this to
+ * compose special GTB registers while still emitting exactly one event for
+ * the guest-visible I/O transaction instead of two/four synthetic byte reads.
+ */
 static uint8_t
-mach64_gtb_hook_inb(uint16_t port, void *priv)
+mach64_gtb_hook_inb_raw(uint16_t port, void *priv)
 {
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
     mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
@@ -453,6 +458,18 @@ mach64_gtb_hook_inb(uint16_t port, void *priv)
     return ret;
 }
 
+static uint8_t
+mach64_gtb_hook_inb(uint16_t port, void *priv)
+{
+    mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
+    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
+    uint8_t ret = mach64_gtb_hook_inb_raw(port, priv);
+
+    /* Lower-case 'i' is guest I/O read; upper-case 'I' is guest I/O write. */
+    mach64_gtb_trace_io(hook, mach64, 'i', 1, port, ret);
+    return ret;
+}
+
 static uint16_t
 mach64_gtb_hook_inw(uint16_t port, void *priv)
 {
@@ -462,16 +479,19 @@ mach64_gtb_hook_inw(uint16_t port, void *priv)
     uint32_t old_io_base;
     uint16_t ret;
 
-    if (mach64_gtb_hook_special(hook, port) || mach64_gtb_hook_special(hook, port + 1))
-        return (uint16_t) mach64_gtb_hook_inb(port, priv) |
-               ((uint16_t) mach64_gtb_hook_inb(port + 1, priv) << 8);
-    if (!hook || !hook->inw)
-        return 0xffff;
+    if (mach64_gtb_hook_special(hook, port) || mach64_gtb_hook_special(hook, port + 1)) {
+        ret = (uint16_t) mach64_gtb_hook_inb_raw(port, priv) |
+              ((uint16_t) mach64_gtb_hook_inb_raw(port + 1, priv) << 8);
+    } else if (!hook || !hook->inw) {
+        ret = 0xffff;
+    } else {
+        callback_port = mach64_gtb_callback_port(hook, port);
+        old_io_base = mach64_gtb_callback_enter(hook, mach64);
+        ret = hook->inw(callback_port, hook->priv);
+        mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    }
 
-    callback_port = mach64_gtb_callback_port(hook, port);
-    old_io_base = mach64_gtb_callback_enter(hook, mach64);
-    ret = hook->inw(callback_port, hook->priv);
-    mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    mach64_gtb_trace_io(hook, mach64, 'i', 2, port, ret);
     return ret;
 }
 
@@ -483,22 +503,30 @@ mach64_gtb_hook_inl(uint16_t port, void *priv)
     uint16_t callback_port;
     uint32_t old_io_base;
     uint32_t ret;
+    int special = 0;
 
     for (unsigned i = 0; i < 4; i++) {
         if (mach64_gtb_hook_special(hook, port + i)) {
-            return (uint32_t) mach64_gtb_hook_inb(port, priv) |
-                   ((uint32_t) mach64_gtb_hook_inb(port + 1, priv) << 8) |
-                   ((uint32_t) mach64_gtb_hook_inb(port + 2, priv) << 16) |
-                   ((uint32_t) mach64_gtb_hook_inb(port + 3, priv) << 24);
+            special = 1;
+            break;
         }
     }
-    if (!hook || !hook->inl)
-        return 0xffffffffu;
 
-    callback_port = mach64_gtb_callback_port(hook, port);
-    old_io_base = mach64_gtb_callback_enter(hook, mach64);
-    ret = hook->inl(callback_port, hook->priv);
-    mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    if (special) {
+        ret = (uint32_t) mach64_gtb_hook_inb_raw(port, priv) |
+              ((uint32_t) mach64_gtb_hook_inb_raw(port + 1, priv) << 8) |
+              ((uint32_t) mach64_gtb_hook_inb_raw(port + 2, priv) << 16) |
+              ((uint32_t) mach64_gtb_hook_inb_raw(port + 3, priv) << 24);
+    } else if (!hook || !hook->inl) {
+        ret = 0xffffffffu;
+    } else {
+        callback_port = mach64_gtb_callback_port(hook, port);
+        old_io_base = mach64_gtb_callback_enter(hook, mach64);
+        ret = hook->inl(callback_port, hook->priv);
+        mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    }
+
+    mach64_gtb_trace_io(hook, mach64, 'i', 4, port, ret);
     return ret;
 }
 
@@ -829,8 +857,13 @@ mach64_gtb_state_attach(void *priv)
     if (!state || state->ports_attached)
         return;
 
-    /* Keep PCI revision and the chip's own CNFG_CHIP_ID revision coherent. */
-    mach64->config_chip_id = 0x9a004755u;
+    /*
+     * Do not derive CNFG_CHIP_ID's ASIC revision from PCI Revision ID.
+     * Rage II+ init deliberately reports GT B2U2 (0x5a004755) in the Mach64
+     * chip register while PCI config space reports revision 0x9a.  They are
+     * separate hardware fields; overwriting the former here misidentifies the
+     * emulated board as the later B2U3 generation.
+     */
 
     io_sethandler(0x0102, 1, mach64_gtb_genvs_in, NULL, NULL,
                   mach64_gtb_genvs_out, NULL, NULL, state);
