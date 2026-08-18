@@ -87,7 +87,10 @@ static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
     return 1;
 }
 static int r3d_z_test(uint16_t s,uint16_t d,int t){switch(t&7){case 0:return 0;case 1:return s<d;case 2:return s<=d;case 3:return s==d;case 4:return s>=d;case 5:return s>d;case 6:return s!=d;default:return 1;}}
-static int r3d_edge_step(int*x,int*e,int inc,int dec,int dir){int old=*x;if(*e<0)*e+=inc;else{*x+=dir;*e+=dec;}return*x-old;}
+/* DST_BRES_SIGN/TRAIL_BRES_SIGN define how an exact-zero error term is
+ * classified.  GT HAL triangle setup uses these bits to keep shared edges
+ * deterministic; treating zero as always non-negative shifts some edges. */
+static int r3d_edge_step(int*x,int*e,int inc,int dec,int dir,int zero_negative){int old=*x;if(*e<0||(*e==0&&zero_negative))*e+=inc;else{*x+=dir;*e+=dec;}return*x-old;}
 static rgba_t r3d_shade(int64_t r,int64_t g,int64_t b,int64_t a){rgba_t c={r3d_clamp8(r>>12),r3d_clamp8(g>>12),r3d_clamp8(b>>12),r3d_clamp8(a>>12)};return c;}
 static rgba_t r3d_texture_light(uint32_t ctl,rgba_t t,rgba_t s){
     if(ctl&R3D_COLOR_OVERRIDE){int a=t.a;t=s;t.a=a;return t;}
