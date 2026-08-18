@@ -109,6 +109,8 @@ add_library(vid OBJECT
     vid_ati_mach8.c
     vid_ati_mach64.c
     vid_ati_mach64_accel.c
+    vid_ati_mach64_3d.c
+    vid_ati_mach64_rage2p.c
 
     # Chips & Technologies
     vid_chips_69000.c
@@ -148,6 +150,18 @@ add_library(vid OBJECT
     # Generic
     vid_bochs_vbe.c
 )
+
+# Keep the established Mach64 FIFO implementation available as the legacy
+# path; vid_ati_mach64_rage2p.c provides the public wrapper and consumes only
+# Rage/GT 3D register writes before forwarding ordinary 2D operations.
+set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
+
+# Until the card table is split into a generated registry, expose Rage II+ in
+# the existing Mach64 VT2 slot without editing the large static table here.
+# The legacy VT2 implementation is still linked and is reused by the shim.
+set_source_files_properties(vid_table.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64vt2_device=mach64rage2p_device")
 
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_include_directories(vid PRIVATE /usr/local/include)
