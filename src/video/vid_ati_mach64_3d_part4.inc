@@ -8,6 +8,16 @@ r3d_unique_register(uint32_t b)
            ((b >= R3D_RED_X_INC) && (b <= R3D_ALPHA_START));
 }
 
+static unsigned
+r3d_fifo_width(uint32_t type)
+{
+    if (type == FIFO_WRITE_DWORD)
+        return 4;
+    if (type == FIFO_WRITE_WORD)
+        return 2;
+    return 1;
+}
+
 static uint32_t
 r3d_merge_write(uint32_t old, uint32_t a, uint32_t v, uint32_t type)
 {
@@ -40,6 +50,9 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     a &= 0x3ff;
     uint32_t b = a & ~3u;
 
+    /* Every Rage II+ MMIO read reaches this probe before the VT2 fallback. */
+    r3d_trace_record(m, 'R', 0, a, 0, 0);
+
     /*
      * DST_BRES_LNTH (0x120) is shared with the legacy 2D line engine.  Only
      * claim it while the shadow contains a 3D DRAW_TRAP command; otherwise
@@ -51,6 +64,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
             return 0;
         mach64_wait_fifo_idle(m);
         *v = cmd;
+        r3d_trace_record(m, 'V', 4, b, *v, 1);
         return 1;
     }
 
@@ -65,6 +79,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     else
         *v = ctx->regs[b >> 2];
 
+    r3d_trace_record(m, 'V', 4, b, *v, 1);
     return 1;
 }
 
@@ -72,11 +87,21 @@ int
 mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
 {
     mach64_3d_ctx_t *ctx = r3d_find(m);
+    unsigned width;
+
     if (!ctx)
         return 0;
 
     a &= 0x3ff;
     uint32_t b = a & ~3u;
+    width = r3d_fifo_width(type);
+
+    /*
+     * mach64_queue() sends every GUI write here before the legacy 2D FIFO.
+     * Therefore W records include both 2D and 3D traffic.  C records indicate
+     * writes actually consumed by the GT/GTB 3D block.
+     */
+    r3d_trace_record(m, 'W', width, a, v, 0);
 
     /*
      * The 86Box Mach64 FIFO runs asynchronously.  GT-only writes are handled
@@ -100,9 +125,12 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         if (!is_3d)
             return 0;
 
+        r3d_trace_record(m, 'C', width, b, cmd, 1);
         mach64_wait_fifo_idle(m);
-        if ((cmd & R3D_DRAW_TRAP) && r3d_write_complete(a, type))
+        if ((cmd & R3D_DRAW_TRAP) && r3d_write_complete(a, type)) {
+            r3d_trace_record(m, 'T', width, b, cmd, 1);
             r3d_draw_trapezoid(ctx, cmd);
+        }
         return 1;
     }
 
@@ -112,5 +140,6 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     mach64_wait_fifo_idle(m);
     uint32_t i = b >> 2;
     ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
+    r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
     return 1;
 }
