@@ -48,8 +48,10 @@ static rgba_t r3d_texel_at(mach64_3d_ctx_t *ctx,int f,uint32_t base,int w,int u,
     if(f==11){uint32_t a=base+(uint32_t)((v*w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
     int bpp=r3d_bytes_per_pixel(f);return r3d_unpack(ctx,f,r3d_texture_raw(ctx,f,base+(uint32_t)((v*w+u)*bpp)),1);
 }
+/* S/T are kept internally as signed 16-fractional values.  GT S_START and
+ * T_START are 10.11 and are shifted by five bits when a trapezoid begins. */
 static rgba_t r3d_sample_texel(mach64_3d_ctx_t *ctx,int64_t s,int64_t t,int f,int bilinear){
-    uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;int w=1<<pl,h=1<<hl,u=(int)(s>>11)&(w-1),v=(int)(t>>11)&(h-1);uint32_t base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];rgba_t c00=r3d_texel_at(ctx,f,base,w,u,v);if(!bilinear)return c00;int u1=(u+1)&(w-1),v1=(v+1)&(h-1),fu=(s>>3)&255,fv=(t>>3)&255;rgba_t c10=r3d_texel_at(ctx,f,base,w,u1,v),c01=r3d_texel_at(ctx,f,base,w,u,v1),c11=r3d_texel_at(ctx,f,base,w,u1,v1);return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
+    uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;int w=1<<pl,h=1<<hl,u=(int)(s>>16)&(w-1),v=(int)(t>>16)&(h-1);uint32_t base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];rgba_t c00=r3d_texel_at(ctx,f,base,w,u,v);if(!bilinear)return c00;int u1=(u+1)&(w-1),v1=(v+1)&(h-1),fu=(s>>8)&255,fv=(t>>8)&255;rgba_t c10=r3d_texel_at(ctx,f,base,w,u1,v),c01=r3d_texel_at(ctx,f,base,w,u,v1),c11=r3d_texel_at(ctx,f,base,w,u1,v1);return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
 static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
     if(!(ctl&R3D_TEX_MAP_AEN)){tex->a=interp_alpha;return 1;}
