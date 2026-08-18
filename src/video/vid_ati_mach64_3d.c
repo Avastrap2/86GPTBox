@@ -32,6 +32,30 @@ mach64_gtb_cfg_writeb_block0(mach64_t *mach64, uint32_t addr, uint8_t val)
 }
 
 /*
+ * Rage II+ reuses the mature VT2 initializer, but it must not enter the core as
+ * MACH64_VT2.  The core has one hardware-visible VT/VT2 special case in
+ * CONFIG_CNTL aperture-base readback; GT/GTB belongs to the modern integrated
+ * layout.  Keep a persistent copy of the device descriptor because svga/device
+ * initialization is allowed to retain descriptor pointers beyond this call.
+ */
+extern const device_t mach64vt2_device;
+static device_t mach64gtb_core_info;
+
+static void *
+mach64gtb_core_init(const device_t *info)
+{
+    mach64gtb_core_info = *info;
+    mach64gtb_core_info.local = (mach64gtb_core_info.local & ~0xffu) | MACH64_GTB;
+    return mach64vt2_device.init(&mach64gtb_core_info);
+}
+
+const device_t mach64gtb_core_device = {
+    .name = "Mach64 GTB core proxy",
+    .internal_name = "mach64_gtb_core_proxy",
+    .init = mach64gtb_core_init
+};
+
+/*
  * The Mach64 block-decoded PIO register file occupies 0x100 bytes.  The VT2
  * PCI writer historically masks BAR1 with 0xfc00 while processing the upper
  * BAR bytes, which is a 1 KiB alignment and discards address bits 8 and 9.
