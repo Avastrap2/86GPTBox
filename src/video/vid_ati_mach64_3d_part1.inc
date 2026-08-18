@@ -97,6 +97,9 @@ typedef struct r3d_trace_event_t {
     uint32_t dst_cntl;
     uint32_t dp_pix_width;
     uint32_t scale_3d_cntl;
+    uint32_t crtc_gen_cntl;
+    uint32_t crtc_off_pitch;
+    uint32_t clock_cntl;
     uint8_t op;
     uint8_t width;
     uint8_t claimed;
@@ -128,7 +131,8 @@ r3d_trace_reset(void)
  * Keep tracing out of the hot path's filesystem code.  The guest may issue
  * tens of thousands of MMIO operations while an ATI diagnostic is running;
  * retaining only the final 4096 relevant operations gives us the sequence
- * immediately preceding a guest-side fault without perturbing FIFO timing.
+ * immediately preceding a guest-side fault or display-mode failure without
+ * perturbing FIFO timing.
  */
 static void
 r3d_trace_record(mach64_t *m, char op, unsigned width, uint32_t addr,
@@ -142,16 +146,26 @@ r3d_trace_record(mach64_t *m, char op, unsigned width, uint32_t addr,
 
     e = &r3d_trace_ring[r3d_trace_pos];
     e->seq = ++r3d_trace_seq;
-    e->addr = addr & 0x3ff;
+    e->addr = addr;
     e->value = value;
     e->dst_cntl = m->dst_cntl;
     e->dp_pix_width = m->dp_pix_width;
+    e->crtc_gen_cntl = m->crtc_gen_cntl;
+    e->crtc_off_pitch = m->crtc_off_pitch;
+    e->clock_cntl = m->clock_cntl;
     ctx = r3d_find(m);
     e->scale_3d_cntl = ctx ? ctx->regs[R3D_SCALE_3D_CNTL >> 2] : 0;
     e->op = (uint8_t) op;
     e->width = (uint8_t) width;
     e->claimed = claimed ? 1 : 0;
     r3d_trace_pos = (r3d_trace_pos + 1) % R3D_TRACE_RING;
+}
+
+void
+mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
+                         uint32_t addr, uint32_t value, int claimed)
+{
+    r3d_trace_record(mach64, op, width, addr, value, claimed);
 }
 
 static void
@@ -175,22 +189,25 @@ r3d_trace_dump(mach64_t *m)
             m->pci_id, m->config_chip_id, m->mem_cntl, m->config_stat0);
     fprintf(fp, "# CLOCK_CNTL=%08X PLL_ADDR=%02X DP_PIX_WIDTH=%08X DP_MIX=%08X DP_SRC=%08X\n",
             m->clock_cntl, m->pll_addr, m->dp_pix_width, m->dp_mix, m->dp_src);
+    fprintf(fp, "# CRTC_H_TOTAL_DISP=%08X CRTC_V_TOTAL_DISP=%08X CRTC_OFF_PITCH=%08X CRTC_GEN_CNTL=%08X\n",
+            m->crtc_h_total_disp, m->crtc_v_total_disp, m->crtc_off_pitch, m->crtc_gen_cntl);
     fprintf(fp, "# DST_OFF_PITCH=%08X DST_Y_X=%08X DST_CNTL=%08X BRES_ERR=%08X INC=%08X DEC=%08X\n",
             m->dst_off_pitch, m->dst_y_x, m->dst_cntl,
             m->dst_bres_err, m->dst_bres_inc, m->dst_bres_dec);
     fprintf(fp, "# SC_LEFT_RIGHT=%08X SC_TOP_BOTTOM=%08X events=%llu\n",
             m->sc_left_right, m->sc_top_bottom,
             (unsigned long long) r3d_trace_seq);
-    fprintf(fp, "# seq op width claimed addr value dst_cntl dp_pix_width scale_3d_cntl\n");
+    fprintf(fp, "# seq op width claimed addr value dst_cntl dp_pix_width scale_3d_cntl crtc_gen_cntl crtc_off_pitch clock_cntl\n");
 
     count = (r3d_trace_seq < R3D_TRACE_RING) ? (uint32_t) r3d_trace_seq : R3D_TRACE_RING;
     start = (r3d_trace_seq < R3D_TRACE_RING) ? 0 : r3d_trace_pos;
     for (uint32_t i = 0; i < count; i++) {
         const r3d_trace_event_t *e = &r3d_trace_ring[(start + i) % R3D_TRACE_RING];
-        fprintf(fp, "%010llu %c %u %u %03X %08X %08X %08X %08X\n",
+        fprintf(fp, "%010llu %c %u %u %08X %08X %08X %08X %08X %08X %08X %08X\n",
                 (unsigned long long) e->seq, e->op, e->width, e->claimed,
                 e->addr, e->value, e->dst_cntl, e->dp_pix_width,
-                e->scale_3d_cntl);
+                e->scale_3d_cntl, e->crtc_gen_cntl, e->crtc_off_pitch,
+                e->clock_cntl);
     }
 
     fclose(fp);
