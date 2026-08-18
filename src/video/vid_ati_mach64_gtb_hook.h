@@ -27,6 +27,7 @@ void mach64_io_removehandler_dispatch(uint16_t base, uint16_t size,
                                       void *priv);
 void mach64_ics2595_setclock_dispatch(void *priv, double clock);
 void mach64_pci_write_gtb_legacy_dispatch(int func, int addr, int len, uint8_t val, void *priv);
+void mach64_pci_write_gtb_bar_dispatch(int func, int addr, int len, uint8_t val, void *priv);
 
 /* Rage II+ lifecycle and PCI configuration state. */
 void mach64_gtb_state_attach(void *priv);
@@ -45,5 +46,14 @@ void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
 #define ics2595_setclock   mach64_ics2595_setclock_dispatch
 #define mach64_gtb_cfg_readb  mach64_gtb_cfg_readb_block0
 #define mach64_gtb_cfg_writeb mach64_gtb_cfg_writeb_block0
+
+/*
+ * CMake first maps mach64_pci_write_legacy to
+ * mach64_pci_write_gtb_legacy_dispatch for the Rage II+ shim.  Chain that
+ * token to the BAR guard here; vid_ati_mach64_gtb_hook.c itself is not
+ * force-included with this header, so its real legacy dispatcher keeps its
+ * original symbol and can safely be called by the guard.
+ */
+#define mach64_pci_write_gtb_legacy_dispatch mach64_pci_write_gtb_bar_dispatch
 
 #endif
