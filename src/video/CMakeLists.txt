@@ -27,7 +27,7 @@ add_library(vid OBJECT
     ramdac/vid_ramdac_att20c49x.c
     ramdac/vid_ramdac_att2xc498.c
     ramdac/vid_ramdac_bt48x.c 
-    ramdac/vid_ramdac_bt481.c 
+    ramdac/vid_ramdac_bt481.c
     ramdac/vid_ramdac_ibm_rgb528.c
     ramdac/vid_ramdac_sc1148x.c 
     ramdac/vid_ramdac_sc1502x.c 
@@ -157,12 +157,12 @@ add_library(vid OBJECT
 set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
 
-# Keep the mature PCI implementation as the legacy callback while routing
-# Mach64 card registration through a small dispatcher.  The dispatcher only
-# changes PCI Revision ID for the Rage II+ GU/GTB identity (1002:4755); all
-# other Mach64 PCI accesses continue through the legacy implementation.
+# Keep the mature PCI implementation as legacy callbacks while routing Mach64
+# card registration through a dispatcher.  Rage II+ needs a different PCI
+# Revision ID and a wider option-ROM BAR mapping for the 36 KiB ARS2D image;
+# every other Mach64 variant continues through the legacy callbacks unchanged.
 set_source_files_properties(vid_ati_mach64.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;pci_add_card=mach64_pci_add_card_dispatch")
+    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
 
 # Until the card table is split into a generated registry, expose Rage II+ in
 # the existing Mach64 VT2 slot without editing the large static table here.
