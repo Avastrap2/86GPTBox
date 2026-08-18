@@ -1,5 +1,5 @@
 /*
- * 86GPTBox - ATI 3D RAGE / Rage II+ software 3D pipeline.
+ * 86GPTBox - ATI 3D RAGE / Rage II+ (Mach64 GT/GTB) software 3D pipeline.
  *
  * Register layout and fixed-point formats follow ATI's 1996
  * "mach64 Register Reference Guide - ATI-264VT & 3D RAGE".
@@ -16,26 +16,27 @@
 #define R3D_LEAD_BRES_LNTH_ALIAS 0x144
 #define R3D_Z_OFF_PITCH 0x148
 #define R3D_Z_CNTL 0x14c
-#define R3D_ALPHA_TST_CNTL 0x150
+
 #define R3D_TEX_0_OFF 0x1c0
 #define R3D_TEX_10_OFF 0x1e8
 #define R3D_SCALE_3D_CNTL 0x1fc
-#define R3D_TEX_PALETTE_INDEX 0x340
-#define R3D_STW_EXP 0x344
-#define R3D_LOG_MAX_INC 0x348
-#define R3D_S_X_INC 0x34c
+
+/* GT/GTB texture interpolators.  Rage Pro and later reused several of these
+ * addresses for STW/palette controls; Rage II+ uses the quadratic S/T set. */
+#define R3D_S_X_INC2 0x340
+#define R3D_S_Y_INC2 0x344
+#define R3D_S_XY_INC2 0x348
+#define R3D_S_XINC_START 0x34c
 #define R3D_S_Y_INC 0x350
 #define R3D_S_START 0x354
-#define R3D_W_X_INC 0x358
-#define R3D_W_Y_INC 0x35c
-#define R3D_W_START 0x360
-#define R3D_T_X_INC 0x364
+#define R3D_T_X_INC2 0x358
+#define R3D_T_Y_INC2 0x35c
+#define R3D_T_XY_INC2 0x360
+#define R3D_T_XINC_START 0x364
 #define R3D_T_Y_INC 0x368
 #define R3D_T_START 0x36c
 #define R3D_TEX_SIZE_PITCH 0x370
-#define R3D_TEX_CNTL 0x374
-#define R3D_SECONDARY_TEX_OFFSET 0x378
-#define R3D_TEX_PALETTE 0x37c
+
 #define R3D_RED_X_INC 0x3c0
 #define R3D_RED_Y_INC 0x3c4
 #define R3D_RED_START 0x3c8
@@ -51,20 +52,26 @@
 #define R3D_ALPHA_X_INC 0x3f0
 #define R3D_ALPHA_Y_INC 0x3f4
 #define R3D_ALPHA_START 0x3f8
+
 #define R3D_DRAW_TRAP (1u << 15)
 #define R3D_TRAIL_X_DIR (1u << 28)
+
 #define R3D_Z_EN (1u << 0)
+#define R3D_Z_SRC (1u << 1)
 #define R3D_Z_TEST_SHIFT 2
 #define R3D_Z_MASK (1u << 5)
+
 #define R3D_FCN_SHIFT 6
 #define R3D_FCN_MASK 3
 #define R3D_ALPHA_FOG_SHIFT 11
 #define R3D_ALPHA_FOG_MASK 3
+#define R3D_COLOR_OVERRIDE (1u << 13)
 #define R3D_BLEND_SRC_SHIFT 16
 #define R3D_BLEND_DST_SHIFT 19
 #define R3D_BLEND_MASK 7
 #define R3D_TEX_LIGHT_SHIFT 22
 #define R3D_TEX_LIGHT_MASK 3
+#define R3D_MIP_MAP_DISABLE (1u << 24)
 #define R3D_BILINEAR_TEX_EN (1u << 25)
 #define R3D_TEX_BLEND_SHIFT 26
 #define R3D_TEX_BLEND_MASK 3
@@ -77,8 +84,6 @@ typedef struct rgba_t { int r, g, b, a; } rgba_t;
 typedef struct mach64_3d_ctx_t {
     mach64_t *mach64;
     uint32_t regs[256];
-    uint32_t tex_palette[256];
-    uint8_t tex_palette_index;
     int trail_x;
     int trail_valid;
 } mach64_3d_ctx_t;
@@ -109,7 +114,7 @@ static void r3d_vram_write16(mach64_t *m, uint32_t a, uint16_t v) { r3d_vram_wri
 static void r3d_vram_write32(mach64_t *m, uint32_t a, uint32_t v) { r3d_vram_write16(m,a,v); r3d_vram_write16(m,a+2,v>>16); }
 
 /* DP_DST_PIX_WIDTH is the framebuffer type.  DP_SCALE_PIX_WIDTH is the
- * independent 3D/texture source type and must not be conflated with it. */
+ * independent 3D/texture source type. */
 static int r3d_dst_format(mach64_t *m) { return m->dp_pix_width & 15; }
 static int r3d_tex_format(mach64_t *m) { return (m->dp_pix_width >> 28) & 15; }
-static int r3d_bytes_per_pixel(int f) { switch (f) { case 2: case 7: case 8: return 1; case 3: case 4: case 11: case 15: return 2; case 6: case 14: return 4; default: return 0; } }
+static int r3d_bytes_per_pixel(int f) { switch (f) { case 2: case 7: case 8: return 1; case 3: case 4: case 15: return 2; case 11: case 6: case 14: return 4; default: return 0; } }
