@@ -20,6 +20,8 @@
 
 extern void ics2595_setclock(void *priv, double clock);
 extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
+extern void mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
+                                     uint32_t addr, uint32_t value, int claimed);
 
 typedef struct mach64_gtb_state_t {
     int used;
@@ -55,6 +57,44 @@ mach64_gtb_is_card(const mach64_t *mach64)
     return mach64 && mach64->pci_id == GTB_PCI_ID;
 }
 
+/*
+ * The legacy core has historically used io_base in two different forms:
+ * mach64_common_init() stores the actual sparse port (02ECh/01CCh/01C8h),
+ * while PCI IOCONFIG writes replace it with the 2-bit selector (0/1/2).
+ * Keep the GTB state in the hardware-visible selector form and translate only
+ * at the callback boundary.  This avoids changing ordinary VT/VT2 behavior.
+ */
+static uint8_t
+mach64_gtb_sparse_selector(uint32_t io_base)
+{
+    switch (io_base) {
+        case MACH64_IO_BASE_2EC:
+        case 0:
+            return 0;
+        case MACH64_IO_BASE_1CC:
+        case 1:
+            return 1;
+        case MACH64_IO_BASE_1C8:
+        case 2:
+            return 2;
+        default:
+            return 0;
+    }
+}
+
+static uint32_t
+mach64_gtb_sparse_port_base(uint8_t selector)
+{
+    switch (selector & 3) {
+        case 1:
+            return MACH64_IO_BASE_1CC;
+        case 2:
+            return MACH64_IO_BASE_1C8;
+        default:
+            return MACH64_IO_BASE_2EC;
+    }
+}
+
 static mach64_gtb_state_t *
 mach64_gtb_get_state(mach64_t *mach64, int create)
 {
@@ -80,7 +120,7 @@ mach64_gtb_get_state(mach64_t *mach64, int create)
     free_state->genena = 0x08;
     free_state->genvs = 0x01;
     free_state->pci_ioconfig = (uint8_t) ((mach64->use_block_decoded_io & 0x04) |
-                                          (mach64->io_base & 0x03));
+                                          mach64_gtb_sparse_selector(mach64->io_base));
     return free_state;
 }
 
@@ -139,6 +179,72 @@ mach64_gtb_block_offset(const mach64_gtb_io_hook_t *hook, uint16_t port, uint16_
     if (offset)
         *offset = (uint16_t) (port - hook->base);
     return 1;
+}
+
+/*
+ * Pass an offset, not the absolute PCI port, to the legacy block callback.
+ * mach64_block_* currently decodes with (port & 0x3ff), which only happens to
+ * work when BAR1 is 1 KiB aligned.  GTB BAR1 is a 0x100-byte aperture, so an
+ * address such as 6500h must decode offset 00h rather than 100h.
+ */
+static uint16_t
+mach64_gtb_callback_port(const mach64_gtb_io_hook_t *hook, uint16_t port)
+{
+    uint16_t offset;
+
+    if (mach64_gtb_block_offset(hook, port, &offset))
+        return offset;
+    return port;
+}
+
+/*
+ * Sparse callbacks in the legacy core compare mach64->io_base with the actual
+ * port constants, even though PCI IOCONFIG stores a 0/1/2 selector in the same
+ * field.  Temporarily expose the actual port while a GTB sparse callback runs.
+ */
+static uint32_t
+mach64_gtb_callback_enter(const mach64_gtb_io_hook_t *hook, mach64_t *mach64)
+{
+    uint32_t old;
+    mach64_gtb_state_t *state;
+
+    if (!mach64)
+        return 0;
+
+    old = mach64->io_base;
+    if (!mach64_gtb_is_card(mach64) || !hook || hook->block)
+        return old;
+
+    state = mach64_gtb_get_state(mach64, 1);
+    if (state)
+        mach64->io_base = mach64_gtb_sparse_port_base(state->pci_ioconfig & 3);
+    return old;
+}
+
+static void
+mach64_gtb_callback_leave(const mach64_gtb_io_hook_t *hook, mach64_t *mach64,
+                          uint32_t old)
+{
+    if (mach64_gtb_is_card(mach64) && hook && !hook->block)
+        mach64->io_base = old;
+}
+
+static void
+mach64_gtb_trace_io(const mach64_gtb_io_hook_t *hook, mach64_t *mach64,
+                    char op, unsigned width, uint16_t port, uint32_t value)
+{
+    uint16_t offset;
+    uint32_t addr;
+
+    if (!mach64_gtb_is_card(mach64) || !hook)
+        return;
+
+    if (mach64_gtb_block_offset(hook, port, &offset))
+        addr = 0x2000u | offset;       /* BAR1 block-I/O offset. */
+    else
+        addr = 0x10000u | port;        /* Absolute sparse-I/O port. */
+
+    mach64_3d_trace_external(mach64, op, width, addr, value, 1);
 }
 
 /* Return CLOCK_CNTL byte lane (0..3), or -1 for unrelated ports. */
@@ -261,7 +367,10 @@ mach64_gtb_hook_inb(uint16_t port, void *priv)
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
     mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
     uint16_t offset;
+    uint16_t callback_port;
+    uint32_t old_io_base;
     int lane = mach64_gtb_clock_lane(hook, port);
+    uint8_t ret;
 
     if (mach64_gtb_is_card(mach64) && lane == 2)
         return mach64->pll_regs[mach64->pll_addr & 0x0f];
@@ -279,24 +388,46 @@ mach64_gtb_hook_inb(uint16_t port, void *priv)
         return state ? state->control[offset] : 0;
     }
 
-    return hook && hook->inb ? hook->inb(port, hook->priv) : 0xff;
+    if (!hook || !hook->inb)
+        return 0xff;
+
+    callback_port = mach64_gtb_callback_port(hook, port);
+    old_io_base = mach64_gtb_callback_enter(hook, mach64);
+    ret = hook->inb(callback_port, hook->priv);
+    mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    return ret;
 }
 
 static uint16_t
 mach64_gtb_hook_inw(uint16_t port, void *priv)
 {
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
+    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
+    uint16_t callback_port;
+    uint32_t old_io_base;
+    uint16_t ret;
 
     if (mach64_gtb_hook_special(hook, port) || mach64_gtb_hook_special(hook, port + 1))
         return (uint16_t) mach64_gtb_hook_inb(port, priv) |
                ((uint16_t) mach64_gtb_hook_inb(port + 1, priv) << 8);
-    return hook && hook->inw ? hook->inw(port, hook->priv) : 0xffff;
+    if (!hook || !hook->inw)
+        return 0xffff;
+
+    callback_port = mach64_gtb_callback_port(hook, port);
+    old_io_base = mach64_gtb_callback_enter(hook, mach64);
+    ret = hook->inw(callback_port, hook->priv);
+    mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    return ret;
 }
 
 static uint32_t
 mach64_gtb_hook_inl(uint16_t port, void *priv)
 {
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
+    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
+    uint16_t callback_port;
+    uint32_t old_io_base;
+    uint32_t ret;
 
     for (unsigned i = 0; i < 4; i++) {
         if (mach64_gtb_hook_special(hook, port + i)) {
@@ -306,7 +437,14 @@ mach64_gtb_hook_inl(uint16_t port, void *priv)
                    ((uint32_t) mach64_gtb_hook_inb(port + 3, priv) << 24);
         }
     }
-    return hook && hook->inl ? hook->inl(port, hook->priv) : 0xffffffffu;
+    if (!hook || !hook->inl)
+        return 0xffffffffu;
+
+    callback_port = mach64_gtb_callback_port(hook, port);
+    old_io_base = mach64_gtb_callback_enter(hook, mach64);
+    ret = hook->inl(callback_port, hook->priv);
+    mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    return ret;
 }
 
 static void
@@ -315,7 +453,11 @@ mach64_gtb_hook_outb(uint16_t port, uint8_t val, void *priv)
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
     mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
     uint16_t offset;
+    uint16_t callback_port;
+    uint32_t old_io_base;
     int lane = mach64_gtb_clock_lane(hook, port);
+
+    mach64_gtb_trace_io(hook, mach64, 'I', 1, port, val);
 
     if (mach64_gtb_is_card(mach64) &&
         mach64_gtb_block_offset(hook, port, &offset) &&
@@ -326,8 +468,12 @@ mach64_gtb_hook_outb(uint16_t port, uint8_t val, void *priv)
         return;
     }
 
-    if (hook && hook->outb)
-        hook->outb(port, val, hook->priv);
+    if (hook && hook->outb) {
+        callback_port = mach64_gtb_callback_port(hook, port);
+        old_io_base = mach64_gtb_callback_enter(hook, mach64);
+        hook->outb(callback_port, val, hook->priv);
+        mach64_gtb_callback_leave(hook, mach64, old_io_base);
+    }
 
     if (!mach64_gtb_is_card(mach64) || lane < 0)
         return;
@@ -345,20 +491,35 @@ static void
 mach64_gtb_hook_outw(uint16_t port, uint16_t val, void *priv)
 {
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
+    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
+    uint16_t callback_port;
+    uint32_t old_io_base;
+
+    mach64_gtb_trace_io(hook, mach64, 'I', 2, port, val);
 
     if (mach64_gtb_hook_special(hook, port) || mach64_gtb_hook_special(hook, port + 1)) {
         mach64_gtb_hook_outb(port, val & 0xff, priv);
         mach64_gtb_hook_outb(port + 1, val >> 8, priv);
         return;
     }
-    if (hook && hook->outw)
-        hook->outw(port, val, hook->priv);
+    if (!hook || !hook->outw)
+        return;
+
+    callback_port = mach64_gtb_callback_port(hook, port);
+    old_io_base = mach64_gtb_callback_enter(hook, mach64);
+    hook->outw(callback_port, val, hook->priv);
+    mach64_gtb_callback_leave(hook, mach64, old_io_base);
 }
 
 static void
 mach64_gtb_hook_outl(uint16_t port, uint32_t val, void *priv)
 {
     mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
+    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
+    uint16_t callback_port;
+    uint32_t old_io_base;
+
+    mach64_gtb_trace_io(hook, mach64, 'I', 4, port, val);
 
     for (unsigned i = 0; i < 4; i++) {
         if (mach64_gtb_hook_special(hook, port + i)) {
@@ -367,8 +528,13 @@ mach64_gtb_hook_outl(uint16_t port, uint32_t val, void *priv)
             return;
         }
     }
-    if (hook && hook->outl)
-        hook->outl(port, val, hook->priv);
+    if (!hook || !hook->outl)
+        return;
+
+    callback_port = mach64_gtb_callback_port(hook, port);
+    old_io_base = mach64_gtb_callback_enter(hook, mach64);
+    hook->outl(callback_port, val, hook->priv);
+    mach64_gtb_callback_leave(hook, mach64, old_io_base);
 }
 
 static mach64_gtb_io_hook_t *
@@ -640,7 +806,10 @@ mach64_gtb_pci_ioconfig_read(void *priv)
 void
 mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val)
 {
-    mach64_gtb_state_t *state = mach64_gtb_get_state((mach64_t *) priv, 1);
+    mach64_t *mach64 = (mach64_t *) priv;
+    mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 1);
+
+    mach64_3d_trace_external(mach64, 'Q', 1, 0x1040u, val, 1);
     if (state)
         state->pci_ioconfig = val & 0x0f;
 }
