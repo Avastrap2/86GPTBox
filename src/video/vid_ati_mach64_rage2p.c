@@ -8,6 +8,7 @@
 #include "vid_ati_mach64_3d.h"
 
 extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
+extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
 extern void mach64_close(void *priv);
 extern void mach64_speed_changed(void *priv);
 extern void mach64_force_redraw(void *priv);
@@ -19,6 +20,39 @@ mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
 {
     if (!mach64_3d_write(mach64, addr, val, type))
         mach64_queue_legacy(mach64, addr, val, type);
+}
+
+/*
+ * A real GU/GTB Rage II+ board reports PCI revision 0x9a.  The VT2 core we
+ * reuse normally reports 0x40 for every non-GX Mach64.  Keep the legacy PCI
+ * implementation for all registers/devices, but correct the Rage II+ revision
+ * once the shim has changed pci_id to 0x4755.
+ */
+static uint8_t
+mach64rage2p_pci_read(int func, int addr, int len, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if ((addr == PCI_REG_REVISION) && (mach64->pci_id == 0x4755))
+        return 0x9a;
+
+    return mach64_pci_read_legacy(func, addr, len, priv);
+}
+
+/*
+ * vid_ati_mach64.c is compiled with pci_add_card renamed to this dispatcher.
+ * That lets us install the revision-aware read callback without invasive
+ * changes to the mature Mach64 core.  Other Mach64 variants remain bit-for-bit
+ * compatible through mach64_pci_read_legacy().
+ */
+void
+mach64_pci_add_card_dispatch(uint8_t add_type,
+                             uint8_t (*read)(int func, int addr, int len, void *priv),
+                             void (*write)(int func, int addr, int len, uint8_t val, void *priv),
+                             void *priv, uint8_t *slot)
+{
+    (void) read;
+    pci_add_card(add_type, mach64rage2p_pci_read, write, priv, slot);
 }
 
 /*
