@@ -1,5 +1,6 @@
 #define R3D_GUI_STAT 0x338
 #define R3D_GTB_FIFO_VISIBLE 48
+#define R3D_DST_Y_X_ALIAS 0x134
 
 static int
 r3d_unique_register(uint32_t b)
@@ -209,6 +210,21 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
      */
     r3d_trace_record(m, 'W', width, a, v, 0);
     r3d_debug_access(ctx, 'W', width, a, v, 0);
+
+    /*
+     * 3D RAGE adds a write-only DST_Y_X alias at MM register 0_4D (byte
+     * offset 0x134).  The Win9x HAL uses this alias for trapezoid setup.  The
+     * inherited VT2 decoder has no 0x134 case, so dropping it pins each draw's
+     * lead edge and starting Y at zero and produces the characteristic large
+     * textured wedge from the top-left corner.
+     */
+    if (b == R3D_DST_Y_X_ALIAS) {
+        r3d_sync_legacy_fifo(ctx);
+        m->dst_y_x = r3d_merge_write(m->dst_y_x, a, v, type);
+        r3d_trace_record(m, 'C', width, b, m->dst_y_x, 1);
+        r3d_debug_access(ctx, 'C', width, b, m->dst_y_x, 1);
+        return 1;
+    }
 
     /*
      * 0x120 is shared with the legacy line engine.  Mirror every partial
