@@ -289,31 +289,79 @@ mach64_gtb_bank_readb(const mach64_t *mach64, uint16_t offset, uint8_t *val)
 }
 
 /*
- * GTB exposes monitor/DDC lines through GP_IO.  The previous compatibility
- * layer treated GP_IO as an ordinary byte shadow, so reads always returned the
- * last written latch rather than the electrical SDA/SCL state.  ATI's Win9x
- * mode-setting code bit-bangs these pins before accepting high-resolution
- * packed-pixel modes.  Model the same open-drain wiring already used by the
- * mature Mach64 VT3 path: data bits 12/13, direction bits 28/29.
+ * GTB/GU exposes GP_IO through both block I/O (register 0x78) and sparse I/O
+ * selector 0x1e.  The inherited Mach64 sparse decoder has no 0x7Axx case, so a
+ * sparse GP_IO access otherwise falls through to register 0x00 and can corrupt
+ * CRTC_H_TOTAL_DISP while a utility is merely probing DDC/GPIO state.
+ *
+ * GTB-family software uses GP_IO pairs B/4 (pins 11/4) and A/C (pins 10/12)
+ * for bit-banged I2C probing.  Direction bits are the corresponding pin bits
+ * plus 16.  A cleared direction bit releases the open-drain line; when driven,
+ * the data bit selects low/high.  Do not reuse VT3's later pins 13/12 here.
  */
+#define GTB_GP_IO_SDA_4      (1u << 4)
+#define GTB_GP_IO_SCL_A      (1u << 10)
+#define GTB_GP_IO_SCL_B      (1u << 11)
+#define GTB_GP_IO_SDA_C      (1u << 12)
+#define GTB_GP_IO_DIR_SDA_4  (1u << 20)
+#define GTB_GP_IO_DIR_SCL_A  (1u << 26)
+#define GTB_GP_IO_DIR_SCL_B  (1u << 27)
+#define GTB_GP_IO_DIR_SDA_C  (1u << 28)
+
 static int
 mach64_gtb_gp_io_offset(uint16_t offset)
 {
     return offset >= 0x78 && offset <= 0x7b;
 }
 
+static int
+mach64_gtb_sparse_gp_io_offset(const mach64_gtb_io_hook_t *hook,
+                                uint16_t port, uint16_t *offset)
+{
+    uint16_t sparse_base;
+
+    if (!hook || hook->block || hook->size != 4 || port < hook->base ||
+        (uint32_t) port >= (uint32_t) hook->base + 4u)
+        return 0;
+
+    /* Sparse selector 0x1e is GP_IO.  Accept all three IOCONFIG base choices. */
+    sparse_base = (uint16_t) (hook->base - (0x1eu << 10));
+    if (sparse_base != MACH64_IO_BASE_2EC &&
+        sparse_base != MACH64_IO_BASE_1CC &&
+        sparse_base != MACH64_IO_BASE_1C8)
+        return 0;
+
+    if (offset)
+        *offset = (uint16_t) (0x78u + (port - hook->base));
+    return 1;
+}
+
+static int
+mach64_gtb_gp_io_pin_high(uint32_t gp_io, uint32_t data_bit, uint32_t dir_bit)
+{
+    return !(gp_io & dir_bit) || !!(gp_io & data_bit);
+}
+
 static void
 mach64_gtb_gp_io_drive(mach64_t *mach64)
 {
-    int scl;
-    int sda;
+    int scl_a;
+    int scl_b;
+    int sda_4;
+    int sda_c;
 
     if (!mach64 || !mach64->i2c)
         return;
 
-    scl = !!(mach64->gp_io & (1u << 13)) || !(mach64->gp_io & (1u << 29));
-    sda = !!(mach64->gp_io & (1u << 12)) || !(mach64->gp_io & (1u << 28));
-    i2c_gpio_set(mach64->i2c, scl, sda);
+    scl_a = mach64_gtb_gp_io_pin_high(mach64->gp_io, GTB_GP_IO_SCL_A, GTB_GP_IO_DIR_SCL_A);
+    scl_b = mach64_gtb_gp_io_pin_high(mach64->gp_io, GTB_GP_IO_SCL_B, GTB_GP_IO_DIR_SCL_B);
+    sda_4 = mach64_gtb_gp_io_pin_high(mach64->gp_io, GTB_GP_IO_SDA_4, GTB_GP_IO_DIR_SDA_4);
+    sda_c = mach64_gtb_gp_io_pin_high(mach64->gp_io, GTB_GP_IO_SDA_C, GTB_GP_IO_DIR_SDA_C);
+
+    /* The emulator has one external I2C/DDC bus.  Either GTB candidate pin pair
+     * may drive it; an unused pair is input/released and therefore contributes
+     * a logical high to this wired-AND combination. */
+    i2c_gpio_set(mach64->i2c, scl_a && scl_b, sda_4 && sda_c);
 }
 
 static uint8_t
@@ -328,10 +376,23 @@ mach64_gtb_gp_io_readb(mach64_t *mach64, uint16_t offset)
     lane = offset & 3;
     ret = (mach64->gp_io >> (lane * 8)) & 0xff;
 
-    if (lane == 1 && mach64->i2c) {
-        ret &= ~0x30u;
-        ret |= (i2c_gpio_get_scl(mach64->i2c) ? 0x20u : 0u);
-        ret |= (i2c_gpio_get_sda(mach64->i2c) ? 0x10u : 0u);
+    if (mach64->i2c) {
+        int scl = i2c_gpio_get_scl(mach64->i2c);
+        int sda = i2c_gpio_get_sda(mach64->i2c);
+
+        if (lane == 0) {
+            /* GP_IO_4 is the first GTB data pin. */
+            ret &= ~0x10u;
+            if (sda)
+                ret |= 0x10u;
+        } else if (lane == 1) {
+            /* GP_IO_A/B are clock candidates and GP_IO_C is data. */
+            ret &= ~0x1cu;
+            if (scl)
+                ret |= 0x0cu;
+            if (sda)
+                ret |= 0x10u;
+        }
     }
 
     return ret;
@@ -407,6 +468,8 @@ mach64_gtb_hook_special(const mach64_gtb_io_hook_t *hook, uint16_t port)
 
     if (mach64_gtb_clock_lane(hook, port) >= 0)
         return 1;
+    if (mach64_gtb_sparse_gp_io_offset(hook, port, &offset))
+        return 1;
     if (!mach64_gtb_block_offset(hook, port, &offset))
         return 0;
     if (offset >= 0xb4 && offset <= 0xbb)
@@ -432,6 +495,9 @@ mach64_gtb_hook_inb_raw(uint16_t port, void *priv)
 
     if (mach64_gtb_is_card(mach64) && lane == 2)
         return mach64->pll_regs[mach64->pll_addr & 0x0f];
+
+    if (mach64_gtb_is_card(mach64) && mach64_gtb_sparse_gp_io_offset(hook, port, &offset))
+        return mach64_gtb_gp_io_readb(mach64, offset);
 
     if (mach64_gtb_is_card(mach64) && mach64_gtb_block_offset(hook, port, &offset)) {
         uint8_t bank;
@@ -541,6 +607,11 @@ mach64_gtb_hook_outb(uint16_t port, uint8_t val, void *priv)
     int lane = mach64_gtb_clock_lane(hook, port);
 
     mach64_gtb_trace_io(hook, mach64, 'I', 1, port, val);
+
+    if (mach64_gtb_is_card(mach64) && mach64_gtb_sparse_gp_io_offset(hook, port, &offset)) {
+        mach64_gtb_gp_io_writeb(mach64, offset, val);
+        return;
+    }
 
     if (mach64_gtb_is_card(mach64) && mach64_gtb_block_offset(hook, port, &offset)) {
         if (mach64_gtb_gp_io_offset(offset)) {
@@ -870,7 +941,7 @@ mach64_gtb_state_attach(void *priv)
                   mach64_gtb_genena_out, NULL, NULL, state);
     state->ports_attached = 1;
 
-    /* GP_IO powers up with both DDC lines released. */
+    /* GP_IO powers up with both candidate I2C pin pairs released. */
     mach64_gtb_gp_io_drive(mach64);
 
     if (mach64 && mach64->svga.clock_gen)
