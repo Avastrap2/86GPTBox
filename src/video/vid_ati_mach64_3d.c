@@ -56,6 +56,45 @@ const device_t mach64gtb_core_device = {
 };
 
 /*
+ * The Rage II+ integration layer owns GTB/3D reads but forwards ordinary
+ * Mach64 register reads to the mature legacy reader.  Trace that final leg as
+ * lower-case 'r'; previous traces stopped at the last PIO chip-ID read and
+ * could not show a subsequent FIFO_STAT/GUI_STAT MMIO polling loop.
+ */
+uint8_t
+mach64_ext_readb_gtb_trace(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t ret = mach64_ext_readb(addr, priv);
+
+    if (mach64 && mach64->pci_id == 0x4755)
+        mach64_3d_trace_external(mach64, 'r', 1, addr, ret, 0);
+    return ret;
+}
+
+uint16_t
+mach64_ext_readw_gtb_trace(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint16_t ret = mach64_ext_readw(addr, priv);
+
+    if (mach64 && mach64->pci_id == 0x4755)
+        mach64_3d_trace_external(mach64, 'r', 2, addr, ret, 0);
+    return ret;
+}
+
+uint32_t
+mach64_ext_readl_gtb_trace(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t ret = mach64_ext_readl(addr, priv);
+
+    if (mach64 && mach64->pci_id == 0x4755)
+        mach64_3d_trace_external(mach64, 'r', 4, addr, ret, 0);
+    return ret;
+}
+
+/*
  * The Mach64 block-decoded PIO register file occupies 0x100 bytes.  The VT2
  * PCI writer historically masks BAR1 with 0xfc00 while processing the upper
  * BAR bytes, which is a 1 KiB alignment and discards address bits 8 and 9.
