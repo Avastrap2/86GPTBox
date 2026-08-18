@@ -228,13 +228,44 @@ void mach64_3d_attach(mach64_t *mach64) {
 }
 void mach64_3d_detach(mach64_t *mach64) { mach64_3d_ctx_t *ctx = r3d_find(mach64); if (ctx) { r3d_trace_dump(mach64); memset(ctx, 0, sizeof(*ctx)); } }
 
-static uint8_t r3d_vram_read8(mach64_t *m, uint32_t a) { return m->svga.vram[a & m->vram_mask]; }
-static uint16_t r3d_vram_read16(mach64_t *m, uint32_t a) { return (uint16_t)(r3d_vram_read8(m,a) | (r3d_vram_read8(m,a+1) << 8)); }
-static uint32_t r3d_vram_read32(mach64_t *m, uint32_t a) { return (uint32_t)r3d_vram_read16(m,a) | ((uint32_t)r3d_vram_read16(m,a+2) << 16); }
-static void r3d_mark_changed(mach64_t *m, uint32_t a) { a &= m->vram_mask; m->svga.changedvram[a >> 12] = m->svga.monitor->mon_changeframecount; }
-static void r3d_vram_write8(mach64_t *m, uint32_t a, uint8_t v) { a &= m->vram_mask; m->svga.vram[a] = v; r3d_mark_changed(m,a); }
-static void r3d_vram_write16(mach64_t *m, uint32_t a, uint16_t v) { r3d_vram_write8(m,a,v); r3d_vram_write8(m,a+1,v>>8); }
-static void r3d_vram_write32(mach64_t *m, uint32_t a, uint32_t v) { r3d_vram_write16(m,a,v); r3d_vram_write16(m,a+2,v>>16); }
+/*
+ * The software rasterizer touches VRAM for every color and Z sample.  Keep the
+ * byte-wise little-endian semantics, but do the address masking and dirty-page
+ * bookkeeping once per pixel rather than once per byte.  The old helpers
+ * marked a 32-bit color four times and a 16-bit Z value twice, which dominated
+ * small Direct3D workloads such as Flip3D.
+ */
+static uint8_t r3d_vram_read8(mach64_t *m, uint32_t a) {
+    return m->svga.vram[a & m->vram_mask];
+}
+static uint16_t r3d_vram_read16(mach64_t *m, uint32_t a) {
+    uint32_t mask=m->vram_mask;uint8_t*v=m->svga.vram;
+    return (uint16_t)(v[a&mask]|((uint16_t)v[(a+1)&mask]<<8));
+}
+static uint32_t r3d_vram_read32(mach64_t *m, uint32_t a) {
+    uint32_t mask=m->vram_mask;uint8_t*v=m->svga.vram;
+    return (uint32_t)v[a&mask]|((uint32_t)v[(a+1)&mask]<<8)|
+           ((uint32_t)v[(a+2)&mask]<<16)|((uint32_t)v[(a+3)&mask]<<24);
+}
+static void r3d_mark_changed_span(mach64_t *m,uint32_t a,unsigned bytes) {
+    uint32_t mask=m->vram_mask,first=a&mask,last=(a+bytes-1)&mask;
+    int stamp=m->svga.monitor->mon_changeframecount;
+    m->svga.changedvram[first>>12]=stamp;
+    if((first>>12)!=(last>>12))m->svga.changedvram[last>>12]=stamp;
+}
+static void r3d_vram_write8(mach64_t *m, uint32_t a, uint8_t v) {
+    uint32_t mask=m->vram_mask;m->svga.vram[a&mask]=v;r3d_mark_changed_span(m,a,1);
+}
+static void r3d_vram_write16(mach64_t *m, uint32_t a, uint16_t v) {
+    uint32_t mask=m->vram_mask;uint8_t*p=m->svga.vram;
+    p[a&mask]=(uint8_t)v;p[(a+1)&mask]=(uint8_t)(v>>8);r3d_mark_changed_span(m,a,2);
+}
+static void r3d_vram_write32(mach64_t *m, uint32_t a, uint32_t v) {
+    uint32_t mask=m->vram_mask;uint8_t*p=m->svga.vram;
+    p[a&mask]=(uint8_t)v;p[(a+1)&mask]=(uint8_t)(v>>8);
+    p[(a+2)&mask]=(uint8_t)(v>>16);p[(a+3)&mask]=(uint8_t)(v>>24);
+    r3d_mark_changed_span(m,a,4);
+}
 
 /* DP_DST_PIX_WIDTH is the framebuffer type.  DP_SCALE_PIX_WIDTH is the
  * independent 3D/texture source type. */
