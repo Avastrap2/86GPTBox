@@ -1,8 +1,8 @@
 /*
  * 86Box    A hypervisor and IBM PC system emulator that specializes in
- *          running old operating systems and software designed for IBM
- *          PC systems and compatibles from 1981 through fairly recent
- *          system designs based on the PCI bus.
+ *          running old operating systems and software designed for IBM PC
+ *          systems and compatibles from 1981 through fairly recent system
+ *          designs based on the PCI bus.
  *
  *          This file is part of the 86Box distribution.
  *
@@ -95,6 +95,10 @@ enum {
     MACH64_CT,
     MACH64_VT,
     MACH64_VT2,
+    /* 264GT-B / GU (3D Rage II+).  Keep before VT3 so GTB retains the
+     * pre-VT3 overlay/DDC paths while using the modern integrated aperture
+     * encoding rather than VT/VT2's CONFIG_CNTL special case. */
+    MACH64_GTB,
     MACH64_VT3
 };
 
@@ -473,13 +477,13 @@ extern mach64_t* reset_state[2];
             ret = (var) &0xff;          \
             break;                      \
         case 1:                         \
-            ret = ((var) >> 8) & 0xff;  \
+            ret = ((var) >> 8) &0xff;   \
             break;                      \
         case 2:                         \
-            ret = ((var) >> 16) & 0xff; \
+            ret = ((var) >> 16) &0xff;  \
             break;                      \
         case 3:                         \
-            ret = ((var) >> 24) & 0xff; \
+            ret = ((var) >> 24) &0xff;  \
             break;                      \
     }
 
