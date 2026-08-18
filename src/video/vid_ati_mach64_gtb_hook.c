@@ -116,7 +116,6 @@ mach64_gtb_get_state(mach64_t *mach64, int create)
     memset(free_state, 0, sizeof(*free_state));
     free_state->used = 1;
     free_state->dev = mach64;
-    /* Add-in VGA power-on defaults: VGA enabled, GENVS writes locked. */
     free_state->genena = 0x08;
     free_state->genvs = 0x01;
     free_state->pci_ioconfig = (uint8_t) ((mach64->use_block_decoded_io & 0x04) |
@@ -141,7 +140,7 @@ mach64_gtb_shadow_offset(uint16_t offset)
         case 0x58: /* DSP2_ON_OFF */
         case 0x5c: /* CRTC2_OFF_PITCH / reserved on GTB */
         case 0x74:
-        case 0x78: /* GP_IO */
+        case 0x78: /* GP_IO; handled electrically below */
         case 0x7c: /* HW_DEBUG */
         case 0x88: /* SCRATCH_REG2 */
         case 0x8c: /* SCRATCH_REG3 */
@@ -181,12 +180,6 @@ mach64_gtb_block_offset(const mach64_gtb_io_hook_t *hook, uint16_t port, uint16_
     return 1;
 }
 
-/*
- * Pass an offset, not the absolute PCI port, to the legacy block callback.
- * mach64_block_* currently decodes with (port & 0x3ff), which only happens to
- * work when BAR1 is 1 KiB aligned.  GTB BAR1 is a 0x100-byte aperture, so an
- * address such as 6500h must decode offset 00h rather than 100h.
- */
 static uint16_t
 mach64_gtb_callback_port(const mach64_gtb_io_hook_t *hook, uint16_t port)
 {
@@ -197,11 +190,6 @@ mach64_gtb_callback_port(const mach64_gtb_io_hook_t *hook, uint16_t port)
     return port;
 }
 
-/*
- * Sparse callbacks in the legacy core compare mach64->io_base with the actual
- * port constants, even though PCI IOCONFIG stores a 0/1/2 selector in the same
- * field.  Temporarily expose the actual port while a GTB sparse callback runs.
- */
 static uint32_t
 mach64_gtb_callback_enter(const mach64_gtb_io_hook_t *hook, mach64_t *mach64)
 {
@@ -240,9 +228,9 @@ mach64_gtb_trace_io(const mach64_gtb_io_hook_t *hook, mach64_t *mach64,
         return;
 
     if (mach64_gtb_block_offset(hook, port, &offset))
-        addr = 0x2000u | offset;       /* BAR1 block-I/O offset. */
+        addr = 0x2000u | offset;
     else
-        addr = 0x10000u | port;        /* Absolute sparse-I/O port. */
+        addr = 0x10000u | port;
 
     mach64_3d_trace_external(mach64, op, width, addr, value, 1);
 }
@@ -300,6 +288,72 @@ mach64_gtb_bank_readb(const mach64_t *mach64, uint16_t offset, uint8_t *val)
     return 1;
 }
 
+/*
+ * GTB exposes monitor/DDC lines through GP_IO.  The previous compatibility
+ * layer treated GP_IO as an ordinary byte shadow, so reads always returned the
+ * last written latch rather than the electrical SDA/SCL state.  ATI's Win9x
+ * mode-setting code bit-bangs these pins before accepting high-resolution
+ * packed-pixel modes.  Model the same open-drain wiring already used by the
+ * mature Mach64 VT3 path: data bits 12/13, direction bits 28/29.
+ */
+static int
+mach64_gtb_gp_io_offset(uint16_t offset)
+{
+    return offset >= 0x78 && offset <= 0x7b;
+}
+
+static void
+mach64_gtb_gp_io_drive(mach64_t *mach64)
+{
+    int scl;
+    int sda;
+
+    if (!mach64 || !mach64->i2c)
+        return;
+
+    scl = !!(mach64->gp_io & (1u << 13)) || !(mach64->gp_io & (1u << 29));
+    sda = !!(mach64->gp_io & (1u << 12)) || !(mach64->gp_io & (1u << 28));
+    i2c_gpio_set(mach64->i2c, scl, sda);
+}
+
+static uint8_t
+mach64_gtb_gp_io_readb(mach64_t *mach64, uint16_t offset)
+{
+    uint8_t ret;
+    unsigned lane;
+
+    if (!mach64 || !mach64_gtb_gp_io_offset(offset))
+        return 0xff;
+
+    lane = offset & 3;
+    ret = (mach64->gp_io >> (lane * 8)) & 0xff;
+
+    if (lane == 1 && mach64->i2c) {
+        ret &= ~0x30u;
+        ret |= (i2c_gpio_get_scl(mach64->i2c) ? 0x20u : 0u);
+        ret |= (i2c_gpio_get_sda(mach64->i2c) ? 0x10u : 0u);
+    }
+
+    return ret;
+}
+
+static void
+mach64_gtb_gp_io_writeb(mach64_t *mach64, uint16_t offset, uint8_t val)
+{
+    unsigned lane;
+    unsigned shift;
+    uint32_t mask;
+
+    if (!mach64 || !mach64_gtb_gp_io_offset(offset))
+        return;
+
+    lane = offset & 3;
+    shift = lane * 8;
+    mask = 0xffu << shift;
+    mach64->gp_io = (mach64->gp_io & ~mask) | ((uint32_t) val << shift);
+    mach64_gtb_gp_io_drive(mach64);
+}
+
 static int
 mach64_gtb_calc_vclk(mach64_t *mach64, unsigned clock, double *freq)
 {
@@ -322,7 +376,6 @@ mach64_gtb_calc_vclk(mach64_t *mach64, unsigned clock, double *freq)
     *freq = (2.0 * 14318184.0 * (double) fb_div) /
             ((double) ref_div * (double) gtb_postdiv[post_index]);
 
-    /* Also rejects NaN: both comparisons are false for NaN. */
     if (!(*freq > 1000000.0 && *freq < 250000000.0))
         return 0;
     return 1;
@@ -379,6 +432,8 @@ mach64_gtb_hook_inb(uint16_t port, void *priv)
         uint8_t bank;
         if (mach64_gtb_bank_readb(mach64, offset, &bank))
             return bank;
+        if (mach64_gtb_gp_io_offset(offset))
+            return mach64_gtb_gp_io_readb(mach64, offset);
     }
 
     if (mach64_gtb_is_card(mach64) &&
@@ -459,13 +514,17 @@ mach64_gtb_hook_outb(uint16_t port, uint8_t val, void *priv)
 
     mach64_gtb_trace_io(hook, mach64, 'I', 1, port, val);
 
-    if (mach64_gtb_is_card(mach64) &&
-        mach64_gtb_block_offset(hook, port, &offset) &&
-        mach64_gtb_shadow_offset(offset)) {
-        mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 1);
-        if (state)
-            state->control[offset] = val;
-        return;
+    if (mach64_gtb_is_card(mach64) && mach64_gtb_block_offset(hook, port, &offset)) {
+        if (mach64_gtb_gp_io_offset(offset)) {
+            mach64_gtb_gp_io_writeb(mach64, offset, val);
+            return;
+        }
+        if (mach64_gtb_shadow_offset(offset)) {
+            mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 1);
+            if (state)
+                state->control[offset] = val;
+            return;
+        }
     }
 
     if (hook && hook->outb) {
@@ -654,7 +713,7 @@ mach64_ics2595_setclock_dispatch(void *priv, double clock)
         if (mach64_gtb_calc_vclk(mach64, mach64->clock_cntl & 3, &corrected))
             clock = corrected;
         else if (!(clock > 1000000.0 && clock < 250000000.0))
-            return; /* Do not feed the SVGA timer a transient 0/NaN PLL clock. */
+            return;
     }
     ics2595_setclock(priv, clock);
 }
@@ -671,23 +730,20 @@ mach64_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val)
 
     offset = addr & 0xff;
 
-    /*
-     * Integrated PLL access is indirect.  The legacy VT2 reader exposes the
-     * cached CLOCK_CNTL byte at 0x92, but GT/GTB hardware returns the contents
-     * of the PLL register selected through CLOCK_CNTL_ADDR (0x91).  Windows
-     * MACH64.DRV performs read/modify/write sequences through MMIO while
-     * switching into accelerated modes, so returning the cached byte can
-     * corrupt VCLK_POST_DIV / PLL_EXT_CNTL programming and leave a black mode.
-     */
     if (offset == 0x92) {
         if (val)
             *val = mach64->pll_regs[mach64->pll_addr & 0x0f];
         return 1;
     }
 
-    /* Match the byte-level bank selector readback already provided on I/O. */
     if (offset >= 0xb4 && offset <= 0xbb)
         return mach64_gtb_bank_readb(mach64, offset, val);
+
+    if (mach64_gtb_gp_io_offset(offset)) {
+        if (val)
+            *val = mach64_gtb_gp_io_readb(mach64, offset);
+        return 1;
+    }
 
     if (!mach64_gtb_shadow_offset(offset))
         return 0;
@@ -706,7 +762,14 @@ mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val)
 
     if (!mach64_gtb_is_card(mach64) || !(addr & 0x400))
         return 0;
+
     offset = addr & 0xff;
+
+    if (mach64_gtb_gp_io_offset(offset)) {
+        mach64_gtb_gp_io_writeb(mach64, offset, val);
+        return 1;
+    }
+
     if (!mach64_gtb_shadow_offset(offset))
         return 0;
 
@@ -719,8 +782,6 @@ mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val)
 /*
  * Fixed VGA setup registers used by ARS2D before it touches standard VGA I/O.
  * GENENA[4] unlocks GENVS writes; GENENA[3] and GENVS[0] together enable VGA.
- * We retain the state here.  The base VT2 core already owns the VGA handlers,
- * so decode removal is deliberately left to CONFIG_CNTL/PCI mapping logic.
  */
 static uint8_t
 mach64_gtb_genvs_in(uint16_t port, void *priv)
@@ -768,13 +829,18 @@ mach64_gtb_state_attach(void *priv)
     if (!state || state->ports_attached)
         return;
 
+    /* Keep PCI revision and the chip's own CNFG_CHIP_ID revision coherent. */
+    mach64->config_chip_id = 0x9a004755u;
+
     io_sethandler(0x0102, 1, mach64_gtb_genvs_in, NULL, NULL,
                   mach64_gtb_genvs_out, NULL, NULL, state);
     io_sethandler(0x46e8, 1, mach64_gtb_genena_in, NULL, NULL,
                   mach64_gtb_genena_out, NULL, NULL, state);
     state->ports_attached = 1;
 
-    /* Keep a sane VGA dot clock until ARS2D has programmed a complete VPLL. */
+    /* GP_IO powers up with both DDC lines released. */
+    mach64_gtb_gp_io_drive(mach64);
+
     if (mach64 && mach64->svga.clock_gen)
         ics2595_setclock(mach64->svga.clock_gen, 25175000.0);
 }
