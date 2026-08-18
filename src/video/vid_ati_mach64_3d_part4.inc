@@ -43,19 +43,27 @@ r3d_write_complete(uint32_t a, uint32_t type)
 /*
  * GT-only registers are not yet represented as entries in the legacy Mach64
  * worker FIFO.  We therefore need an ordering barrier when crossing from an
- * ordinary/shared 2D write into GT state or a DRAW_TRAP command.  The previous
- * implementation drained the FIFO for every single GT register write, turning
- * a normal Direct3D state burst into dozens of thread synchronizations per
- * triangle.  One drain per 2D->3D transition preserves ordering without
- * serializing the entire 3D register file.
+ * ordinary/shared 2D write into GT state or a DRAW_TRAP command.  Record the
+ * exact FIFO depth and host timer duration for every barrier so a stalled
+ * Direct3D program can be separated from a slow rasterizer in the trace.
  */
 static void
 r3d_sync_legacy_fifo(mach64_3d_ctx_t *ctx)
 {
+    uint32_t fifo_before;
+    uint32_t fifo_after;
+    uint64_t start_tick;
+    uint64_t end_tick;
+
     if (!ctx || !ctx->legacy_fifo_pending)
         return;
 
+    fifo_before = ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
+    start_tick = plat_timer_read();
     mach64_wait_fifo_idle(ctx->mach64);
+    end_tick = plat_timer_read();
+    fifo_after = ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
+    r3d_debug_sync(ctx, start_tick, end_tick, fifo_before, fifo_after);
     ctx->legacy_fifo_pending = 0;
 }
 
@@ -71,6 +79,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
 
     /* Every Rage II+ MMIO read reaches this probe before the VT2 fallback. */
     r3d_trace_record(m, 'R', 0, a, 0, 0);
+    r3d_debug_access(ctx, 'R', 0, a, 0, 0);
 
     /*
      * DST_BRES_LNTH (0x120) is shared with the legacy 2D line engine.  Only
@@ -84,6 +93,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
         r3d_sync_legacy_fifo(ctx);
         *v = cmd;
         r3d_trace_record(m, 'V', 4, b, *v, 1);
+        r3d_debug_access(ctx, 'V', 4, b, *v, 1);
         return 1;
     }
 
@@ -99,6 +109,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
         *v = ctx->regs[b >> 2];
 
     r3d_trace_record(m, 'V', 4, b, *v, 1);
+    r3d_debug_access(ctx, 'V', 4, b, *v, 1);
     return 1;
 }
 
@@ -121,6 +132,7 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
      * writes actually consumed by the GT/GTB 3D block.
      */
     r3d_trace_record(m, 'W', width, a, v, 0);
+    r3d_debug_access(ctx, 'W', width, a, v, 0);
 
     /*
      * 0x120 is shared with the legacy line engine.  Mirror every partial
@@ -142,9 +154,11 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         }
 
         r3d_trace_record(m, 'C', width, b, cmd, 1);
+        r3d_debug_access(ctx, 'C', width, b, cmd, 1);
         r3d_sync_legacy_fifo(ctx);
         if ((cmd & R3D_DRAW_TRAP) && r3d_write_complete(a, type)) {
             r3d_trace_record(m, 'T', width, b, cmd, 1);
+            r3d_debug_access(ctx, 'T', width, b, cmd, 1);
             r3d_draw_trapezoid(ctx, cmd);
         }
         return 1;
@@ -159,5 +173,6 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     uint32_t i = b >> 2;
     ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
     r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
+    r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
     return 1;
 }
