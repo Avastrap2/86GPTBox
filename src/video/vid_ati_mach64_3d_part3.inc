@@ -14,8 +14,10 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     uint32_t db=(m->dst_off_pitch&0xfffff)<<3;int dp=((m->dst_off_pitch>>22)&0x3ff)<<3;if(!dp)return;
     /* X outside the programmed pitch would only spill into adjacent rows and
      * can turn a malformed/default 8191-pixel scissor into millions of host
-     * pixel operations.  Real destination pixels are confined to one pitch. */
+     * pixel operations.  Likewise, rows beyond the physical destination
+     * allocation only wrap VRAM and cannot be a valid DirectDraw surface. */
     if(left<0)left=0;if(right>=dp)right=dp-1;if(right<left)return;
+    {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}if(bottom<top)return;}
     uint32_t zc=ctx->regs[R3D_Z_CNTL>>2],zo=ctx->regs[R3D_Z_OFF_PITCH>>2],zb=(zo&0xfffff)<<3;int zp=((zo>>22)&0x3ff)<<3;
 #define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
     RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
@@ -43,11 +45,11 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);}
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
-                    rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;
+                    rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
                     if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,ss,tt);if(!r3d_apply_tex_alpha(ctl,&texel,shade.a))draw=0;else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
-                    if(draw&&z_enabled){uint16_t nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;else if(z_write)r3d_vram_write16(m,za,nz);}
-                    if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);}
+                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;}
+                    if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);}
                     da+=dbpp;if(z_enabled)za+=2;
                     rr+=rrstep;gg+=ggstep;bb+=bbstep;aa+=aastep;zz+=zzstep;
                     if(tex){ss+=ssstep;tt+=ttstep;ssstep+=sx2;ttstep+=tx2;}
