@@ -86,6 +86,7 @@ add_library(vid OBJECT
 
     # EGA
     vid_ega.c
+    vid_ega_render.c
     vid_jega.c
 
     # (Real IBM) VGA 
