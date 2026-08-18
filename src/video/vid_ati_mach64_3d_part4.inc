@@ -1,3 +1,6 @@
+#define R3D_GUI_STAT 0x338
+#define R3D_GTB_FIFO_VISIBLE 32
+
 static int
 r3d_unique_register(uint32_t b)
 {
@@ -6,6 +9,63 @@ r3d_unique_register(uint32_t b)
            (b == R3D_SCALE_3D_CNTL) ||
            ((b >= R3D_S_X_INC2) && (b <= R3D_TEX_SIZE_PITCH)) ||
            ((b >= R3D_RED_X_INC) && (b <= R3D_ALPHA_START));
+}
+
+/*
+ * GUI_STAT is more than an idle flag on 3D RAGE.  The Windows 9x HAL uses
+ * the live destination/scissor status while bringing up the 3D engine.  The
+ * inherited VT2 reader only returned GUI_ACTIVE plus an encoded FIFO count,
+ * leaving all four scissor comparison bits permanently clear.  A real GT/GTB
+ * reports those comparisons even while the engine is idle.
+ *
+ * The original GT documentation describes a 48-entry parameter FIFO but says
+ * FIFO_CNT is limited to 32 in this generation.  Keep that software-visible
+ * limit and derive it from the emulator queue rather than changing VT/VT2.
+ */
+static uint32_t
+r3d_gtb_gui_stat(mach64_t *m)
+{
+    uint32_t used;
+    uint32_t free_entries;
+    uint32_t ret = 0;
+    int dst_x;
+    int dst_y;
+    int sc_left;
+    int sc_right;
+    int sc_top;
+    int sc_bottom;
+
+    if (!m)
+        return 0;
+
+    used = (uint32_t) (m->fifo_write_idx - m->fifo_read_idx);
+    if (used && !m->blitter_busy)
+        mach64_wake_fifo_thread(m);
+
+    free_entries = (used >= R3D_GTB_FIFO_VISIBLE) ? 0 :
+                   (R3D_GTB_FIFO_VISIBLE - used);
+    ret |= free_entries << 16;
+
+    if (used || m->blitter_busy || m->accel.busy)
+        ret |= 0x01; /* GUI_ACTIVE */
+
+    dst_x = r3d_sign_extend(m->dst_y_x >> 16, 13);
+    dst_y = r3d_sign_extend(m->dst_y_x, 15);
+    sc_left = (int) (m->sc_left_right & 0x1fff);
+    sc_right = (int) ((m->sc_left_right >> 16) & 0x1fff);
+    sc_top = (int) (m->sc_top_bottom & 0x7fff);
+    sc_bottom = (int) ((m->sc_top_bottom >> 16) & 0x7fff);
+
+    if (dst_x < sc_left)
+        ret |= 0x10; /* DSTX_LT_SCISSOR_LEFT */
+    if (dst_x > sc_right)
+        ret |= 0x20; /* DSTX_GT_SCISSOR_RIGHT */
+    if (dst_y < sc_top)
+        ret |= 0x40; /* DSTY_LT_SCISSOR_TOP */
+    if (dst_y > sc_bottom)
+        ret |= 0x80; /* DSTY_GT_SCISSOR_BOTTOM */
+
+    return ret;
 }
 
 static unsigned
@@ -80,6 +140,18 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     /* Every Rage II+ MMIO read reaches this probe before the VT2 fallback. */
     r3d_trace_record(m, 'R', 0, a, 0, 0);
     r3d_debug_access(ctx, 'R', 0, a, 0, 0);
+
+    /*
+     * GUI_STAT is common to the 2D and 3D engines, but GTB needs the complete
+     * status word.  Claim all byte/word/dword lanes here so the Rage II+ path
+     * cannot fall back to the VT2 implementation that omits scissor flags.
+     */
+    if (b == R3D_GUI_STAT) {
+        *v = r3d_gtb_gui_stat(m);
+        r3d_trace_record(m, 'V', 4, b, *v, 1);
+        r3d_debug_access(ctx, 'V', 4, b, *v, 1);
+        return 1;
+    }
 
     /*
      * DST_BRES_LNTH (0x120) is shared with the legacy 2D line engine.  Only
