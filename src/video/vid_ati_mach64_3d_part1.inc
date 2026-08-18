@@ -66,7 +66,12 @@
 #define R3D_TEX_LIGHT_SHIFT 22
 #define R3D_TEX_LIGHT_MASK 3
 #define R3D_BILINEAR_TEX_EN (1u << 25)
-#define R3D_TEX_MAP_AEN (1u << 31)
+#define R3D_TEX_BLEND_SHIFT 26
+#define R3D_TEX_BLEND_MASK 3
+#define R3D_TEX_AMASK_AEN (1u << 28)
+#define R3D_TEX_AMASK_MODE (1u << 29)
+#define R3D_TEX_MAP_AEN (1u << 30)
+#define R3D_SRC_3D_SEL (1u << 31)
 
 typedef struct rgba_t { int r, g, b, a; } rgba_t;
 typedef struct mach64_3d_ctx_t {
@@ -103,9 +108,8 @@ static void r3d_vram_write8(mach64_t *m, uint32_t a, uint8_t v) { a &= m->vram_m
 static void r3d_vram_write16(mach64_t *m, uint32_t a, uint16_t v) { r3d_vram_write8(m,a,v); r3d_vram_write8(m,a+1,v>>8); }
 static void r3d_vram_write32(mach64_t *m, uint32_t a, uint32_t v) { r3d_vram_write16(m,a,v); r3d_vram_write16(m,a+2,v>>16); }
 
-static int r3d_format(mach64_t *m) {
-    int f = (m->dp_pix_width >> 28) & 15;
-    if (!f) switch (m->dp_pix_width & 7) { case BPP_8: f=2; break; case BPP_15: f=3; break; case BPP_16: f=4; break; case BPP_32: f=6; break; default: break; }
-    return f;
-}
+/* DP_DST_PIX_WIDTH is the framebuffer type.  DP_SCALE_PIX_WIDTH is the
+ * independent 3D/texture source type and must not be conflated with it. */
+static int r3d_dst_format(mach64_t *m) { return m->dp_pix_width & 15; }
+static int r3d_tex_format(mach64_t *m) { return (m->dp_pix_width >> 28) & 15; }
 static int r3d_bytes_per_pixel(int f) { switch (f) { case 2: case 7: case 8: return 1; case 3: case 4: case 11: case 15: return 2; case 6: case 14: return 4; default: return 0; } }
