@@ -10,7 +10,7 @@
 #include "vid_ati_mach64_3d.h"
 
 #define MACH64_3D_CONTEXTS 4
-#define R3D_TRACE_RING 4096
+#define R3D_TRACE_RING 16384
 #define R3D_LEAD_BRES_LNTH 0x120
 #define R3D_TRAIL_BRES_ERR 0x138
 #define R3D_TRAIL_BRES_INC 0x13c
@@ -128,11 +128,11 @@ r3d_trace_reset(void)
 }
 
 /*
- * Keep tracing out of the hot path's filesystem code.  The guest may issue
- * tens of thousands of MMIO operations while an ATI diagnostic is running;
- * retaining only the final 4096 relevant operations gives us the sequence
- * immediately preceding a guest-side fault or display-mode failure without
- * perturbing FIFO timing.
+ * Keep tracing out of the hot path's filesystem code.  ATI diagnostics and
+ * hardware-information tools can generate several thousand probe accesses
+ * after a failed display-mode switch.  Retain the final 16384 relevant
+ * operations so the actual CRTC/PLL/BAR mode-set sequence is not overwritten
+ * by those later reads, while still avoiding filesystem I/O in the hot path.
  */
 static void
 r3d_trace_record(mach64_t *m, char op, unsigned width, uint32_t addr,
