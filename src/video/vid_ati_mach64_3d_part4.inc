@@ -41,6 +41,12 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     uint32_t b = a & ~3u;
 
     /*
+     * The 86Box Mach64 FIFO runs asynchronously.  GT-only writes are handled
+     * by the software 3D block outside that legacy FIFO, so drain older
+     * Mach64 commands before changing 3D state.  This deliberately favors
+     * ordering correctness over throughput until GT commands are represented
+     * directly as FIFO entries.
+     *
      * 0x120 is shared with the legacy line engine.  It becomes a GT/GTB
      * trapezoid command only when DRAW_TRAP is set.  0x144 is the 3D-only
      * LEAD_BRES_LNTH alias and is always consumed here.
@@ -48,20 +54,23 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     if ((b == R3D_LEAD_BRES_LNTH) || (b == R3D_LEAD_BRES_LNTH_ALIAS)) {
         uint32_t i = R3D_LEAD_BRES_LNTH >> 2;
         uint32_t cmd = r3d_merge_write(ctx->regs[i], a, v, type);
+        int is_3d = (cmd & R3D_DRAW_TRAP) || (b == R3D_LEAD_BRES_LNTH_ALIAS);
+
+        if (!is_3d)
+            return 0;
+
+        mach64_wait_fifo_idle(m);
         ctx->regs[i] = cmd;
 
-        if (cmd & R3D_DRAW_TRAP) {
-            if (r3d_write_complete(a, type))
-                r3d_draw_trapezoid(ctx, cmd);
-            return 1;
-        }
-
-        return b == R3D_LEAD_BRES_LNTH_ALIAS;
+        if ((cmd & R3D_DRAW_TRAP) && r3d_write_complete(a, type))
+            r3d_draw_trapezoid(ctx, cmd);
+        return 1;
     }
 
     if (!r3d_unique_register(b))
         return 0;
 
+    mach64_wait_fifo_idle(m);
     uint32_t i = b >> 2;
     ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
     return 1;
