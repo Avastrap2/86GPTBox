@@ -36,8 +36,13 @@ mach64rage2p_init(const device_t *info)
     if (!mach64)
         return NULL;
 
-    mach64->pci_id = 0x4755;          /* ATI PCI_CHIP_MACH64GU */
-    mach64->config_chip_id = 0x00004755;
+    /* GU = Rage II / Rage II+ (GTB).  Pick a known UMC GT B2U2 revision. */
+    mach64->pci_id = 0x4755;
+    mach64->config_chip_id = 0x5a004755;
+
+    /* GTB uses a 4-bit memory-size encoding; 4 MiB is 0x7, not VT's 0x3. */
+    mach64->mem_cntl = (mach64->mem_cntl & ~0x0fu) | 0x07u;
+
     mach64_3d_attach(mach64);
     return mach64;
 }
