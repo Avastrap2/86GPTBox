@@ -86,7 +86,6 @@ add_library(vid OBJECT
 
     # EGA
     vid_ega.c
-    vid_ega_render.c
     vid_jega.c
 
     # (Real IBM) VGA 
@@ -165,11 +164,13 @@ set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
 set_source_files_properties(vid_ati_mach64.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
 
-# The Rage II+ PCI wrapper calls this compatibility dispatcher instead of the
-# legacy writer directly.  It forces an I/O remap after BAR1 / IOCONFIG writes,
-# fixing the VT2 core's stale block-decoded handler during ARS2D POST.
+# The Rage II+ shim reuses VT2's mature initializer through a small proxy that
+# changes only the low-byte core type to MACH64_GTB.  This keeps GTB out of the
+# VT/VT2 CONFIG_CNTL aperture-encoding special case without enabling VT3-only
+# overlay/DDC behavior.  PCI writes still pass through the GTB legacy dispatcher
+# for IOCONFIG/BAR remapping.
 set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch")
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device")
 
 if(MSVC)
     set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
