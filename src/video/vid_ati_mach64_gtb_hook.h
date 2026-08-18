@@ -27,7 +27,6 @@ void mach64_io_removehandler_dispatch(uint16_t base, uint16_t size,
                                       void *priv);
 void mach64_ics2595_setclock_dispatch(void *priv, double clock);
 void mach64_pci_write_gtb_legacy_dispatch(int func, int addr, int len, uint8_t val, void *priv);
-void mach64_pci_write_gtb_bar_dispatch(int func, int addr, int len, uint8_t val, void *priv);
 
 /* Rage II+ lifecycle and PCI configuration state. */
 void mach64_gtb_state_attach(void *priv);
@@ -36,7 +35,7 @@ uint8_t mach64_gtb_pci_ioconfig_read(void *priv);
 void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
 
 /*
- * Keep the core-level I/O and PLL redirects here.  GTB control-register
+ * Keep only the core-level I/O and PLL redirects here.  GTB control-register
  * Block-0 gating is performed explicitly by the Rage II+ shim, so GUI offsets
  * 0x100..0x3ff cannot alias the 0x00..0xff control shadow.
  */
@@ -45,16 +44,11 @@ void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
 #define ics2595_setclock   mach64_ics2595_setclock_dispatch
 
 /*
- * CMake first maps mach64_pci_write_legacy to
- * mach64_pci_write_gtb_legacy_dispatch for the Rage II+ shim.  Chain that
- * token to the implemented BAR guard in vid_ati_mach64_3d.c.  The guard keeps
- * GU BAR1 at its real 0x100-byte alignment before forwarding to the legacy GTB
- * dispatcher; without this chain the VT2 core rounds BAR1 to 1 KiB and Windows
- * can address a different block-I/O base than the one 86Box has mapped.
- *
- * vid_ati_mach64_gtb_hook.c and vid_ati_mach64_3d.c are not force-included
- * with this header, so their real dispatcher symbols are unaffected.
+ * CMake maps mach64_pci_write_legacy directly to the implemented GTB legacy
+ * dispatcher.  Do not chain it through the older BAR guard: the failing guest
+ * assigns BAR1 at 0x6400, already aligned to both 0x100 and 0x400, while the
+ * extra dispatcher replay caused an observable regression in Windows fallback
+ * behavior.  The legacy GTB dispatcher still remaps after BAR1/IOCONFIG writes.
  */
-#define mach64_pci_write_gtb_legacy_dispatch mach64_pci_write_gtb_bar_dispatch
 
 #endif
