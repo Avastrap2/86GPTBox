@@ -1,6 +1,8 @@
+#define R3D_GTB_DST_BRES_SIGN     (1u << 11)
 #define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
 #define R3D_GTB_TRAIL_X_DIR        (1u << 13)
 #define R3D_GTB_TRAP_FILL_DIR      (1u << 14)
+#define R3D_GTB_TRAIL_BRES_SIGN    (1u << 15)
 
 static int64_t r3d_quad_at(int64_t start,int64_t inc,int64_t inc2,int n){
     return start+(int64_t)n*inc+((int64_t)n*(n-1)/2)*inc2;
@@ -12,11 +14,9 @@ static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n,int dir){
 static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     mach64_t*m=ctx->mach64;uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];int fcn=(ctl>>R3D_FCN_SHIFT)&3,df=r3d_dst_format(m),dbpp=r3d_bytes_per_pixel(df),tf=r3d_tex_format(m),tbpp=r3d_bytes_per_pixel(tf),len=cmd&0x7fff;if(!len||!dbpp||!fcn)return;if(fcn==2&&!tbpp)return;
     int lead=r3d_sign_extend(m->dst_y_x>>16,13),y=r3d_sign_extend(m->dst_y_x,15),ydir=(m->dst_cntl&DST_Y_DIR)?1:-1,ldir=(m->dst_cntl&DST_X_DIR)?1:-1,tdir=(m->dst_cntl&R3D_GTB_TRAIL_X_DIR)?1:-1;
-    /* GT/GTB places the polygon controls in DST_CNTL[12:14].  The earlier
-     * implementation accidentally used later high bits (27/29), which left
-     * the Win9x HAL's 0x8xxx/0xAxxx/0xCxxx/0xExxx trapezoid commands with the
-     * wrong trailing-edge direction and fill orientation. */
-    int fill_lr=!!(m->dst_cntl&R3D_GTB_TRAP_FILL_DIR),rtedge_dis=!!(m->dst_cntl&R3D_GTB_POLYGON_RTEDGE_DIS);
+    /* GT/GTB places the polygon controls in DST_CNTL[12:15].  Bits 11 and 15
+     * also select the zero-error side of the lead/trail Bresenham walkers. */
+    int fill_lr=!!(m->dst_cntl&R3D_GTB_TRAP_FILL_DIR),rtedge_dis=!!(m->dst_cntl&R3D_GTB_POLYGON_RTEDGE_DIS),lead_zero_neg=!!(m->dst_cntl&R3D_GTB_DST_BRES_SIGN),trail_zero_neg=!!(m->dst_cntl&R3D_GTB_TRAIL_BRES_SIGN);
     if((cmd&0x80000000u)||!ctx->trail_valid){ctx->trail_x=r3d_sign_extend(cmd>>16,13);ctx->trail_valid=1;}int trail=ctx->trail_x,le=(int32_t)m->dst_bres_err,li=(int32_t)m->dst_bres_inc,ld=(int32_t)m->dst_bres_dec,te=(int32_t)ctx->regs[R3D_TRAIL_BRES_ERR>>2],ti=(int32_t)ctx->regs[R3D_TRAIL_BRES_INC>>2],td=(int32_t)ctx->regs[R3D_TRAIL_BRES_DEC>>2];
     int left=m->sc_left_right&0x1fff,right=(m->sc_left_right>>16)&0x1fff,top=m->sc_top_bottom&0x7fff,bottom=(m->sc_top_bottom>>16)&0x7fff;if(right<left){left=0;right=0x1fff;}if(bottom<top){top=0;bottom=0x7fff;}
     uint32_t db=(m->dst_off_pitch&0xfffff)<<3;int dp=((m->dst_off_pitch>>22)&0x3ff)<<3;if(!dp)return;
@@ -66,10 +66,21 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 }
             }
         }
-        r3d_edge_step(&lead,&le,li,ld,ldir);r3d_edge_step(&trail,&te,ti,td,tdir);
+        /* All interpolator START registers are tied to the leading edge.  A
+         * scanline advance always takes one Y step and can additionally take
+         * one Bresenham X step.  The old software path advanced only Y, so as
+         * a sloped leading edge moved horizontally its color/Z and especially
+         * S/T state drifted away from the geometry every row. */
+        int lead_dx=r3d_edge_step(&lead,&le,li,ld,ldir,lead_zero_neg);
+        r3d_edge_step(&trail,&te,ti,td,tdir,trail_zero_neg);
         RED0+=REDy;GREEN0+=GREENy;BLUE0+=BLUEy;ALPHA0+=ALPHAy;Z0+=Zy;
         s0+=syi;syi+=sy2;sxi+=sxy2;
         t0+=tyi;tyi+=ty2;txi+=txy2;
+        if(lead_dx){
+            RED0+=REDx;GREEN0+=GREENx;BLUE0+=BLUEx;ALPHA0+=ALPHAx;Z0+=Zx;
+            s0+=sxi;sxi+=sx2;syi+=sxy2;
+            t0+=txi;txi+=tx2;tyi+=txy2;
+        }
         y+=ydir;
     }
     r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
