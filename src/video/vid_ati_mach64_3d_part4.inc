@@ -1,5 +1,5 @@
 #define R3D_GUI_STAT 0x338
-#define R3D_GTB_FIFO_VISIBLE 32
+#define R3D_GTB_FIFO_VISIBLE 48
 
 static int
 r3d_unique_register(uint32_t b)
@@ -18,9 +18,13 @@ r3d_unique_register(uint32_t b)
  * leaving all four scissor comparison bits permanently clear.  A real GT/GTB
  * reports those comparisons even while the engine is idle.
  *
- * The original GT documentation describes a 48-entry parameter FIFO but says
- * FIFO_CNT is limited to 32 in this generation.  Keep that software-visible
- * limit and derive it from the emulator queue rather than changing VT/VT2.
+ * The original GT-A2 documentation describes a 48-entry parameter FIFO but
+ * notes that that revision exposes FIFO_CNT only up to 32.  Do not carry that
+ * early-GT reporting limit into the later GTB/GU path.  The Rage II+ Win9x HAL
+ * issues bursts larger than 32 entries (the diagnostic trace reached 38) and
+ * then polls GUI_STAT before it has emitted any 3D draw.  Reporting a permanent
+ * maximum of 32 therefore leaves the HAL in an infinite reservation loop.
+ * Expose the GTB parameter FIFO's full 48 entries here; VT/VT2 remain unchanged.
  */
 static uint32_t
 r3d_gtb_gui_stat(mach64_t *m)
