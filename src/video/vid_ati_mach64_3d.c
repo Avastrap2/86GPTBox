@@ -89,6 +89,11 @@ mach64_pci_write_gtb_bar_dispatch(int func, int addr, int len,
         return;
 
     mach64->block_decoded_io = requested_bar1;
+
+    /*
+     * Trace convention: op 'P', addr 0x1014..0x1017 (PCI BAR1 bytes), value
+     * is the reconstructed 256-byte-aligned BAR1 after that byte write.
+     */
     mach64_3d_trace_external(mach64, 'P', 1, 0x1000u + (uint32_t) addr,
                              requested_bar1, 1);
 
