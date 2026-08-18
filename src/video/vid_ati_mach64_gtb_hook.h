@@ -35,22 +35,19 @@ uint8_t mach64_gtb_pci_ioconfig_read(void *priv);
 void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
 
 /*
- * The underlying GTB control-register helpers use a byte-sized register file.
- * Redirect only the Rage II+ integration shim to guarded entry points.  The
- * shim's existing extern declarations provide their mach64_t signatures after
- * macro expansion, avoiding a dependency on mach64_t in this force header.
+ * Keep only core-level redirects here.  GTB control-register Block-0 gating is
+ * performed explicitly by the Rage II+ shim before it calls the real
+ * mach64_gtb_cfg_readb/writeb helpers; renaming those helpers here previously
+ * created symbols that had no implementation.
  */
 #define io_sethandler      mach64_io_sethandler_dispatch
 #define io_removehandler   mach64_io_removehandler_dispatch
 #define ics2595_setclock   mach64_ics2595_setclock_dispatch
-#define mach64_gtb_cfg_readb  mach64_gtb_cfg_readb_block0
-#define mach64_gtb_cfg_writeb mach64_gtb_cfg_writeb_block0
 
 /*
  * CMake maps mach64_pci_write_legacy to the implemented GTB legacy dispatcher
- * for the Rage II+ shim.  Do not chain that symbol to another alias here: the
- * dispatcher in vid_ati_mach64_gtb_hook.c already performs the required
- * BAR1/IOCONFIG remap after forwarding to the mature Mach64 PCI writer.
+ * for the Rage II+ shim.  The dispatcher in vid_ati_mach64_gtb_hook.c performs
+ * the required BAR1/IOCONFIG remap after forwarding to the mature PCI writer.
  */
 
 #endif
