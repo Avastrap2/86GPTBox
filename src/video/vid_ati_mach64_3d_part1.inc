@@ -60,8 +60,11 @@
 
 #define R3D_Z_EN (1u << 0)
 #define R3D_Z_SRC (1u << 1)
-#define R3D_Z_TEST_SHIFT 2
-#define R3D_Z_MASK (1u << 5)
+/* 3D RAGE Z_CNTL places the three-bit compare function at bits 4..6 and
+ * Z_MASK at bit 8.  A typical Win9x HAL value of 0x121 therefore means
+ * Z enabled, LEQUAL (2 << 4), and Z writes enabled. */
+#define R3D_Z_TEST_SHIFT 4
+#define R3D_Z_MASK (1u << 8)
 
 #define R3D_FCN_SHIFT 6
 #define R3D_FCN_MASK 3
