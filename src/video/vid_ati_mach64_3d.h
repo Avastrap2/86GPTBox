@@ -18,4 +18,11 @@ void mach64_3d_detach(mach64_t *mach64);
  */
 int mach64_3d_write(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 
+/*
+ * Returns non-zero when addr belongs to the GT/GTB 3D register file.  val is
+ * the complete little-endian DWORD containing that register.  The MMIO shim
+ * selects the requested byte/word lanes from it.
+ */
+int mach64_3d_read(mach64_t *mach64, uint32_t addr, uint32_t *val);
+
 #endif
