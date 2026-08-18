@@ -1,0 +1,111 @@
+/*
+ * 86GPTBox - ATI 3D RAGE / Rage II+ software 3D pipeline.
+ *
+ * Register layout and fixed-point formats follow ATI's 1996
+ * "mach64 Register Reference Guide - ATI-264VT & 3D RAGE".
+ */
+#include <stdint.h>
+#include <string.h>
+#include "vid_ati_mach64_3d.h"
+
+#define MACH64_3D_CONTEXTS 4
+#define R3D_LEAD_BRES_LNTH 0x120
+#define R3D_TRAIL_BRES_ERR 0x138
+#define R3D_TRAIL_BRES_INC 0x13c
+#define R3D_TRAIL_BRES_DEC 0x140
+#define R3D_LEAD_BRES_LNTH_ALIAS 0x144
+#define R3D_Z_OFF_PITCH 0x148
+#define R3D_Z_CNTL 0x14c
+#define R3D_ALPHA_TST_CNTL 0x150
+#define R3D_TEX_0_OFF 0x1c0
+#define R3D_TEX_10_OFF 0x1e8
+#define R3D_SCALE_3D_CNTL 0x1fc
+#define R3D_TEX_PALETTE_INDEX 0x340
+#define R3D_STW_EXP 0x344
+#define R3D_LOG_MAX_INC 0x348
+#define R3D_S_X_INC 0x34c
+#define R3D_S_Y_INC 0x350
+#define R3D_S_START 0x354
+#define R3D_W_X_INC 0x358
+#define R3D_W_Y_INC 0x35c
+#define R3D_W_START 0x360
+#define R3D_T_X_INC 0x364
+#define R3D_T_Y_INC 0x368
+#define R3D_T_START 0x36c
+#define R3D_TEX_SIZE_PITCH 0x370
+#define R3D_TEX_CNTL 0x374
+#define R3D_SECONDARY_TEX_OFFSET 0x378
+#define R3D_TEX_PALETTE 0x37c
+#define R3D_RED_X_INC 0x3c0
+#define R3D_RED_Y_INC 0x3c4
+#define R3D_RED_START 0x3c8
+#define R3D_GREEN_X_INC 0x3cc
+#define R3D_GREEN_Y_INC 0x3d0
+#define R3D_GREEN_START 0x3d4
+#define R3D_BLUE_X_INC 0x3d8
+#define R3D_BLUE_Y_INC 0x3dc
+#define R3D_BLUE_START 0x3e0
+#define R3D_Z_X_INC 0x3e4
+#define R3D_Z_Y_INC 0x3e8
+#define R3D_Z_START 0x3ec
+#define R3D_ALPHA_X_INC 0x3f0
+#define R3D_ALPHA_Y_INC 0x3f4
+#define R3D_ALPHA_START 0x3f8
+#define R3D_DRAW_TRAP (1u << 15)
+#define R3D_TRAIL_X_DIR (1u << 28)
+#define R3D_Z_EN (1u << 0)
+#define R3D_Z_TEST_SHIFT 2
+#define R3D_Z_MASK (1u << 5)
+#define R3D_FCN_SHIFT 6
+#define R3D_FCN_MASK 3
+#define R3D_ALPHA_FOG_SHIFT 11
+#define R3D_ALPHA_FOG_MASK 3
+#define R3D_BLEND_SRC_SHIFT 16
+#define R3D_BLEND_DST_SHIFT 19
+#define R3D_BLEND_MASK 7
+#define R3D_TEX_LIGHT_SHIFT 22
+#define R3D_TEX_LIGHT_MASK 3
+#define R3D_BILINEAR_TEX_EN (1u << 25)
+#define R3D_TEX_MAP_AEN (1u << 31)
+
+typedef struct rgba_t { int r, g, b, a; } rgba_t;
+typedef struct mach64_3d_ctx_t {
+    mach64_t *mach64;
+    uint32_t regs[256];
+    uint32_t tex_palette[256];
+    uint8_t tex_palette_index;
+    int trail_x;
+    int trail_valid;
+} mach64_3d_ctx_t;
+
+static mach64_3d_ctx_t mach64_3d_ctx[MACH64_3D_CONTEXTS];
+
+static int r3d_clamp8(int v) { return v < 0 ? 0 : (v > 255 ? 255 : v); }
+static int r3d_clamp16(int64_t v) { return v < 0 ? 0 : (v > 65535 ? 65535 : (int)v); }
+static int r3d_sign_extend(uint32_t v, unsigned bits) { uint32_t m = 1u << (bits - 1); v &= (1u << bits) - 1u; return (int)((v ^ m) - m); }
+
+static mach64_3d_ctx_t *r3d_find(mach64_t *mach64) {
+    for (int i = 0; i < MACH64_3D_CONTEXTS; i++) if (mach64_3d_ctx[i].mach64 == mach64) return &mach64_3d_ctx[i];
+    return NULL;
+}
+void mach64_3d_attach(mach64_t *mach64) {
+    if (r3d_find(mach64)) return;
+    for (int i = 0; i < MACH64_3D_CONTEXTS; i++) if (!mach64_3d_ctx[i].mach64) { memset(&mach64_3d_ctx[i], 0, sizeof(mach64_3d_ctx[i])); mach64_3d_ctx[i].mach64 = mach64; return; }
+    fatal("ATI 3D RAGE: no free 3D context slot\n");
+}
+void mach64_3d_detach(mach64_t *mach64) { mach64_3d_ctx_t *ctx = r3d_find(mach64); if (ctx) memset(ctx, 0, sizeof(*ctx)); }
+
+static uint8_t r3d_vram_read8(mach64_t *m, uint32_t a) { return m->svga.vram[a & m->vram_mask]; }
+static uint16_t r3d_vram_read16(mach64_t *m, uint32_t a) { return (uint16_t)(r3d_vram_read8(m,a) | (r3d_vram_read8(m,a+1) << 8)); }
+static uint32_t r3d_vram_read32(mach64_t *m, uint32_t a) { return (uint32_t)r3d_vram_read16(m,a) | ((uint32_t)r3d_vram_read16(m,a+2) << 16); }
+static void r3d_mark_changed(mach64_t *m, uint32_t a) { a &= m->vram_mask; m->svga.changedvram[a >> 12] = m->svga.monitor->mon_changeframecount; }
+static void r3d_vram_write8(mach64_t *m, uint32_t a, uint8_t v) { a &= m->vram_mask; m->svga.vram[a] = v; r3d_mark_changed(m,a); }
+static void r3d_vram_write16(mach64_t *m, uint32_t a, uint16_t v) { r3d_vram_write8(m,a,v); r3d_vram_write8(m,a+1,v>>8); }
+static void r3d_vram_write32(mach64_t *m, uint32_t a, uint32_t v) { r3d_vram_write16(m,a,v); r3d_vram_write16(m,a+2,v>>16); }
+
+static int r3d_format(mach64_t *m) {
+    int f = (m->dp_pix_width >> 28) & 15;
+    if (!f) switch (m->dp_pix_width & 7) { case BPP_8: f=2; break; case BPP_15: f=3; break; case BPP_16: f=4; break; case BPP_32: f=6; break; default: break; }
+    return f;
+}
+static int r3d_bytes_per_pixel(int f) { switch (f) { case 2: case 7: case 8: return 1; case 3: case 4: case 11: case 15: return 2; case 6: case 14: return 4; default: return 0; } }
