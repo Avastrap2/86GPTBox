@@ -110,6 +110,7 @@ add_library(vid OBJECT
     vid_ati_mach64.c
     vid_ati_mach64_accel.c
     vid_ati_mach64_3d.c
+    vid_ati_mach64_gtb_hook.c
     vid_ati_mach64_rage2p.c
 
     # Chips & Technologies
@@ -158,11 +159,25 @@ set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
 
 # Keep the mature PCI implementation as legacy callbacks while routing Mach64
-# card registration through a dispatcher.  Rage II+ needs a different PCI
-# Revision ID and a wider option-ROM BAR mapping for the 36 KiB ARS2D image;
-# every other Mach64 variant continues through the legacy callbacks unchanged.
+# card registration through a dispatcher.  The force-included GTB hook also
+# wraps I/O handler registration and integrated-PLL clock output so ARS2D can
+# use its block-decoded BAR and PLL readback during option-ROM POST.
 set_source_files_properties(vid_ati_mach64.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
+
+# The Rage II+ PCI wrapper calls this compatibility dispatcher instead of the
+# legacy writer directly.  It forces an I/O remap after BAR1 / IOCONFIG writes,
+# fixing the VT2 core's stale block-decoded handler during ARS2D POST.
+set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch")
+
+if(MSVC)
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+else()
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "-include" "${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+endif()
 
 # Until the card table is split into a generated registry, expose Rage II+ in
 # the existing Mach64 VT2 slot without editing the large static table here.
