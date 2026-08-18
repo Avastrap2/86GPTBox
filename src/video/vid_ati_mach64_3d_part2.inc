@@ -35,23 +35,51 @@ static uint32_t r3d_pack(int f,rgba_t c){
 static rgba_t r3d_read_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f){
     switch(r3d_bytes_per_pixel(f)){case 1:return r3d_unpack(ctx,f,r3d_vram_read8(ctx->mach64,a),0);case 2:return r3d_unpack(ctx,f,r3d_vram_read16(ctx->mach64,a),0);case 4:return r3d_unpack(ctx,f,r3d_vram_read32(ctx->mach64,a),0);default:{rgba_t z={0,0,0,255};return z;}}
 }
+/* Avoid a destination read when WRITE_MASK enables the complete pixel.  The
+ * Windows HAL normally leaves it at all ones, so the former read/modify/write
+ * doubled framebuffer traffic for the common path. */
 static void r3d_write_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f,rgba_t c){
     mach64_t*m=ctx->mach64;if(f==2){uint8_t p=((r3d_clamp8(c.r)>>5)<<5)|((r3d_clamp8(c.g)>>5)<<2)|(r3d_clamp8(c.b)>>6);r3d_vram_write8(m,a,p);return;}
-    uint32_t raw=r3d_pack(f,c),old=0,mask=m->write_mask;switch(r3d_bytes_per_pixel(f)){case 1:old=r3d_vram_read8(m,a);raw=(old&~(mask&255))|(raw&(mask&255));r3d_vram_write8(m,a,raw);break;case 2:old=r3d_vram_read16(m,a);raw=(old&~(mask&65535))|(raw&(mask&65535));r3d_vram_write16(m,a,raw);break;case 4:old=r3d_vram_read32(m,a);raw=(old&~mask)|(raw&mask);r3d_vram_write32(m,a,raw);break;}
+    uint32_t raw=r3d_pack(f,c),old,mask=m->write_mask;
+    switch(r3d_bytes_per_pixel(f)){
+        case 1:{uint32_t pm=mask&0xffu;if(pm!=0xffu){old=r3d_vram_read8(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write8(m,a,(uint8_t)raw);break;}
+        case 2:{uint32_t pm=mask&0xffffu;if(pm!=0xffffu){old=r3d_vram_read16(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write16(m,a,(uint16_t)raw);break;}
+        case 4:if(mask!=0xffffffffu){old=r3d_vram_read32(m,a);raw=(old&~mask)|(raw&mask);}r3d_vram_write32(m,a,raw);break;
+    }
 }
 static rgba_t r3d_lerp(rgba_t a,rgba_t b,int t){rgba_t r;t=r3d_clamp8(t);r.r=(a.r*(255-t)+b.r*t+127)/255;r.g=(a.g*(255-t)+b.g*t+127)/255;r.b=(a.b*(255-t)+b.b*t+127)/255;r.a=(a.a*(255-t)+b.a*t+127)/255;return r;}
 static int r3d_component(rgba_t c,int ch){return ch==0?c.r:(ch==1?c.g:(ch==2?c.b:c.a));}
 static int r3d_blend_factor(int code,rgba_t s,rgba_t d,int ch,int sf){switch(code){case 0:return 0;case 1:return 255;case 2:return sf?r3d_component(d,ch):r3d_component(s,ch);case 3:return 255-(sf?r3d_component(d,ch):r3d_component(s,ch));case 4:return s.a;case 5:return 255-s.a;default:return 255;}}
 static rgba_t r3d_blend(uint32_t ctl,rgba_t s,rgba_t d){rgba_t o;int sf=(ctl>>R3D_BLEND_SRC_SHIFT)&7,df=(ctl>>R3D_BLEND_DST_SHIFT)&7,*p[4]={&o.r,&o.g,&o.b,&o.a};for(int ch=0;ch<4;ch++){int sv=r3d_component(s,ch),dv=r3d_component(d,ch);*p[ch]=r3d_clamp8((sv*r3d_blend_factor(sf,s,d,ch,1)+dv*r3d_blend_factor(df,s,d,ch,0)+127)/255);}return o;}
-static uint32_t r3d_texture_raw(mach64_3d_ctx_t *ctx,int f,uint32_t a){switch(r3d_bytes_per_pixel(f)){case 1:return r3d_vram_read8(ctx->mach64,a);case 2:return r3d_vram_read16(ctx->mach64,a);case 4:return r3d_vram_read32(ctx->mach64,a);default:return 0;}}
-static rgba_t r3d_texel_at(mach64_3d_ctx_t *ctx,int f,uint32_t base,int w,int u,int v){
-    if(f==11){uint32_t a=base+(uint32_t)((v*w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
-    int bpp=r3d_bytes_per_pixel(f);return r3d_unpack(ctx,f,r3d_texture_raw(ctx,f,base+(uint32_t)((v*w+u)*bpp)),1);
+
+typedef struct r3d_tex_state_t {
+    int f,bpp,w,wmask,hmask,bilinear;
+    uint32_t base;
+} r3d_tex_state_t;
+
+/* TEX_SIZE_PITCH and the selected mip base are invariant for a complete draw
+ * command.  Cache them once per trapezoid rather than decoding them for every
+ * texel. */
+static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_state_t *ts){
+    uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
+    if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
+    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
+    ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
+}
+static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
+    switch(ts->bpp){case 1:return r3d_vram_read8(ctx->mach64,a);case 2:return r3d_vram_read16(ctx->mach64,a);case 4:return r3d_vram_read32(ctx->mach64,a);default:return 0;}
+}
+static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int u,int v){
+    if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
+    return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
 /* S/T are kept internally as signed 16-fractional values.  GT S_START and
  * T_START are 10.11 and are shifted by five bits when a trapezoid begins. */
-static rgba_t r3d_sample_texel(mach64_3d_ctx_t *ctx,int64_t s,int64_t t,int f,int bilinear){
-    uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;int w=1<<pl,h=1<<hl,u=(int)(s>>16)&(w-1),v=(int)(t>>16)&(h-1);uint32_t base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];rgba_t c00=r3d_texel_at(ctx,f,base,w,u,v);if(!bilinear)return c00;int u1=(u+1)&(w-1),v1=(v+1)&(h-1),fu=(s>>8)&255,fv=(t>>8)&255;rgba_t c10=r3d_texel_at(ctx,f,base,w,u1,v),c01=r3d_texel_at(ctx,f,base,w,u,v1),c11=r3d_texel_at(ctx,f,base,w,u1,v1);return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
+static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
+    int u=(int)(s>>16)&ts->wmask,v=(int)(t>>16)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
+    int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask,fu=(s>>8)&255,fv=(t>>8)&255;
+    rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
+    return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
 static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
     if(!(ctl&R3D_TEX_MAP_AEN)){tex->a=interp_alpha;return 1;}
