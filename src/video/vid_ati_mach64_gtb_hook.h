@@ -37,13 +37,10 @@ void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
 
 /*
  * The underlying GTB control-register helpers use a byte-sized register file.
- * The guarded entry points prevent GUI/MMIO offsets 0x100..0x3ff from aliasing
- * control registers that happen to have the same low byte (for example
- * DP_MIX 0x2d4 vs CUSTOM_MACRO_CNTL 0xd4, or SRC_CNTL 0x1b4 vs bank 0xb4).
+ * Redirect only the Rage II+ integration shim to guarded entry points.  The
+ * shim's existing extern declarations provide their mach64_t signatures after
+ * macro expansion, avoiding a dependency on mach64_t in this force header.
  */
-int mach64_gtb_cfg_readb_block0(void *mach64, uint32_t addr, uint8_t *val);
-int mach64_gtb_cfg_writeb_block0(void *mach64, uint32_t addr, uint8_t val);
-
 #define io_sethandler      mach64_io_sethandler_dispatch
 #define io_removehandler   mach64_io_removehandler_dispatch
 #define ics2595_setclock   mach64_ics2595_setclock_dispatch
