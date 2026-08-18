@@ -28,11 +28,24 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
             int dh=right_limit>right+1?right+1:right_limit;
             for(int x=dl;x<dh;x++){
                 int n=(x-lead)*ldir;rgba_t shade=r3d_shade(RED0+REDx*n,GREEN0+GREENx*n,BLUE0+BLUEx*n,ALPHA0+ALPHAx*n),src=shade;
-                if(tex){int64_t ss=r3d_quad_at(s0,sxi,sx2,n),tt=r3d_quad_at(t0,txi,tx2,n);rgba_t texel=r3d_sample_texel(ctx,ss,tt,tf,bilinear);if(!r3d_apply_tex_alpha(ctl,&texel,shade.a))continue;src=r3d_texture_light(ctl,texel,shade);}
+                if(tex){int64_t tex_s=r3d_quad_at(s0,sxi,sx2,n),tex_t=r3d_quad_at(t0,txi,tx2,n);rgba_t texel=r3d_sample_texel(ctx,tex_s,tex_t,tf,bilinear);if(!r3d_apply_tex_alpha(ctl,&texel,shade.a))continue;src=r3d_texture_light(ctl,texel,shade);}
                 if(af==2)src=r3d_lerp(fog,src,shade.a);
-                uint32_t da=db+(uint32_t)((y*dp+x)*dbpp);int pass=1;uint32_t za=0;uint16_t nz=r3d_clamp16((Z0+Zx*n)>>12);
-                if((zc&R3D_Z_EN)&&zp){za=zb+(uint32_t)((y*zp+x)*2);pass=r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7);}if(!pass)continue;
-                if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if((zc&R3D_Z_EN)&&(zc&R3D_Z_MASK)&&zp)r3d_vram_write16(m,za,nz);
+                uint32_t da = db + (uint32_t)((y * dp + x) * dbpp);
+                int pass = 1;
+                uint32_t za = 0;
+                uint16_t nz = r3d_clamp16((Z0 + Zx * n) >> 12);
+                if ((zc & R3D_Z_EN) && zp) {
+                    za = zb + (uint32_t)((y * zp + x) * 2);
+                    pass = r3d_z_test(nz, r3d_vram_read16(m, za), (zc >> R3D_Z_TEST_SHIFT) & 7);
+                }
+                if (!pass)
+                    continue;
+
+                if (af == 1)
+                    src = r3d_blend(ctl, src, r3d_read_dst(ctx, da, df));
+                r3d_write_dst(ctx, da, df, src);
+                if ((zc & R3D_Z_EN) && (zc & R3D_Z_MASK) && zp)
+                    r3d_vram_write16(m, za, nz);
             }
         }
         r3d_edge_step(&lead,&le,li,ld,ldir);r3d_edge_step(&trail,&te,ti,td,tdir);
