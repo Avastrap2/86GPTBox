@@ -20,6 +20,19 @@
 #define BIOS_ROMGTB_BACKING_SIZE 0x10000u
 #define MACH64_GTB_PCI_ID        0x4755u
 
+/*
+ * Real 215GTB/GU boards expose a third PCI BAR: a 4 KiB non-prefetchable
+ * auxiliary register aperture.  BAR0 remains the framebuffer and BAR1 remains
+ * the 256-byte block-decoded I/O aperture.  The auxiliary aperture contains
+ * the same Mach64 register blocks as the legacy top-of-framebuffer MMIO window;
+ * block 0 starts at BAR2+0x400 and block 1 wraps to BAR2+0x000.
+ */
+#define MACH64_GTB_AUX_BAR_BYTE0 0x18
+#define MACH64_GTB_AUX_BAR_BYTE3 0x1b
+#define MACH64_GTB_AUX_SIZE      0x1000u
+#define MACH64_GTB_AUX_MASK      0xfffff000u
+#define MACH64_GTB_AUX_STATES    4
+
 extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
 extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
@@ -32,6 +45,139 @@ extern mach64_t *reset_state[2];
 /* GTB-only non-GUI register latches implemented by vid_ati_mach64_gtb_hook.c. */
 extern int mach64_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val);
 extern int mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val);
+
+static uint8_t mach64rage2p_mmio_readb(uint32_t addr, void *priv);
+static uint16_t mach64rage2p_mmio_readw(uint32_t addr, void *priv);
+static uint32_t mach64rage2p_mmio_readl(uint32_t addr, void *priv);
+static void mach64rage2p_mmio_writeb(uint32_t addr, uint8_t val, void *priv);
+static void mach64rage2p_mmio_writew(uint32_t addr, uint16_t val, void *priv);
+static void mach64rage2p_mmio_writel(uint32_t addr, uint32_t val, void *priv);
+
+typedef struct mach64rage2p_aux_state_t {
+    mach64_t *mach64;
+    mem_mapping_t mapping;
+    uint32_t bar;
+    int initialized;
+} mach64rage2p_aux_state_t;
+
+static mach64rage2p_aux_state_t mach64rage2p_aux_states[MACH64_GTB_AUX_STATES];
+
+static mach64rage2p_aux_state_t *
+mach64rage2p_aux_state(mach64_t *mach64, int create)
+{
+    mach64rage2p_aux_state_t *free_state = NULL;
+
+    if (!mach64)
+        return NULL;
+
+    for (unsigned i = 0; i < MACH64_GTB_AUX_STATES; i++) {
+        if (mach64rage2p_aux_states[i].mach64 == mach64)
+            return &mach64rage2p_aux_states[i];
+        if (!mach64rage2p_aux_states[i].mach64 && !free_state)
+            free_state = &mach64rage2p_aux_states[i];
+    }
+
+    if (!create || !free_state)
+        return NULL;
+
+    free_state->mach64 = mach64;
+    free_state->bar = 0;
+    return free_state;
+}
+
+static uint8_t
+mach64rage2p_aux_readb(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t ret = mach64rage2p_mmio_readb(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 1, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static uint16_t
+mach64rage2p_aux_readw(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint16_t ret = mach64rage2p_mmio_readw(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 2, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static uint32_t
+mach64rage2p_aux_readl(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t ret = mach64rage2p_mmio_readl(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 4, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static int
+mach64rage2p_aux_attach(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+
+    if (!state)
+        return 0;
+
+    if (!state->initialized) {
+        mem_mapping_add(&state->mapping,
+                        0, 0,
+                        mach64rage2p_aux_readb,
+                        mach64rage2p_aux_readw,
+                        mach64rage2p_aux_readl,
+                        mach64rage2p_mmio_writeb,
+                        mach64rage2p_mmio_writew,
+                        mach64rage2p_mmio_writel,
+                        NULL, MEM_MAPPING_EXTERNAL, mach64);
+        state->initialized = 1;
+    } else {
+        mem_mapping_set_handler(&state->mapping,
+                                mach64rage2p_aux_readb,
+                                mach64rage2p_aux_readw,
+                                mach64rage2p_aux_readl,
+                                mach64rage2p_mmio_writeb,
+                                mach64rage2p_mmio_writew,
+                                mach64rage2p_mmio_writel);
+        mem_mapping_set_p(&state->mapping, mach64);
+    }
+
+    mem_mapping_disable(&state->mapping);
+    return 1;
+}
+
+static void
+mach64rage2p_aux_update_mapping(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (!state)
+        return;
+
+    /* 0xfffff000 is the BAR sizing probe value, never a live decode address. */
+    if ((mach64->pci_regs[PCI_REG_COMMAND] & PCI_COMMAND_MEM) &&
+        state->bar && state->bar != MACH64_GTB_AUX_MASK) {
+        mem_mapping_set_addr(&state->mapping, state->bar, MACH64_GTB_AUX_SIZE);
+    } else {
+        mem_mapping_disable(&state->mapping);
+    }
+}
+
+static void
+mach64rage2p_aux_detach(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (!state)
+        return;
+
+    mem_mapping_disable(&state->mapping);
+    state->bar = 0;
+    state->mach64 = NULL;
+}
 
 static uint16_t
 mach64rage2p_le16(const uint8_t *p)
@@ -63,19 +209,34 @@ mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
 }
 
 /*
- * GU/GTB has its own PCI revision and an extra IOCONFIG disable bit that the
- * VT2 core does not preserve.  Keep all other PCI behavior in the legacy core.
+ * GU/GTB has its own PCI revision, a 4 KiB auxiliary MMIO BAR and an extra
+ * IOCONFIG disable bit that the VT2 core does not preserve.  Keep all other PCI
+ * behavior in the legacy core.
  */
 static uint8_t
 mach64rage2p_pci_read(int func, int addr, int len, void *priv)
 {
     mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t ret;
 
     if (mach64->pci_id == MACH64_GTB_PCI_ID) {
-        if (addr == PCI_REG_REVISION)
-            return 0x9a;
-        if (addr == MACH64_PCI_IOCONFIG)
-            return mach64_gtb_pci_ioconfig_read(priv);
+        if (addr >= MACH64_GTB_AUX_BAR_BYTE0 && addr <= MACH64_GTB_AUX_BAR_BYTE3) {
+            mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+            unsigned shift = (unsigned) (addr - MACH64_GTB_AUX_BAR_BYTE0) * 8;
+            ret = state ? (state->bar >> shift) & 0xff : 0;
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
+        if (addr == PCI_REG_REVISION) {
+            ret = 0x9a;
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
+        if (addr == MACH64_PCI_IOCONFIG) {
+            ret = mach64_gtb_pci_ioconfig_read(priv);
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
     }
 
     return mach64_pci_read_legacy(func, addr, len, priv);
@@ -84,13 +245,28 @@ mach64rage2p_pci_read(int func, int addr, int len, void *priv)
 /*
  * The legacy writer performs ordinary BAR/command handling.  Preserve the
  * complete GTB IOCONFIG low nibble before forwarding because legacy VT2 keeps
- * only bits 0..2.  ARS2D is 36 KiB, so correct the ROM mapping after legacy
- * code applies its fixed 32 KiB mapping.
+ * only bits 0..2.  BAR2 is handled here because the VT2 core does not expose
+ * the GU auxiliary register aperture.  ARS2D is 36 KiB, so correct the ROM
+ * mapping after legacy code applies its fixed 32 KiB mapping.
  */
 static void
 mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
 {
     mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64->pci_id == MACH64_GTB_PCI_ID &&
+        addr >= MACH64_GTB_AUX_BAR_BYTE0 && addr <= MACH64_GTB_AUX_BAR_BYTE3) {
+        mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+        unsigned shift = (unsigned) (addr - MACH64_GTB_AUX_BAR_BYTE0) * 8;
+
+        if (state) {
+            state->bar = (state->bar & ~(0xffu << shift)) | ((uint32_t) val << shift);
+            state->bar &= MACH64_GTB_AUX_MASK;
+            mach64_3d_trace_external(mach64, 'P', 1, 0x1000u | (uint32_t) addr, state->bar, 1);
+            mach64rage2p_aux_update_mapping(mach64);
+        }
+        return;
+    }
 
     if (mach64->pci_id == MACH64_GTB_PCI_ID && addr == MACH64_PCI_IOCONFIG)
         mach64_gtb_pci_ioconfig_write(priv, val);
@@ -99,6 +275,9 @@ mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
 
     if (mach64->pci_id != MACH64_GTB_PCI_ID)
         return;
+
+    if (addr == PCI_REG_COMMAND)
+        mach64rage2p_aux_update_mapping(mach64);
 
     if ((addr != PCI_REG_ROM_BAR_BYTE0) &&
         (addr != PCI_REG_ROM_BAR_BYTE1) &&
@@ -440,6 +619,12 @@ mach64rage2p_init(const device_t *info)
     mach64_gtb_state_attach(mach64);
     mach64_3d_attach(mach64);
     mach64rage2p_install_mmio_handlers(mach64);
+    if (!mach64rage2p_aux_attach(mach64)) {
+        mach64_gtb_state_detach(mach64);
+        mach64_3d_detach(mach64);
+        mach64_close(priv);
+        return NULL;
+    }
 
     /* Refresh VT2's reset template with the complete GTB identity and handlers. */
     if (reset_state[mach64->svga.monitor_index])
@@ -451,6 +636,7 @@ mach64rage2p_init(const device_t *info)
 static void
 mach64rage2p_close(void *priv)
 {
+    mach64rage2p_aux_detach((mach64_t *) priv);
     mach64_gtb_state_detach(priv);
     mach64_3d_detach((mach64_t *) priv);
     mach64_close(priv);
