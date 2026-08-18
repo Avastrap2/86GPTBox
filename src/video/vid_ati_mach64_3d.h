@@ -12,6 +12,10 @@
 void mach64_3d_attach(mach64_t *mach64);
 void mach64_3d_detach(mach64_t *mach64);
 
+/* Lightweight shared trace entry point used by GTB POST/mode-set hooks. */
+void mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
+                              uint32_t addr, uint32_t value, int claimed);
+
 /*
  * Returns non-zero when the write belongs to the 3D RAGE register file and
  * has been consumed.  type is one of FIFO_WRITE_BYTE/WORD/DWORD.
