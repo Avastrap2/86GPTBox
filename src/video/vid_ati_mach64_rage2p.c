@@ -419,9 +419,13 @@ mach64rage2p_init(const device_t *info)
         return NULL;
     }
 
-    /* GU = Rage II / Rage II+ (GTB), UMC GT B2U2 chip revision. */
+    /*
+     * GU = Rage II+ DVD / Mach64 GT-B.  Keep the ASIC revision in
+     * CNFG_CHIP_ID owned here rather than in the I/O hook.  0x9a is the UMC
+     * GT B2U3 revision; PCI configuration space independently reports 0x9a.
+     */
     mach64->pci_id         = MACH64_GTB_PCI_ID;
-    mach64->config_chip_id = 0x5a004755;
+    mach64->config_chip_id = 0x9a004755;
 
     /* ARS2D identifies an SGRAM board.  GT/VT CNFG_STAT0 uses 5 for SGRAM. */
     mach64->config_stat0 = (mach64->config_stat0 & ~0x07u) | 0x05u;
