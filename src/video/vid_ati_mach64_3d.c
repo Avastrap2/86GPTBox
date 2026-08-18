@@ -94,10 +94,12 @@ mach64_pci_write_gtb_bar_dispatch(int func, int addr, int len,
 
     /*
      * Replaying COMMAND is the established compatibility hook's safe way to
-     * tear down/reinstall the active I/O handlers.  It also leaves the BAR
-     * temporarily unmapped during normal PCI sizing probes when I/O decoding
-     * is disabled by the guest.
+     * tear down/reinstall the active I/O handlers.  Do it only when I/O space
+     * is currently enabled: during PCI BAR sizing probes the guest commonly
+     * disables I/O decoding first, so there is deliberately no live handler
+     * to remap at that point.
      */
-    mach64_pci_write_gtb_legacy_dispatch(func, PCI_REG_COMMAND, 1,
-                                          mach64->pci_regs[PCI_REG_COMMAND], priv);
+    if (mach64->pci_regs[PCI_REG_COMMAND] & PCI_COMMAND_IO)
+        mach64_pci_write_gtb_legacy_dispatch(func, PCI_REG_COMMAND, 1,
+                                              mach64->pci_regs[PCI_REG_COMMAND], priv);
 }
