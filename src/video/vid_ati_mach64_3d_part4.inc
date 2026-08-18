@@ -31,6 +31,44 @@ r3d_write_complete(uint32_t a, uint32_t type)
 }
 
 int
+mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
+{
+    mach64_3d_ctx_t *ctx = r3d_find(m);
+    if (!ctx || !v)
+        return 0;
+
+    a &= 0x3ff;
+    uint32_t b = a & ~3u;
+
+    /*
+     * DST_BRES_LNTH (0x120) is shared with the legacy 2D line engine.  Only
+     * claim it while the shadow contains a 3D DRAW_TRAP command; otherwise
+     * the established Mach64 readback remains authoritative.
+     */
+    if (b == R3D_LEAD_BRES_LNTH) {
+        uint32_t cmd = ctx->regs[R3D_LEAD_BRES_LNTH >> 2];
+        if (!(cmd & R3D_DRAW_TRAP))
+            return 0;
+        mach64_wait_fifo_idle(m);
+        *v = cmd;
+        return 1;
+    }
+
+    if (!r3d_unique_register(b))
+        return 0;
+
+    mach64_wait_fifo_idle(m);
+
+    /* 0x144 is a 3D alias for the same lead-length register shadow. */
+    if (b == R3D_LEAD_BRES_LNTH_ALIAS)
+        *v = ctx->regs[R3D_LEAD_BRES_LNTH >> 2];
+    else
+        *v = ctx->regs[b >> 2];
+
+    return 1;
+}
+
+int
 mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
 {
     mach64_3d_ctx_t *ctx = r3d_find(m);
