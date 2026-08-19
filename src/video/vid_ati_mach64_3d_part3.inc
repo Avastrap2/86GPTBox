@@ -116,6 +116,19 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         y+=ydir;
     }
     r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
+
+    /*
+     * A GT trapezoid is driven by two Bresenham line engines.  Like an ordinary
+     * line trajectory, the destination pointer is a live trajectory register,
+     * not a write-only start latch.  The Win9x HAL relies on that side effect
+     * when it emits the second trapezoid of a triangle: it programs a new
+     * TRAIL_X but deliberately leaves DST_Y_X untouched so the leading edge
+     * continues from the first trapezoid's endpoint.  Keeping the old start
+     * coordinate here restarted every continuation at the apex while carrying
+     * forward the updated Bresenham error/interpolators, producing the
+     * angle-dependent bow-tie/wedge geometry seen in Flip3D.
+     */
+    m->dst_y_x=((uint32_t)(lead&0x1fff)<<16)|((uint32_t)y&0x7fff);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
     ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
     ctx->regs[R3D_S_START>>2]=(uint32_t)(s0>>5);ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
