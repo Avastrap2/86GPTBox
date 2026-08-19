@@ -14,6 +14,7 @@
 #define R3D_DEBUG_ACCESS_FIRST 4096
 #define R3D_DEBUG_ACCESS_LAST  32768
 #define R3D_DEBUG_DRAWS        8192
+#define R3D_DEBUG_TEX_DRAWS    4096
 #define R3D_DEBUG_SYNCS        8192
 
 typedef struct r3d_debug_access_t {
@@ -129,6 +130,7 @@ typedef struct r3d_debug_state_t {
     mach64_t *mach64;
     uint64_t access_seq;
     uint64_t draw_seq;
+    uint64_t tex_draw_seq;
     uint64_t sync_seq;
     uint64_t total_candidate_pixels;
     uint64_t total_drawn_pixels;
@@ -143,6 +145,13 @@ typedef struct r3d_debug_state_t {
     r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
     r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
     r3d_debug_draw_t draws[R3D_DEBUG_DRAWS];
+    /*
+     * Textured HAL draws must survive later RGB/shading activity.  The normal
+     * draw ring is intentionally a recent-history window and can therefore
+     * overwrite the exact S/T setup that produced an earlier bad HAL frame.
+     * Keep a second ring which is advanced only by FCN=Texture Mapping draws.
+     */
+    r3d_debug_draw_t tex_draws[R3D_DEBUG_TEX_DRAWS];
     r3d_debug_sync_t syncs[R3D_DEBUG_SYNCS];
 } r3d_debug_state_t;
 
@@ -350,6 +359,12 @@ r3d_debug_draw_end(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d,
     slot = &s->draws[(d->seq - 1) % R3D_DEBUG_DRAWS];
     *slot = *d;
 
+    if (d->fcn == 2) {
+        uint64_t tex_seq = ++s->tex_draw_seq;
+        slot = &s->tex_draws[(tex_seq - 1) % R3D_DEBUG_TEX_DRAWS];
+        *slot = *d;
+    }
+
     dt = d->end_tick - d->start_tick;
     s->total_draw_ticks += dt;
     s->total_candidate_pixels += d->candidate_pixels;
@@ -384,6 +399,8 @@ r3d_debug_dump(mach64_t *m)
     uint64_t last_start;
     uint64_t draw_count;
     uint64_t draw_start;
+    uint64_t tex_draw_count;
+    uint64_t tex_draw_start;
     uint64_t sync_count;
     uint64_t sync_start;
     mach64_3d_ctx_t *ctx;
@@ -396,10 +413,11 @@ r3d_debug_dump(mach64_t *m)
         return;
     }
 
-    fprintf(fp, "# Rage II+ complete 3D diagnostic trace v2\n");
-    fprintf(fp, "# access=%llu draw=%llu sync=%llu max_fifo=%u\n",
+    fprintf(fp, "# Rage II+ complete 3D diagnostic trace v3\n");
+    fprintf(fp, "# access=%llu draw=%llu tex_draw=%llu sync=%llu max_fifo=%u\n",
             (unsigned long long)s->access_seq,
             (unsigned long long)s->draw_seq,
+            (unsigned long long)s->tex_draw_seq,
             (unsigned long long)s->sync_seq,
             s->max_fifo_entries);
     fprintf(fp,
@@ -516,6 +534,47 @@ r3d_debug_dump(mach64_t *m)
                 d->alpha_x_inc, d->alpha_y_inc, d->alpha_start);
     }
 
+    /*
+     * Dedicated texture history.  This is the important section for the HAL
+     * cube: later RGB/shading draws can no longer erase the texture register
+     * state that produced the bad frame.
+     */
+    fprintf(fp, "\n[texture_draws]\n");
+    fprintf(fp,
+            "# seq ticks candidate drawn tex cmd ctl dst_cntl dst_y_x "
+            "dst_off_pitch sc_lr sc_tb dp_pix tex_size tex_base "
+            "lead0 trail0 y0 lead1 trail1 y1 pitch len tf tbpp bilinear "
+            "sx2 sy2 sxy2 sxi sy s0 tx2 ty2 txy2 txi ty t0\n");
+    tex_draw_count = s->tex_draw_seq < R3D_DEBUG_TEX_DRAWS ?
+                     s->tex_draw_seq : R3D_DEBUG_TEX_DRAWS;
+    tex_draw_start = s->tex_draw_seq - tex_draw_count + 1;
+    for (uint64_t tseq = tex_draw_start; tseq <= s->tex_draw_seq; tseq++) {
+        const r3d_debug_draw_t *d =
+            &s->tex_draws[(tseq - 1) % R3D_DEBUG_TEX_DRAWS];
+        fprintf(fp,
+                "%010llu %llu %llu %llu %llu "
+                "%08X %08X %08X %08X %08X %08X %08X %08X %08X %08X "
+                "%d %d %d %d %d %d %d %d %d %d %d "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X\n",
+                (unsigned long long)d->seq,
+                (unsigned long long)(d->end_tick - d->start_tick),
+                (unsigned long long)d->candidate_pixels,
+                (unsigned long long)d->drawn_pixels,
+                (unsigned long long)d->texture_samples,
+                d->cmd, d->ctl, d->dst_cntl, d->dst_y_x,
+                d->dst_off_pitch, d->sc_left_right, d->sc_top_bottom,
+                d->dp_pix_width, d->tex_size_pitch, d->tex_base,
+                d->lead_begin, d->trail_begin, d->y_begin,
+                d->lead_end, d->trail_end, d->y_end,
+                d->pitch_pixels, d->length, d->tex_format, d->tex_bpp,
+                d->bilinear,
+                d->s_x_inc2, d->s_y_inc2, d->s_xy_inc2,
+                d->s_xinc_start, d->s_y_inc, d->s_start,
+                d->t_x_inc2, d->t_y_inc2, d->t_xy_inc2,
+                d->t_xinc_start, d->t_y_inc, d->t_start);
+    }
+
     fprintf(fp, "\n[syncs]\n");
     fprintf(fp, "# seq ticks fifo_before fifo_after\n");
     sync_count = s->sync_seq < R3D_DEBUG_SYNCS ?
@@ -550,9 +609,10 @@ r3d_debug_dump(mach64_t *m)
 
     fclose(fp);
     pclog("ATI Rage II+: wrote rage2p_3d_debug.log "
-          "(access=%llu draw=%llu sync=%llu)\n",
+          "(access=%llu draw=%llu tex_draw=%llu sync=%llu)\n",
           (unsigned long long)s->access_seq,
           (unsigned long long)s->draw_seq,
+          (unsigned long long)s->tex_draw_seq,
           (unsigned long long)s->sync_seq);
     memset(s, 0, sizeof(*s));
 }
