@@ -12,8 +12,9 @@
  * source.  Ordinary 2D lines, polygon-boundary lines, and scaler operations
  * remain in the mature Mach64 2D engine.
  */
-#define R3D_DP_SRC_SCALE_3D 5u
-#define R3D_LINE_DISABLE    0x80000000u
+#define R3D_DP_SRC_SCALE_3D    5u
+#define R3D_LINE_DISABLE       0x80000000u
+#define R3D_GTB_BRES_SIGN_AUTO (1u << 16)
 
 static int
 r3d_is_shaded_line_command(mach64_3d_ctx_t *ctx, uint32_t cmd)
@@ -40,6 +41,26 @@ r3d_is_shaded_line_command(mach64_3d_ctx_t *ctx, uint32_t cmd)
            frgd_src == R3D_DP_SRC_SCALE_3D;
 }
 
+/*
+ * GT adds programmable zero-error tie breaking to the Bresenham walker.
+ * DST_BRES_SIGN makes zero negative when automatic sign selection is disabled.
+ * With BRES_SIGN_AUTO set, ATI defines zero as positive for an X-major line
+ * travelling with Y_DIR=0, or a Y-major line travelling with X_DIR=0; it is
+ * negative for the opposite direction.  The distinction is only one pixel at
+ * a tie, but connected line primitives rely on the same endpoint convention
+ * and otherwise develop the detached/offset joins visible in Boids2.
+ */
+static int
+r3d_line_zero_negative(const mach64_t *m, int ymajor)
+{
+    if (!(m->dst_cntl & R3D_GTB_BRES_SIGN_AUTO))
+        return !!(m->dst_cntl & R3D_GTB_DST_BRES_SIGN);
+
+    if (ymajor)
+        return !!(m->dst_cntl & DST_X_DIR);
+    return !!(m->dst_cntl & DST_Y_DIR);
+}
+
 static int
 r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
 {
@@ -53,6 +74,7 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
     int xdir;
     int ydir;
     int ymajor;
+    int zero_negative;
     int err;
     int inc;
     int dec;
@@ -96,6 +118,7 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
     xdir = (m->dst_cntl & DST_X_DIR) ? 1 : -1;
     ydir = (m->dst_cntl & DST_Y_DIR) ? 1 : -1;
     ymajor = !!(m->dst_cntl & DST_Y_MAJOR);
+    zero_negative = r3d_line_zero_negative(m, ymajor);
 
     /* The register guide defines the Bresenham terms as signed 18-bit data. */
     err = r3d_sign_extend(m->dst_bres_err, 18);
@@ -213,7 +236,7 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
         if (ymajor) {
             y += ydir;
             rr += ry; gg += gy; bb += by; aa += ay; zz += zy;
-            if (err >= 0) {
+            if (err > 0 || (err == 0 && !zero_negative)) {
                 err += dec;
                 x += xdir;
                 rr += rx; gg += gx; bb += bx; aa += ax; zz += zx;
@@ -223,7 +246,7 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
         } else {
             x += xdir;
             rr += rx; gg += gx; bb += bx; aa += ax; zz += zx;
-            if (err >= 0) {
+            if (err > 0 || (err == 0 && !zero_negative)) {
                 err += dec;
                 y += ydir;
                 rr += ry; gg += gy; bb += by; aa += ay; zz += zy;
