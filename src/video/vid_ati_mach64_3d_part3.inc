@@ -11,6 +11,37 @@ static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n,int dir){
     return dir>0?inc+(int64_t)n*inc2:-inc-(int64_t)(n-1)*inc2;
 }
 
+/*
+ * GT/GTB trapezoid edges use the Bresenham form programmed by the HAL:
+ * ERR starts below zero, INC is accumulated once per scanline, and DEC is
+ * accumulated once for every horizontal edge step required to bring ERR back
+ * below the selected zero threshold.  A shallow edge can therefore move more
+ * than one X pixel during a single Y step.  The previous one-if-per-row walker
+ * capped the edge slope at |dX/dY| <= 1 and turned near-horizontal cube edges
+ * into the characteristic bow-tie/wedge geometry seen in Flip3D.
+ */
+static int
+r3d_edge_step_scanline(int *x, int *e, int inc, int dec, int dir,
+                       int zero_negative)
+{
+    int old = *x;
+    int steps = 0;
+
+    *e += inc;
+    while (((*e > 0) || ((*e == 0) && !zero_negative)) && steps < 8192) {
+        *x += dir;
+        *e += dec;
+        steps++;
+
+        /* Valid GT triangle setup uses a negative DEC.  Do not let a malformed
+         * command lock the emulator in this compatibility software path. */
+        if (dec >= 0 && ((*e > 0) || ((*e == 0) && !zero_negative)))
+            break;
+    }
+
+    return *x - old;
+}
+
 static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     mach64_t*m=ctx->mach64;uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];int fcn=(ctl>>R3D_FCN_SHIFT)&3,df=r3d_dst_format(m),dbpp=r3d_bytes_per_pixel(df),tf=r3d_tex_format(m),tbpp=r3d_bytes_per_pixel(tf),len=cmd&0x7fff;if(!len||!dbpp||!fcn)return;if(fcn==2&&!tbpp)return;
     int lead=r3d_sign_extend(m->dst_y_x>>16,13),y=r3d_sign_extend(m->dst_y_x,15),ydir=(m->dst_cntl&DST_Y_DIR)?1:-1,ldir=(m->dst_cntl&DST_X_DIR)?1:-1,tdir=(m->dst_cntl&R3D_GTB_TRAIL_X_DIR)?1:-1;
@@ -31,7 +62,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
 #undef RG
     /* GT/GTB S/T START and all quadratic increments share the same
-     * texture-size-normalized register unit.  Do not rescale START separately. */
+     * texture-size-normalized register unit. */
     int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
     int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
@@ -68,17 +99,23 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 }
             }
         }
-        /* All interpolator START registers are tied to the leading edge.  A
-         * scanline advance always takes one Y step and can additionally take
-         * one Bresenham X step.  The old software path advanced only Y, so as
-         * a sloped leading edge moved horizontally its color/Z and especially
-         * S/T state drifted away from the geometry every row. */
-        int lead_dx=r3d_edge_step(&lead,&le,li,ld,ldir,lead_zero_neg);
-        r3d_edge_step(&trail,&te,ti,td,tdir,trail_zero_neg);
+
+        /*
+         * A scanline advances Y once, then the Bresenham accumulator can ask
+         * for zero, one, or many X steps.  Every such lead-edge X step advances
+         * the colour/Z start and the quadratic S/T derivative state as well.
+         * Treating lead_dx as a boolean left the interpolators behind whenever
+         * a shallow edge needed two or more horizontal steps in one row.
+         */
+        int lead_dx=r3d_edge_step_scanline(&lead,&le,li,ld,ldir,lead_zero_neg);
+        r3d_edge_step_scanline(&trail,&te,ti,td,tdir,trail_zero_neg);
+        int lead_steps=lead_dx<0?-lead_dx:lead_dx;
+
         RED0+=REDy;GREEN0+=GREENy;BLUE0+=BLUEy;ALPHA0+=ALPHAy;Z0+=Zy;
         s0+=syi;syi+=sy2;sxi+=sxy2;
         t0+=tyi;tyi+=ty2;txi+=txy2;
-        if(lead_dx){
+
+        for(int edge_step=0;edge_step<lead_steps;edge_step++){
             RED0+=REDx;GREEN0+=GREENx;BLUE0+=BLUEx;ALPHA0+=ALPHAx;Z0+=Zx;
             s0+=sxi;sxi+=sx2;syi+=sxy2;
             t0+=txi;txi+=tx2;tyi+=txy2;
