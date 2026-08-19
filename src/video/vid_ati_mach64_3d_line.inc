@@ -49,7 +49,7 @@ r3d_is_shaded_line_command(mach64_3d_ctx_t *ctx, uint32_t cmd)
  * travelling with Y_DIR=0, or a Y-major line travelling with X_DIR=0; it is
  * negative for the opposite direction.  The distinction is only one pixel at
  * a tie, but connected line primitives rely on the same endpoint convention
- * and otherwise develop the detached/offset joins visible in Boids2.
+ * and otherwise develop detached/offset joins.
  */
 static int
 r3d_line_zero_negative(const mach64_t *m, int ymajor)
@@ -256,6 +256,15 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
             }
         }
     }
+
+    /*
+     * Mach64 line trajectories are live state.  After completion DST_X/Y rest
+     * on the final trajectory pixel even when DST_LAST_PEL suppresses that
+     * pixel's write.  Win9x can chain connected line segments from this endpoint;
+     * leaving the original start latched makes later segments detach or float.
+     */
+    m->dst_y_x = ((uint32_t) (x & 0x1fff) << 16) |
+                 ((uint32_t) y & 0x7fff);
 
     return 1;
 }
