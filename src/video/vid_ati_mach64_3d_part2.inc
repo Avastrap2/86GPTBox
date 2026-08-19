@@ -65,14 +65,20 @@ static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_s
     if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
     ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
     /*
-     * GT/GTB does not expose S/T to the texture sampler as ordinary 16.16
-     * texel coordinates.  ATI's own programming convention uses one texel =
-     * 1 << (25 - TEX_SIZE) in the S/T accumulator domain.  For example, the
-     * open Mach64GT texture-engine driver programs a one-to-one 256x256 map
-     * with S_X_INC_START = 1 << 17 when TEX_SIZE is 8.  Decoding S/T as 16.16
-     * therefore advances 64 texels for every intended texel and produces the
-     * repeated-logo pattern seen in Flip3D. */
-    ts->coord_shift=25-sl;
+     * GT/GTB S/T is a normalized 10.11 coordinate domain, not a direct texel
+     * index.  The full texture spans 1024 coordinate units regardless of mip
+     * size.  In the raw DWORD image START therefore has an effective 16-bit
+     * binary point (the 10.11 field occupies bits 25:5), and converting that
+     * normalized coordinate to a TEX_SIZE=2^sl texel index requires
+     * shifting by 16 + 10 - sl = 26 - sl.
+     *
+     * The captured Windows 95 HAL stream confirms this directly: with
+     * TEX_SIZE_PITCH=0x888 (256x256), cube vertices program S/T START values
+     * near 0x00000000 or 0x04000000.  A >>18 decode maps those endpoints to
+     * texels 0 and 256; >>17 maps the same face across 512 texels and repeats
+     * the logo twice.
+     */
+    ts->coord_shift=26-sl;
     ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
 }
 static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
@@ -83,10 +89,9 @@ static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts
     return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
 /*
- * S/T START and all derivative registers are kept in the GT accumulator's
- * native scale.  The integer texel address is selected by TEX_SIZE rather than
- * by a fixed 16-bit binary point.  Preserve that scale through the quadratic
- * recurrence and decode only at the sampler.
+ * Keep S/T in the native GT normalized-coordinate scale through the quadratic
+ * recurrence and convert to texels only at the sampler.  START and derivative
+ * values share the raw register alignment expected by the HAL setup stream.
  */
 static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
     int sh=ts->coord_shift;
