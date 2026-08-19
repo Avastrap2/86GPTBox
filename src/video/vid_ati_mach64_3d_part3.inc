@@ -7,8 +7,8 @@
 static int64_t r3d_quad_at(int64_t start,int64_t inc,int64_t inc2,int n){
     return start+(int64_t)n*inc+((int64_t)n*(n-1)/2)*inc2;
 }
-static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n,int dir){
-    return dir>0?inc+(int64_t)n*inc2:-inc-(int64_t)(n-1)*inc2;
+static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n){
+    return inc+(int64_t)n*inc2;
 }
 
 /*
@@ -84,11 +84,19 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
             int right_limit=rtedge_dis?hi:(hi+1);
             int dh=right_limit>right+1?right+1:right_limit;
             if(dl<dh){
-                int n=(dl-lead)*ldir;
+                /*
+                 * START is anchored at the current leading-edge X, while every
+                 * *_X_INC is defined in screen-X coordinates.  DST_X_DIR only
+                 * tells the Bresenham lead edge which way it walks as Y changes;
+                 * it must not reverse interpolation across a span.  Using ldir
+                 * here mirrored S/T and colour/Z on every negative-slope lead
+                 * edge, so Flip3D could look correct only at special angles.
+                 */
+                int n=dl-lead;
                 int64_t rr=RED0+REDx*n,gg=GREEN0+GREENx*n,bb=BLUE0+BLUEx*n,aa=ALPHA0+ALPHAx*n,zz=Z0+Zx*n;
-                int64_t rrstep=REDx*ldir,ggstep=GREENx*ldir,bbstep=BLUEx*ldir,aastep=ALPHAx*ldir,zzstep=Zx*ldir;
+                int64_t rrstep=REDx,ggstep=GREENx,bbstep=BLUEx,aastep=ALPHAx,zzstep=Zx;
                 int64_t ss=0,tt=0,ssstep=0,ttstep=0;
-                if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);}
+                if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n);ttstep=r3d_quad_step(txi,tx2,n);}
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
@@ -105,24 +113,23 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         }
 
         /*
-         * A scanline advances Y once, then the Bresenham accumulator can ask
-         * for zero, one, or many X steps.  Every such lead-edge X step advances
-         * the colour/Z start and the quadratic S/T derivative state as well.
-         * Treating lead_dx as a boolean left the interpolators behind whenever
-         * a shallow edge needed two or more horizontal steps in one row.
+         * Move the interpolation origin by the same signed (dx,dy) that the
+         * leading edge actually moved.  The earlier code took abs(lead_dx) and
+         * always added X increments, which is correct only for DST_X_DIR=1.
+         * Negative-slope edges therefore accumulated their START and quadratic
+         * derivative state in the wrong direction and became angle dependent.
          */
         int lead_dx=r3d_edge_step_scanline(&lead,&le,li,ld,ldir,lead_zero_neg);
         r3d_edge_step_scanline(&trail,&te,ti,td,tdir,trail_zero_neg);
-        int lead_steps=lead_dx<0?-lead_dx:lead_dx;
 
-        RED0+=REDy;GREEN0+=GREENy;BLUE0+=BLUEy;ALPHA0+=ALPHAy;Z0+=Zy;
-        s0+=syi;syi+=sy2;sxi+=sxy2;
-        t0+=tyi;tyi+=ty2;txi+=txy2;
+        RED0+=REDy*ydir;GREEN0+=GREENy*ydir;BLUE0+=BLUEy*ydir;ALPHA0+=ALPHAy*ydir;Z0+=Zy*ydir;
+        s0=r3d_quad_at(s0,syi,sy2,ydir);syi+=sy2*ydir;sxi+=sxy2*ydir;
+        t0=r3d_quad_at(t0,tyi,ty2,ydir);tyi+=ty2*ydir;txi+=txy2*ydir;
 
-        for(int edge_step=0;edge_step<lead_steps;edge_step++){
-            RED0+=REDx;GREEN0+=GREENx;BLUE0+=BLUEx;ALPHA0+=ALPHAx;Z0+=Zx;
-            s0+=sxi;sxi+=sx2;syi+=sxy2;
-            t0+=txi;txi+=tx2;tyi+=txy2;
+        if(lead_dx){
+            RED0+=REDx*lead_dx;GREEN0+=GREENx*lead_dx;BLUE0+=BLUEx*lead_dx;ALPHA0+=ALPHAx*lead_dx;Z0+=Zx*lead_dx;
+            s0=r3d_quad_at(s0,sxi,sx2,lead_dx);sxi+=sx2*lead_dx;syi+=sxy2*lead_dx;
+            t0=r3d_quad_at(t0,txi,tx2,lead_dx);txi+=tx2*lead_dx;tyi+=txy2*lead_dx;
         }
         y+=ydir;
     }
