@@ -70,11 +70,6 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
     int z_write;
     int af;
     rgba_t fog;
-    int64_t rr;
-    int64_t gg;
-    int64_t bb;
-    int64_t aa;
-    int64_t zz;
     int64_t rx;
     int64_t gx;
     int64_t bx;
