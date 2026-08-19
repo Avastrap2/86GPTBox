@@ -12,9 +12,10 @@
  * source.  Ordinary 2D lines, polygon-boundary lines, and scaler operations
  * remain in the mature Mach64 2D engine.
  */
-#define R3D_DP_SRC_SCALE_3D    5u
-#define R3D_LINE_DISABLE       0x80000000u
-#define R3D_GTB_BRES_SIGN_AUTO (1u << 16)
+#define R3D_DP_SRC_SCALE_3D      5u
+#define R3D_LINE_DISABLE         0x80000000u
+#define R3D_LINE_DST_BRES_SIGN   (1u << 11)
+#define R3D_GTB_BRES_SIGN_AUTO   (1u << 16)
 
 static int
 r3d_is_shaded_line_command(mach64_3d_ctx_t *ctx, uint32_t cmd)
@@ -54,7 +55,7 @@ static int
 r3d_line_zero_negative(const mach64_t *m, int ymajor)
 {
     if (!(m->dst_cntl & R3D_GTB_BRES_SIGN_AUTO))
-        return !!(m->dst_cntl & R3D_GTB_DST_BRES_SIGN);
+        return !!(m->dst_cntl & R3D_LINE_DST_BRES_SIGN);
 
     if (ymajor)
         return !!(m->dst_cntl & DST_X_DIR);
