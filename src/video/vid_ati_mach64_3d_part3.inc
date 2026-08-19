@@ -69,13 +69,17 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
     for(int row=0;row<len;row++){
-        /* TRAP_FILL_DIR tells which edge is geometrically left/right.  Trust
-         * it when the programmed edges agree, otherwise fall back to sorting
-         * so malformed/partially initialized commands cannot walk backwards
-         * through VRAM. */
+        /*
+         * TRAP_FILL_DIR is directional state, not a hint that the two edge
+         * coordinates may be sorted.  On real GT/GTB hardware a left-to-right
+         * span exists only while trailing X is on or to the right of leading X;
+         * right-to-left is the converse.  Sorting crossed edges turns the
+         * invalid portion after an apex into a second mirrored triangle, which
+         * is exactly the bow-tie/wedge artifact produced by the software path.
+         */
         int lo=fill_lr?lead:trail,hi=fill_lr?trail:lead;
-        if(lo>hi){int q=lo;lo=hi;hi=q;}
-        if(y>=top&&y<=bottom){
+        int span_valid=lo<=hi;
+        if(span_valid&&y>=top&&y<=bottom){
             int dl=lo<left?left:lo;
             int right_limit=rtedge_dis?hi:(hi+1);
             int dh=right_limit>right+1?right+1:right_limit;
