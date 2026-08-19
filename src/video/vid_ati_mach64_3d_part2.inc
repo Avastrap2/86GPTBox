@@ -53,7 +53,7 @@ static int r3d_blend_factor(int code,rgba_t s,rgba_t d,int ch,int sf){switch(cod
 static rgba_t r3d_blend(uint32_t ctl,rgba_t s,rgba_t d){rgba_t o;int sf=(ctl>>R3D_BLEND_SRC_SHIFT)&7,df=(ctl>>R3D_BLEND_DST_SHIFT)&7,*p[4]={&o.r,&o.g,&o.b,&o.a};for(int ch=0;ch<4;ch++){int sv=r3d_component(s,ch),dv=r3d_component(d,ch);*p[ch]=r3d_clamp8((sv*r3d_blend_factor(sf,s,d,ch,1)+dv*r3d_blend_factor(df,s,d,ch,0)+127)/255);}return o;}
 
 typedef struct r3d_tex_state_t {
-    int f,bpp,w,wmask,hmask,bilinear;
+    int f,bpp,w,wmask,hmask,bilinear,coord_shift;
     uint32_t base;
 } r3d_tex_state_t;
 
@@ -63,7 +63,7 @@ typedef struct r3d_tex_state_t {
 static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_state_t *ts){
     uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
     if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
-    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
+    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;ts->coord_shift=25-sl;
     ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
 }
 static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
@@ -73,11 +73,14 @@ static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts
     if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
     return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
-/* S/T are kept internally as signed 16-fractional values.  GT S_START and
- * T_START are 10.11 and are shifted by five bits when a trapezoid begins. */
+/* GT/GTB S/T registers use a texture-size-normalized fixed point: one texel
+ * is 1 << (25-TEX_SIZE) register units.  START and every first/second-order
+ * increment are already in that same unit.  Keeping START in a separate
+ * 10.11-derived scale made its phase differ from the increments and caused
+ * the HAL texture to wrap repeatedly across a polygon. */
 static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
-    int u=(int)(s>>16)&ts->wmask,v=(int)(t>>16)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
-    int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask,fu=(s>>8)&255,fv=(t>>8)&255;
+    int sh=ts->coord_shift,u=(int)(s>>sh)&ts->wmask,v=(int)(t>>sh)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
+    int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask,fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
     rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
     return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
@@ -91,7 +94,8 @@ static int r3d_z_test(uint16_t s,uint16_t d,int t){switch(t&7){case 0:return 0;c
  * classified.  GT HAL triangle setup uses these bits to keep shared edges
  * deterministic; treating zero as always non-negative shifts some edges. */
 static int r3d_edge_step(int*x,int*e,int inc,int dec,int dir,int zero_negative){int old=*x;if(*e<0||(*e==0&&zero_negative))*e+=inc;else{*x+=dir;*e+=dec;}return*x-old;}
-static rgba_t r3d_shade(int64_t r,int64_t g,int64_t b,int64_t a){rgba_t c={r3d_clamp8(r>>12),r3d_clamp8(g>>12),r3d_clamp8(b>>12),r3d_clamp8(a>>12)};return c;}
+/* GT/GTB colour and alpha interpolators are 8.16 fixed point. */
+static rgba_t r3d_shade(int64_t r,int64_t g,int64_t b,int64_t a){rgba_t c={r3d_clamp8(r>>16),r3d_clamp8(g>>16),r3d_clamp8(b>>16),r3d_clamp8(a>>16)};return c;}
 static rgba_t r3d_texture_light(uint32_t ctl,rgba_t t,rgba_t s){
     if(ctl&R3D_COLOR_OVERRIDE){int a=t.a;t=s;t.a=a;return t;}
     int mode=(ctl>>R3D_TEX_LIGHT_SHIFT)&3;if(mode==1){t.r=t.r*s.r/255;t.g=t.g*s.g/255;t.b=t.b*s.b/255;}else if(mode==2){rgba_t d=r3d_lerp(s,t,t.a);d.a=s.a;t=d;}return t;
