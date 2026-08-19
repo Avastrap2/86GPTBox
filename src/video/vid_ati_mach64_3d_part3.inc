@@ -30,8 +30,10 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
 #define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
     RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
 #undef RG
-    int64_t s0=(int64_t)(int32_t)ctx->regs[R3D_S_START>>2]<<5,sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
-    int64_t t0=(int64_t)(int32_t)ctx->regs[R3D_T_START>>2]<<5,txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
+    /* GT/GTB S/T START and all quadratic increments share the same
+     * texture-size-normalized register unit.  Do not rescale START separately. */
+    int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
+    int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
@@ -86,6 +88,6 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
     ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
-    ctx->regs[R3D_S_START>>2]=(uint32_t)(s0>>5);ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
-    ctx->regs[R3D_T_START>>2]=(uint32_t)(t0>>5);ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
+    ctx->regs[R3D_S_START>>2]=(uint32_t)s0;ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
+    ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
 }
