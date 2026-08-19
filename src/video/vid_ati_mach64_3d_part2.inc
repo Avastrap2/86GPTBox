@@ -1,3 +1,18 @@
+#define R3D_SCALE_DITHER_TABLE (1u << 1)
+#define R3D_DITHER_EN          (1u << 2)
+#define R3D_DITHER_INIT        (1u << 3)
+#define R3D_ROUND_EN           (1u << 4)
+
+typedef struct r3d_dither_state_t {
+    int valid;
+    int y;
+    int r_err;
+    int g_err;
+    int b_err;
+} r3d_dither_state_t;
+
+static r3d_dither_state_t r3d_dither_state[MACH64_3D_CONTEXTS];
+
 static rgba_t r3d_yuv_to_rgba(int y,int u,int v,int a){
     int d=u-128,e=v-128;rgba_t c;
     c.r=r3d_clamp8(y+((359*e)>>8));
@@ -20,17 +35,60 @@ static rgba_t r3d_unpack(mach64_3d_ctx_t *ctx,int f,uint32_t raw,int texture){
     }
     return c;
 }
-static uint32_t r3d_pack(int f,rgba_t c){
+
+/*
+ * SCALE_3D_CNTL[4:1] controls the final 24-bit-to-framebuffer reduction:
+ * bit 1 selects X error diffusion or the fixed two-dimensional table, bit 2
+ * enables dithering, bit 3 resets the X-diffusion error at each scanline, and
+ * bit 4 selects rounding when dithering is disabled.  The ATI register guide
+ * documents the modes but not the contents of the fixed 2-D table, so use a
+ * conventional 4x4 Bayer ordering for that fixed-table path.
+ */
+static int r3d_quant_ordered(int v,int bits,int x,int y){
+    static const uint8_t bayer4[16]={0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5};
+    int drop=8-bits,max=(1<<bits)-1,span=(1<<drop)-1;
+    int add=(bayer4[((y&3)<<2)|(x&3)]*span+7)/15;
+    int q=(r3d_clamp8(v)+add)>>drop;
+    return q>max?max:q;
+}
+static int r3d_quant_round(int v,int bits){
+    int drop=8-bits,max=(1<<bits)-1;
+    int q=(r3d_clamp8(v)+(1<<(drop-1)))>>drop;
+    return q>max?max:q;
+}
+static int r3d_quant_xerr(int v,int bits,int *err){
+    int max=(1<<bits)-1;
+    int a=r3d_clamp8(v+*err);
+    int q=(a>>(8-bits));
+    if(q>max)q=max;
+    /* Feed the signed quantization error into the following X pixel. */
+    int reconstructed=(q*255+max/2)/max;
+    *err=a-reconstructed;
+    return q;
+}
+static uint32_t r3d_pack(mach64_3d_ctx_t *ctx,int f,rgba_t c,int x,int y){
+    uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];
+    int ci=(int)(ctx-mach64_3d_ctx),dither=!!(ctl&R3D_DITHER_EN),table=!!(ctl&R3D_SCALE_DITHER_TABLE),round=!!(ctl&R3D_ROUND_EN);
+    r3d_dither_state_t *ds;
+    if(ci<0||ci>=MACH64_3D_CONTEXTS)ci=0;
+    ds=&r3d_dither_state[ci];
     c.r=r3d_clamp8(c.r);c.g=r3d_clamp8(c.g);c.b=r3d_clamp8(c.b);c.a=r3d_clamp8(c.a);
+    if(!dither)ds->valid=0;
+    if(dither&&!table){
+        if(!ds->valid){ds->valid=1;ds->y=y;ds->r_err=ds->g_err=ds->b_err=0;}
+        else if(y!=ds->y){if(ctl&R3D_DITHER_INIT)ds->r_err=ds->g_err=ds->b_err=0;ds->y=y;}
+    }
+#define QCOMP(v,bits,err) (dither?(table?r3d_quant_ordered((v),(bits),x,y):r3d_quant_xerr((v),(bits),&(err))):(round?r3d_quant_round((v),(bits)):((v)>>(8-(bits)))))
     switch(f){
-        case 3:return(c.a>=128?0x8000u:0)|((uint32_t)(c.r>>3)<<10)|((uint32_t)(c.g>>3)<<5)|(c.b>>3);
-        case 4:return((uint32_t)(c.r>>3)<<11)|((uint32_t)(c.g>>2)<<5)|(c.b>>3);
+        case 3:{int r=QCOMP(c.r,5,ds->r_err),g=QCOMP(c.g,5,ds->g_err),b=QCOMP(c.b,5,ds->b_err);return(c.a>=128?0x8000u:0)|((uint32_t)r<<10)|((uint32_t)g<<5)|(uint32_t)b;}
+        case 4:{int r=QCOMP(c.r,5,ds->r_err),g=QCOMP(c.g,6,ds->g_err),b=QCOMP(c.b,5,ds->b_err);return((uint32_t)r<<11)|((uint32_t)g<<5)|(uint32_t)b;}
         case 6:return((uint32_t)c.a<<24)|((uint32_t)c.r<<16)|((uint32_t)c.g<<8)|c.b;
-        case 7:return((uint32_t)(c.r>>5)<<5)|((uint32_t)(c.g>>5)<<2)|(c.b>>6);
+        case 7:{int r=QCOMP(c.r,3,ds->r_err),g=QCOMP(c.g,3,ds->g_err),b=QCOMP(c.b,2,ds->b_err);return((uint32_t)r<<5)|((uint32_t)g<<2)|(uint32_t)b;}
         case 8:return(c.r*77+c.g*150+c.b*29)>>8;
-        case 15:return((uint32_t)(c.a>>4)<<12)|((uint32_t)(c.r>>4)<<8)|((uint32_t)(c.g>>4)<<4)|(c.b>>4);
+        case 15:{int r=QCOMP(c.r,4,ds->r_err),g=QCOMP(c.g,4,ds->g_err),b=QCOMP(c.b,4,ds->b_err);return((uint32_t)(c.a>>4)<<12)|((uint32_t)r<<8)|((uint32_t)g<<4)|(uint32_t)b;}
         default:return 0;
     }
+#undef QCOMP
 }
 static rgba_t r3d_read_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f){
     switch(r3d_bytes_per_pixel(f)){case 1:return r3d_unpack(ctx,f,r3d_vram_read8(ctx->mach64,a),0);case 2:return r3d_unpack(ctx,f,r3d_vram_read16(ctx->mach64,a),0);case 4:return r3d_unpack(ctx,f,r3d_vram_read32(ctx->mach64,a),0);default:{rgba_t z={0,0,0,255};return z;}}
@@ -39,9 +97,12 @@ static rgba_t r3d_read_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f){
  * Windows HAL normally leaves it at all ones, so the former read/modify/write
  * doubled framebuffer traffic for the common path. */
 static void r3d_write_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f,rgba_t c){
-    mach64_t*m=ctx->mach64;if(f==2){uint8_t p=((r3d_clamp8(c.r)>>5)<<5)|((r3d_clamp8(c.g)>>5)<<2)|(r3d_clamp8(c.b)>>6);r3d_vram_write8(m,a,p);return;}
-    uint32_t raw=r3d_pack(f,c),old,mask=m->write_mask;
-    switch(r3d_bytes_per_pixel(f)){
+    mach64_t*m=ctx->mach64;int bpp=r3d_bytes_per_pixel(f),x=0,y=0;
+    uint32_t base=(m->dst_off_pitch&0xfffff)<<3;int pitch=((m->dst_off_pitch>>22)&0x3ff)<<3;
+    if(bpp&&pitch&&a>=base){uint32_t p=(a-base)/(uint32_t)bpp;x=(int)(p%(uint32_t)pitch);y=(int)(p/(uint32_t)pitch);}
+    if(f==2){uint8_t p=((r3d_clamp8(c.r)>>5)<<5)|((r3d_clamp8(c.g)>>5)<<2)|(r3d_clamp8(c.b)>>6);r3d_vram_write8(m,a,p);return;}
+    uint32_t raw=r3d_pack(ctx,f,c,x,y),old,mask=m->write_mask;
+    switch(bpp){
         case 1:{uint32_t pm=mask&0xffu;if(pm!=0xffu){old=r3d_vram_read8(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write8(m,a,(uint8_t)raw);break;}
         case 2:{uint32_t pm=mask&0xffffu;if(pm!=0xffffu){old=r3d_vram_read16(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write16(m,a,(uint16_t)raw);break;}
         case 4:if(mask!=0xffffffffu){old=r3d_vram_read32(m,a);raw=(old&~mask)|(raw&mask);}r3d_vram_write32(m,a,raw);break;
