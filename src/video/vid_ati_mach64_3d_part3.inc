@@ -1,24 +1,21 @@
-#define R3D_GTB_DST_BRES_SIGN     (1u << 11)
+#define R3D_GTB_DST_BRES_SIGN      (1u << 11)
 #define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
-#define R3D_GTB_TRAIL_X_DIR        (1u << 13)
-#define R3D_GTB_TRAP_FILL_DIR      (1u << 14)
-#define R3D_GTB_TRAIL_BRES_SIGN    (1u << 15)
+#define R3D_GTB_TRAIL_X_DIR         (1u << 13)
+#define R3D_GTB_TRAP_FILL_DIR       (1u << 14)
+#define R3D_GTB_TRAIL_BRES_SIGN     (1u << 15)
 
 static int64_t r3d_quad_at(int64_t start,int64_t inc,int64_t inc2,int n){
     return start+(int64_t)n*inc+((int64_t)n*(n-1)/2)*inc2;
 }
-static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n){
-    return inc+(int64_t)n*inc2;
+static int64_t r3d_quad_step(int64_t inc,int64_t inc2,int n,int dir){
+    return dir>0?inc+(int64_t)n*inc2:-inc-(int64_t)(n-1)*inc2;
 }
 
 /*
- * GT/GTB trapezoid edges use the Bresenham form programmed by the HAL:
- * ERR starts below zero, INC is accumulated once per scanline, and DEC is
- * accumulated once for every horizontal edge step required to bring ERR back
- * below the selected zero threshold.  A shallow edge can therefore move more
- * than one X pixel during a single Y step.  The previous one-if-per-row walker
- * capped the edge slope at |dX/dY| <= 1 and turned near-horizontal cube edges
- * into the characteristic bow-tie/wedge geometry seen in Flip3D.
+ * Collapse the GT/GTB Bresenham edge engine to one scanline operation.  An
+ * axial Y step adds INC, then zero or more X-direction diagonal steps add DEC
+ * until the next span boundary is reached.  This is required for shallow edges
+ * where X can move more than one pixel between adjacent scanlines.
  */
 static int
 r3d_edge_step_scanline(int *x, int *e, int inc, int dec, int dir,
@@ -61,22 +58,16 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
 #define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
     RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
 #undef RG
-    /* GT/GTB S/T START and all quadratic increments share the same
-     * texture-size-normalized register unit. */
-    int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
-    int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
+    /* S/T START is 10.11 while all first/second derivative registers use
+     * sixteen fractional bits, so normalize START into that domain here. */
+    int64_t s0=(int64_t)(int32_t)ctx->regs[R3D_S_START>>2]<<5,sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
+    int64_t t0=(int64_t)(int32_t)ctx->regs[R3D_T_START>>2]<<5,txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
     for(int row=0;row<len;row++){
-        /*
-         * TRAP_FILL_DIR is directional state, not a hint that the two edge
-         * coordinates may be sorted.  On real GT/GTB hardware a left-to-right
-         * span exists only while trailing X is on or to the right of leading X;
-         * right-to-left is the converse.  Sorting crossed edges turns the
-         * invalid portion after an apex into a second mirrored triangle, which
-         * is exactly the bow-tie/wedge artifact produced by the software path.
-         */
+        /* TRAP_FILL_DIR defines which programmed edge is the left/right side.
+         * Do not sort crossed edges into a mirrored continuation. */
         int lo=fill_lr?lead:trail,hi=fill_lr?trail:lead;
         int span_valid=lo<=hi;
         if(span_valid&&y>=top&&y<=bottom){
@@ -84,19 +75,13 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
             int right_limit=rtedge_dis?hi:(hi+1);
             int dh=right_limit>right+1?right+1:right_limit;
             if(dl<dh){
-                /*
-                 * START is anchored at the current leading-edge X, while every
-                 * *_X_INC is defined in screen-X coordinates.  DST_X_DIR only
-                 * tells the Bresenham lead edge which way it walks as Y changes;
-                 * it must not reverse interpolation across a span.  Using ldir
-                 * here mirrored S/T and colour/Z on every negative-slope lead
-                 * edge, so Flip3D could look correct only at special angles.
-                 */
-                int n=dl-lead;
+                /* X interpolation registers are defined for steps in the
+                 * programmed DST_X_DIR direction, not absolute screen +X. */
+                int n=(dl-lead)*ldir;
                 int64_t rr=RED0+REDx*n,gg=GREEN0+GREENx*n,bb=BLUE0+BLUEx*n,aa=ALPHA0+ALPHAx*n,zz=Z0+Zx*n;
-                int64_t rrstep=REDx,ggstep=GREENx,bbstep=BLUEx,aastep=ALPHAx,zzstep=Zx;
+                int64_t rrstep=REDx*ldir,ggstep=GREENx*ldir,bbstep=BLUEx*ldir,aastep=ALPHAx*ldir,zzstep=Zx*ldir;
                 int64_t ss=0,tt=0,ssstep=0,ttstep=0;
-                if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n);ttstep=r3d_quad_step(txi,tx2,n);}
+                if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);}
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
@@ -112,30 +97,27 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
             }
         }
 
-        /*
-         * Move the interpolation origin by the same signed (dx,dy) that the
-         * leading edge actually moved.  The earlier code took abs(lead_dx) and
-         * always added X increments, which is correct only for DST_X_DIR=1.
-         * Negative-slope edges therefore accumulated their START and quadratic
-         * derivative state in the wrong direction and became angle dependent.
-         */
+        /* Y_INC is defined for one step in DST_Y_DIR and X_INC for one step in
+         * DST_X_DIR.  Therefore signs are already encoded by the programmed
+         * directions: add Y once, then add X once for every Bresenham X step. */
         int lead_dx=r3d_edge_step_scanline(&lead,&le,li,ld,ldir,lead_zero_neg);
         r3d_edge_step_scanline(&trail,&te,ti,td,tdir,trail_zero_neg);
+        int lead_steps=lead_dx<0?-lead_dx:lead_dx;
 
-        RED0+=REDy*ydir;GREEN0+=GREENy*ydir;BLUE0+=BLUEy*ydir;ALPHA0+=ALPHAy*ydir;Z0+=Zy*ydir;
-        s0=r3d_quad_at(s0,syi,sy2,ydir);syi+=sy2*ydir;sxi+=sxy2*ydir;
-        t0=r3d_quad_at(t0,tyi,ty2,ydir);tyi+=ty2*ydir;txi+=txy2*ydir;
+        RED0+=REDy;GREEN0+=GREENy;BLUE0+=BLUEy;ALPHA0+=ALPHAy;Z0+=Zy;
+        s0+=syi;syi+=sy2;sxi+=sxy2;
+        t0+=tyi;tyi+=ty2;txi+=txy2;
 
-        if(lead_dx){
-            RED0+=REDx*lead_dx;GREEN0+=GREENx*lead_dx;BLUE0+=BLUEx*lead_dx;ALPHA0+=ALPHAx*lead_dx;Z0+=Zx*lead_dx;
-            s0=r3d_quad_at(s0,sxi,sx2,lead_dx);sxi+=sx2*lead_dx;syi+=sxy2*lead_dx;
-            t0=r3d_quad_at(t0,txi,tx2,lead_dx);txi+=tx2*lead_dx;tyi+=txy2*lead_dx;
+        for(int edge_step=0;edge_step<lead_steps;edge_step++){
+            RED0+=REDx;GREEN0+=GREENx;BLUE0+=BLUEx;ALPHA0+=ALPHAx;Z0+=Zx;
+            s0+=sxi;sxi+=sx2;syi+=sxy2;
+            t0+=txi;txi+=tx2;tyi+=txy2;
         }
         y+=ydir;
     }
     r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
     ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
-    ctx->regs[R3D_S_START>>2]=(uint32_t)s0;ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
-    ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
+    ctx->regs[R3D_S_START>>2]=(uint32_t)(s0>>5);ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
+    ctx->regs[R3D_T_START>>2]=(uint32_t)(t0>>5);ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
 }
