@@ -17,7 +17,7 @@
 
 /*
  * Keep the established part4 register decoder as the base implementation, then
- * wrap its shared DST_BRES_LNTH entry point below.  GT/GTB 3D lines use the
+ * wrap its shared DST_BRES_LNTH entry points below.  GT/GTB 3D lines use the
  * normal Bresenham trajectory register but may select Scaler/3D data as the
  * foreground pixel source; that source does not exist in the legacy 2D blitter.
  */
@@ -34,7 +34,15 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         uint32_t aa = a & 0x3ffu;
         uint32_t b = aa & ~3u;
 
-        if (b == R3D_LEAD_BRES_LNTH) {
+        /*
+         * 3D RAGE exposes the lead/Bresenham length register at both MM
+         * offsets 0_48 and 0_51 (byte offsets 0x120 and 0x144).  part4 already
+         * mirrors both addresses into the same shadow for trapezoids.  Shaded
+         * line commands must be intercepted at both aliases too; otherwise a
+         * line written through 0x144 is consumed as GT-only state without ever
+         * starting the line walker, leaving holes in connected LINESTRIPs.
+         */
+        if (b == R3D_LEAD_BRES_LNTH || b == R3D_LEAD_BRES_LNTH_ALIAS) {
             uint32_t i = R3D_LEAD_BRES_LNTH >> 2;
             uint32_t cmd = r3d_merge_write(ctx->regs[i], aa, v, type);
 
@@ -90,7 +98,7 @@ mach64_3d_detach(mach64_t *mach64)
  * offsets.  The Rage II+ MMIO shim, however, also sees GUI offsets 0x100..0x3ff.
  * Do not let those GUI addresses alias a control register with the same low
  * byte (e.g. 0x2d4 DP_MIX -> 0xd4 CUSTOM_MACRO_CNTL, 0x2d8 DP_SRC -> 0xd8,
- * or 0x1b4 SRC_CNTL -> 0xb4 bank-select readback).
+ * or 0x1b4 SRC_CNTL -> bank-select readback).
  */
 extern int mach64_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val);
 extern int mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val);
