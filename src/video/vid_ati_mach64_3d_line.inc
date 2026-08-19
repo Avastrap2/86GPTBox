@@ -234,25 +234,30 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
         if (i == len - 1)
             break;
 
+        /*
+         * The GT 3D HAL programs the Bresenham terms in accumulator form:
+         * INC is accumulated for every major-axis step, while DEC is applied
+         * only when that accumulation crosses the diagonal threshold and the
+         * minor axis advances.  Treating INC and DEC as mutually exclusive
+         * compresses steep line slopes toward the major axis.
+         */
         if (ymajor) {
             y += ydir;
             rr += ry; gg += gy; bb += by; aa += ay; zz += zy;
-            if (err > 0 || (err == 0 && !zero_negative)) {
-                err += dec;
-                x += xdir;
-                rr += rx; gg += gx; bb += bx; aa += ax; zz += zx;
-            } else {
-                err += inc;
-            }
         } else {
             x += xdir;
             rr += rx; gg += gx; bb += bx; aa += ax; zz += zx;
-            if (err > 0 || (err == 0 && !zero_negative)) {
-                err += dec;
+        }
+
+        err += inc;
+        if (err > 0 || (err == 0 && !zero_negative)) {
+            err += dec;
+            if (ymajor) {
+                x += xdir;
+                rr += rx; gg += gx; bb += bx; aa += ax; zz += zx;
+            } else {
                 y += ydir;
                 rr += ry; gg += gy; bb += by; aa += ay; zz += zy;
-            } else {
-                err += inc;
             }
         }
     }
