@@ -63,7 +63,11 @@ typedef struct r3d_tex_state_t {
 static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_state_t *ts){
     uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
     if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
-    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;ts->coord_shift=25-sl;
+    /* GTB setup uses half-texel coordinates: the Win9x HAL/known Rage II+
+     * programming sequence scales S/T by 1 << (25-TEX_SIZE) after first
+     * doubling source coordinates.  Therefore one whole texel is one more
+     * bit, 1 << (26-TEX_SIZE), not 1 << (25-TEX_SIZE). */
+    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;ts->coord_shift=26-sl;
     ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
 }
 static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
@@ -73,11 +77,10 @@ static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts
     if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
     return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
-/* GT/GTB S/T registers use a texture-size-normalized fixed point: one texel
- * is 1 << (25-TEX_SIZE) register units.  START and every first/second-order
- * increment are already in that same unit.  Keeping START in a separate
- * 10.11-derived scale made its phase differ from the increments and caused
- * the HAL texture to wrap repeatedly across a polygon. */
+/* GT/GTB S/T registers are consumed in the same normalized raw domain used
+ * by the HAL's first- and second-order interpolators.  coord_shift converts
+ * that raw coordinate to a texel index and leaves the next eight bits for
+ * sub-texel filtering. */
 static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
     int sh=ts->coord_shift,u=(int)(s>>sh)&ts->wmask,v=(int)(t>>sh)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
     int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask,fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
@@ -94,7 +97,7 @@ static int r3d_z_test(uint16_t s,uint16_t d,int t){switch(t&7){case 0:return 0;c
  * classified.  GT HAL triangle setup uses these bits to keep shared edges
  * deterministic; treating zero as always non-negative shifts some edges. */
 static int r3d_edge_step(int*x,int*e,int inc,int dec,int dir,int zero_negative){int old=*x;if(*e<0||(*e==0&&zero_negative))*e+=inc;else{*x+=dir;*e+=dec;}return*x-old;}
-/* GT/GTB colour and alpha interpolators are 8.16 fixed point. */
+/* Rage II+/GTB HAL values use 8.16 colour/alpha interpolation. */
 static rgba_t r3d_shade(int64_t r,int64_t g,int64_t b,int64_t a){rgba_t c={r3d_clamp8(r>>16),r3d_clamp8(g>>16),r3d_clamp8(b>>16),r3d_clamp8(a>>16)};return c;}
 static rgba_t r3d_texture_light(uint32_t ctl,rgba_t t,rgba_t s){
     if(ctl&R3D_COLOR_OVERRIDE){int a=t.a;t=s;t.a=a;return t;}
