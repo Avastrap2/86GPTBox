@@ -53,7 +53,7 @@ static int r3d_blend_factor(int code,rgba_t s,rgba_t d,int ch,int sf){switch(cod
 static rgba_t r3d_blend(uint32_t ctl,rgba_t s,rgba_t d){rgba_t o;int sf=(ctl>>R3D_BLEND_SRC_SHIFT)&7,df=(ctl>>R3D_BLEND_DST_SHIFT)&7,*p[4]={&o.r,&o.g,&o.b,&o.a};for(int ch=0;ch<4;ch++){int sv=r3d_component(s,ch),dv=r3d_component(d,ch);*p[ch]=r3d_clamp8((sv*r3d_blend_factor(sf,s,d,ch,1)+dv*r3d_blend_factor(df,s,d,ch,0)+127)/255);}return o;}
 
 typedef struct r3d_tex_state_t {
-    int f,bpp,w,wmask,hmask,bilinear;
+    int f,bpp,w,wmask,hmask,bilinear,coord_shift;
     uint32_t base;
 } r3d_tex_state_t;
 
@@ -64,6 +64,15 @@ static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_s
     uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
     if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
     ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
+    /*
+     * GT/GTB does not expose S/T to the texture sampler as ordinary 16.16
+     * texel coordinates.  ATI's own programming convention uses one texel =
+     * 1 << (25 - TEX_SIZE) in the S/T accumulator domain.  For example, the
+     * open Mach64GT texture-engine driver programs a one-to-one 256x256 map
+     * with S_X_INC_START = 1 << 17 when TEX_SIZE is 8.  Decoding S/T as 16.16
+     * therefore advances 64 texels for every intended texel and produces the
+     * repeated-logo pattern seen in Flip3D. */
+    ts->coord_shift=25-sl;
     ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
 }
 static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
@@ -73,12 +82,17 @@ static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts
     if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
     return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
-/* GT/GTB S/T START is 10.11 while the first/second derivatives carry 16
- * fractional bits.  The trapezoid code shifts START left by five so sampling
- * can stay in a common signed 16-fractional domain. */
+/*
+ * S/T START and all derivative registers are kept in the GT accumulator's
+ * native scale.  The integer texel address is selected by TEX_SIZE rather than
+ * by a fixed 16-bit binary point.  Preserve that scale through the quadratic
+ * recurrence and decode only at the sampler.
+ */
 static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
-    int u=(int)(s>>16)&ts->wmask,v=(int)(t>>16)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
-    int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask,fu=(int)(s>>8)&255,fv=(int)(t>>8)&255;
+    int sh=ts->coord_shift;
+    int u=(int)(s>>sh)&ts->wmask,v=(int)(t>>sh)&ts->hmask;rgba_t c00=r3d_texel_at_cached(ctx,ts,u,v);if(!ts->bilinear)return c00;
+    int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask;
+    int fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
     rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
     return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
