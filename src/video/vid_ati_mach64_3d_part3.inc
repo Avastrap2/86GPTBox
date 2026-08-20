@@ -85,19 +85,19 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 int n=(dl-lead)*ldir;
                 int64_t rr=RED0+REDx*n,gg=GREEN0+GREENx*n,bb=BLUE0+BLUEx*n,aa=ALPHA0+ALPHAx*n,zz=Z0+Zx*n;
                 int64_t rrstep=REDx*ldir,ggstep=GREENx*ldir,bbstep=BLUEx*ldir,aastep=ALPHAx*ldir,zzstep=Zx*ldir;
-                int64_t ss=0,tt=0,ssstep=0,ttstep=0;
-                if(tex){ss=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);ssstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);}
+                int64_t tex_s=0,tt=0,tex_sstep=0,ttstep=0;
+                if(tex){tex_s=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);tex_sstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);}
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
                     dbg.candidate_pixels++;
-                    if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,ss,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
+                    if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,tex_s,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
                     if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
                     if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);dbg.drawn_pixels++;}
                     da+=dbpp;if(z_enabled)za+=2;
                     rr+=rrstep;gg+=ggstep;bb+=bbstep;aa+=aastep;zz+=zzstep;
-                    if(tex){ss+=ssstep;tt+=ttstep;ssstep+=sx2;ttstep+=tx2;}
+                    if(tex){tex_s+=tex_sstep;tt+=ttstep;tex_sstep+=sx2;ttstep+=tx2;}
                 }
             }
         }

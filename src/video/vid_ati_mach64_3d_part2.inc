@@ -69,23 +69,23 @@ static int r3d_quant_xerr(int v,int bits,int *err){
 static uint32_t r3d_pack(mach64_3d_ctx_t *ctx,int f,rgba_t c,int x,int y){
     uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];
     int ci=(int)(ctx-mach64_3d_ctx),dither=!!(ctl&R3D_DITHER_EN),table=!!(ctl&R3D_SCALE_DITHER_TABLE),round=!!(ctl&R3D_ROUND_EN);
-    r3d_dither_state_t *ds;
+    r3d_dither_state_t *dstate;
     if(ci<0||ci>=MACH64_3D_CONTEXTS)ci=0;
-    ds=&r3d_dither_state[ci];
+    dstate=&r3d_dither_state[ci];
     c.r=r3d_clamp8(c.r);c.g=r3d_clamp8(c.g);c.b=r3d_clamp8(c.b);c.a=r3d_clamp8(c.a);
-    if(!dither)ds->valid=0;
+    if(!dither)dstate->valid=0;
     if(dither&&!table){
-        if(!ds->valid){ds->valid=1;ds->y=y;ds->r_err=ds->g_err=ds->b_err=0;}
-        else if(y!=ds->y){if(ctl&R3D_DITHER_INIT)ds->r_err=ds->g_err=ds->b_err=0;ds->y=y;}
+        if(!dstate->valid){dstate->valid=1;dstate->y=y;dstate->r_err=dstate->g_err=dstate->b_err=0;}
+        else if(y!=dstate->y){if(ctl&R3D_DITHER_INIT)dstate->r_err=dstate->g_err=dstate->b_err=0;dstate->y=y;}
     }
 #define QCOMP(v,bits,err) (dither?(table?r3d_quant_ordered((v),(bits),x,y):r3d_quant_xerr((v),(bits),&(err))):(round?r3d_quant_round((v),(bits)):((v)>>(8-(bits)))))
     switch(f){
-        case 3:{int r=QCOMP(c.r,5,ds->r_err),g=QCOMP(c.g,5,ds->g_err),b=QCOMP(c.b,5,ds->b_err);return(c.a>=128?0x8000u:0)|((uint32_t)r<<10)|((uint32_t)g<<5)|(uint32_t)b;}
-        case 4:{int r=QCOMP(c.r,5,ds->r_err),g=QCOMP(c.g,6,ds->g_err),b=QCOMP(c.b,5,ds->b_err);return((uint32_t)r<<11)|((uint32_t)g<<5)|(uint32_t)b;}
+        case 3:{int r=QCOMP(c.r,5,dstate->r_err),g=QCOMP(c.g,5,dstate->g_err),b=QCOMP(c.b,5,dstate->b_err);return(c.a>=128?0x8000u:0)|((uint32_t)r<<10)|((uint32_t)g<<5)|(uint32_t)b;}
+        case 4:{int r=QCOMP(c.r,5,dstate->r_err),g=QCOMP(c.g,6,dstate->g_err),b=QCOMP(c.b,5,dstate->b_err);return((uint32_t)r<<11)|((uint32_t)g<<5)|(uint32_t)b;}
         case 6:return((uint32_t)c.a<<24)|((uint32_t)c.r<<16)|((uint32_t)c.g<<8)|c.b;
-        case 7:{int r=QCOMP(c.r,3,ds->r_err),g=QCOMP(c.g,3,ds->g_err),b=QCOMP(c.b,2,ds->b_err);return((uint32_t)r<<5)|((uint32_t)g<<2)|(uint32_t)b;}
+        case 7:{int r=QCOMP(c.r,3,dstate->r_err),g=QCOMP(c.g,3,dstate->g_err),b=QCOMP(c.b,2,dstate->b_err);return((uint32_t)r<<5)|((uint32_t)g<<2)|(uint32_t)b;}
         case 8:return(c.r*77+c.g*150+c.b*29)>>8;
-        case 15:{int r=QCOMP(c.r,4,ds->r_err),g=QCOMP(c.g,4,ds->g_err),b=QCOMP(c.b,4,ds->b_err);return((uint32_t)(c.a>>4)<<12)|((uint32_t)r<<8)|((uint32_t)g<<4)|(uint32_t)b;}
+        case 15:{int r=QCOMP(c.r,4,dstate->r_err),g=QCOMP(c.g,4,dstate->g_err),b=QCOMP(c.b,4,dstate->b_err);return((uint32_t)(c.a>>4)<<12)|((uint32_t)r<<8)|((uint32_t)g<<4)|(uint32_t)b;}
         default:return 0;
     }
 #undef QCOMP
