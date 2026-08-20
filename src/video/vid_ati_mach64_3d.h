@@ -7,8 +7,6 @@
 #ifndef VID_ATI_MACH64_3D_H
 #define VID_ATI_MACH64_3D_H
 
-#include <stddef.h>
-
 #include "vid_ati_mach64.h"
 
 void mach64_3d_attach(mach64_t *mach64);

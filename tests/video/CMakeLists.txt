@@ -1,0 +1,18 @@
+add_executable(mach64_keyed_blit_test
+    mach64_keyed_blit_test.c
+    ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_accel.c
+)
+
+target_compile_definitions(mach64_keyed_blit_test PRIVATE
+    mach64_queue=mach64_queue_legacy
+)
+
+target_include_directories(mach64_keyed_blit_test PRIVATE
+    ${PROJECT_BINARY_DIR}/src/include
+    ${PROJECT_SOURCE_DIR}/src/include
+    ${PROJECT_SOURCE_DIR}/src/cpu
+    ${PROJECT_SOURCE_DIR}/src/codegen
+    ${PROJECT_SOURCE_DIR}/src/codegen_new
+)
+
+add_test(NAME mach64_keyed_blit COMMAND mach64_keyed_blit_test)

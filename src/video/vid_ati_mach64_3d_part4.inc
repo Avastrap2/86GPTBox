@@ -2,6 +2,9 @@
 #define R3D_GTB_FIFO_VISIBLE 48
 #define R3D_DST_Y_X_ALIAS 0x134
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+#include <stddef.h>
+
 typedef struct r3d_2d_key_probe_t {
     mach64_t *mach64;
     uint32_t src_raw;
@@ -15,6 +18,7 @@ typedef struct r3d_2d_key_probe_t {
 } r3d_2d_key_probe_t;
 
 static r3d_2d_key_probe_t r3d_2d_key_probe[MACH64_3D_CONTEXTS];
+#endif
 
 static int
 r3d_unique_register(uint32_t b)
@@ -146,6 +150,7 @@ r3d_sync_legacy_fifo(mach64_3d_ctx_t *ctx)
     ctx->legacy_fifo_pending = 0;
 }
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 static uint32_t
 r3d_read_vram32(mach64_t *m, uint32_t addr)
 {
@@ -332,6 +337,7 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
 
     probe->pending = 0;
 }
+#endif
 
 int
 mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
@@ -340,8 +346,10 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     if (!ctx || !v)
         return 0;
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     /* Finish a pending keyed BLT before this later GUI access can disturb it. */
     r3d_finish_2d_color_key_probe(ctx);
+#endif
 
     a &= 0x3ff;
     uint32_t b = a & ~3u;
@@ -403,8 +411,10 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     if (!ctx)
         return 0;
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     /* Finish a pending keyed BLT before this later GUI write is queued. */
     r3d_finish_2d_color_key_probe(ctx);
+#endif
 
     a &= 0x3ff;
     uint32_t b = a & ~3u;
@@ -463,6 +473,7 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         return 1;
     }
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     /*
      * Keep a diagnostic shadow of the legacy 2D color-compare registers.
      * They still fall through to the established FIFO implementation.
@@ -486,6 +497,7 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         ctx->legacy_fifo_pending = 1;
         return 0;
     }
+#endif
 
     if (!r3d_unique_register(b)) {
         ctx->legacy_fifo_pending = 1;
