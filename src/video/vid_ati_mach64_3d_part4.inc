@@ -132,6 +132,63 @@ r3d_sync_legacy_fifo(mach64_3d_ctx_t *ctx)
     ctx->legacy_fifo_pending = 0;
 }
 
+/*
+ * Source-color-key diagnostics for the legacy 2D engine.  The Rage II+
+ * DirectDraw test programs CLR_CMP_* immediately before DST_HEIGHT_WIDTH,
+ * but the regular access trace cannot show the actual pixel value reaching
+ * the comparator.  Mirror the compare registers in ctx->regs, drain the
+ * preceding legacy FIFO only for a keyed rectangle trigger, and sample the
+ * first 32-bpp source pixel directly from VRAM.
+ *
+ * K records use pseudo addresses so they cannot be confused with real MMIO:
+ *   F300 = raw first source pixel
+ *   F304 = CLR_CMP_CLR
+ *   F308 = CLR_CMP_MASK
+ *   F30C = CLR_CMP_CNTL
+ */
+static void
+r3d_trace_2d_color_key_source(mach64_3d_ctx_t *ctx)
+{
+    mach64_t *m;
+    uint32_t src_x;
+    uint32_t src_y;
+    uint32_t src_pitch;
+    uint32_t src_offset;
+    uint32_t src_addr;
+    uint32_t src_raw;
+    uint32_t mask;
+    uint8_t *vram;
+
+    if (!ctx || !(m = ctx->mach64) || ((m->clr_cmp_cntl & 7) == 0))
+        return;
+
+    /* Current DirectDraw reproduction is 32-bpp source -> 32-bpp destination. */
+    if (((m->dp_pix_width >> 8) & 7) != 6)
+        return;
+
+    src_x = (m->src_y_x >> 16) & 0x0fff;
+    src_y = m->src_y_x & 0x3fff;
+    src_pitch = (m->src_off_pitch >> 22) << 3;
+    src_offset = (m->src_off_pitch & 0xfffff) << 3;
+    src_addr = src_offset + ((src_y * src_pitch + src_x) << 2);
+
+    mask = m->vram_mask;
+    vram = m->svga.vram;
+    src_raw = (uint32_t) vram[src_addr & mask] |
+              ((uint32_t) vram[(src_addr + 1) & mask] << 8) |
+              ((uint32_t) vram[(src_addr + 2) & mask] << 16) |
+              ((uint32_t) vram[(src_addr + 3) & mask] << 24);
+
+    r3d_trace_record(m, 'K', 4, 0xF300, src_raw, 1);
+    r3d_trace_record(m, 'K', 4, 0xF304, m->clr_cmp_clr, 1);
+    r3d_trace_record(m, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
+    r3d_trace_record(m, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF300, src_raw, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF304, m->clr_cmp_clr, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
+}
+
 int
 mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
 {
@@ -254,6 +311,30 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
             r3d_draw_trapezoid(ctx, cmd);
         }
         return 1;
+    }
+
+    /*
+     * Keep a diagnostic shadow of the legacy 2D color-compare registers.
+     * They still fall through to the established FIFO implementation.
+     */
+    if ((b == 0x300) || (b == 0x304) || (b == 0x308)) {
+        ctx->regs[b >> 2] = r3d_merge_write(ctx->regs[b >> 2], a, v, type);
+        ctx->legacy_fifo_pending = 1;
+        return 0;
+    }
+
+    /*
+     * A completed DST_HEIGHT_WIDTH dword starts the DirectDraw rectangle in
+     * the current reproduction.  If the queued compare shadow says color key
+     * is enabled, drain only the preceding FIFO entries, sample the source,
+     * then let this trigger write fall through normally.
+     */
+    if ((b == 0x118) && r3d_write_complete(a, type) &&
+        (ctx->regs[0x308 >> 2] & 7)) {
+        r3d_sync_legacy_fifo(ctx);
+        r3d_trace_2d_color_key_source(ctx);
+        ctx->legacy_fifo_pending = 1;
+        return 0;
     }
 
     if (!r3d_unique_register(b)) {
