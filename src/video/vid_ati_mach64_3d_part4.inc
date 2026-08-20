@@ -5,7 +5,10 @@
 typedef struct r3d_2d_key_probe_t {
     mach64_t *mach64;
     uint32_t src_raw;
+    uint32_t src_center_before;
     uint32_t dst_before;
+    uint32_t dst_center_before;
+    uint32_t src_center_addr;
     uint32_t dst_addr;
     uint32_t dst_center_addr;
     uint8_t pending;
@@ -189,12 +192,15 @@ r3d_get_2d_key_probe(mach64_3d_ctx_t *ctx)
  *   F308 = CLR_CMP_MASK
  *   F30C = CLR_CMP_CNTL
  *   F310 = raw first destination pixel before blit
+ *   F314 = raw center source pixel before blit
+ *   F318 = raw center destination pixel before blit
  *   F320 = raw first destination pixel after blit
  *   F324 = raw center destination pixel after blit
  *   F328 = accelerator snapshot CLR_CMP_CLR
  *   F32C = accelerator snapshot CLR_CMP_MASK
  *   F330 = accelerator snapshot compare source/function
  *   F334 = comparator result predicted from the snapshot (0/1)
+ *   F338 = raw center source pixel after blit
  */
 static void
 r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
@@ -237,11 +243,15 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     width = (m->dst_height_width >> 16) & 0x1fff;
     height = m->dst_height_width & 0x1fff;
 
+    probe->src_center_addr = src_offset +
+        ((((src_y + (height >> 1)) * src_pitch) + src_x + (width >> 1)) << 2);
     probe->src_raw = r3d_read_vram32(m, src_addr);
+    probe->src_center_before = r3d_read_vram32(m, probe->src_center_addr);
     probe->dst_addr = dst_offset + ((dst_y * dst_pitch + dst_x) << 2);
     probe->dst_center_addr = dst_offset +
         ((((dst_y + (height >> 1)) * dst_pitch) + dst_x + (width >> 1)) << 2);
     probe->dst_before = r3d_read_vram32(m, probe->dst_addr);
+    probe->dst_center_before = r3d_read_vram32(m, probe->dst_center_addr);
     probe->pending = 1;
 
     r3d_trace_record(m, 'K', 4, 0xF300, probe->src_raw, 1);
@@ -249,11 +259,15 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     r3d_trace_record(m, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
     r3d_trace_record(m, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
     r3d_trace_record(m, 'K', 4, 0xF310, probe->dst_before, 1);
+    r3d_trace_record(m, 'K', 4, 0xF314, probe->src_center_before, 1);
+    r3d_trace_record(m, 'K', 4, 0xF318, probe->dst_center_before, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF300, probe->src_raw, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF304, m->clr_cmp_clr, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF310, probe->dst_before, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF314, probe->src_center_before, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF318, probe->dst_center_before, 1);
 }
 
 static void
@@ -263,6 +277,7 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     r3d_2d_key_probe_t *probe;
     uint32_t dst_after;
     uint32_t dst_center_after;
+    uint32_t src_center_after;
     uint32_t accel_cntl;
     uint32_t cmp_input;
     uint32_t cmp_result = 0;
@@ -279,6 +294,7 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
 
     dst_after = r3d_read_vram32(m, probe->dst_addr);
     dst_center_after = r3d_read_vram32(m, probe->dst_center_addr);
+    src_center_after = r3d_read_vram32(m, probe->src_center_addr);
     accel_cntl = ((m->accel.clr_cmp_src ? 1u : 0u) << 24) |
                  ((uint32_t) m->accel.clr_cmp_fn & 7u);
     cmp_input = m->accel.clr_cmp_src ? probe->src_raw : probe->dst_before;
@@ -305,12 +321,14 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     r3d_trace_record(m, 'K', 4, 0xF32C, m->accel.clr_cmp_mask, 1);
     r3d_trace_record(m, 'K', 4, 0xF330, accel_cntl, 1);
     r3d_trace_record(m, 'K', 4, 0xF334, cmp_result, 1);
+    r3d_trace_record(m, 'K', 4, 0xF338, src_center_after, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF320, dst_after, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF324, dst_center_after, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF328, m->accel.clr_cmp_clr, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF32C, m->accel.clr_cmp_mask, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF330, accel_cntl, 1);
     r3d_debug_access(ctx, 'K', 4, 0xF334, cmp_result, 1);
+    r3d_debug_access(ctx, 'K', 4, 0xF338, src_center_after, 1);
 
     probe->pending = 0;
 }
