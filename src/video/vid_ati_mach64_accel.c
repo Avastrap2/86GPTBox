@@ -913,10 +913,10 @@ mach64_blit_calc_cmp_clr(mach64_t* mach64, uint32_t src_dat, uint32_t dest_dat)
         case 1: /*TRUE*/
             cmp_clr = 1;
             break;
-        case 4: /*DST_CLR != CLR_CMP_CLR*/
+        case 4: /*SELECTED_CLR != CLR_CMP_CLR*/
             cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) != mach64->accel.clr_cmp_clr;
             break;
-        case 5: /*DST_CLR == CLR_CMP_CLR*/
+        case 5: /*SELECTED_CLR == CLR_CMP_CLR*/
             cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) == mach64->accel.clr_cmp_clr;
             break;
         default:

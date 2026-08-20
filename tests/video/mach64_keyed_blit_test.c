@@ -270,12 +270,87 @@ run_destination_compare(const char *name, uint32_t function,
     return failures;
 }
 
+static int
+run_source_not_equal_masked(void)
+{
+    const uint32_t matching_source        = 0xa50000ff;
+    const uint32_t nonmatching_source     = 0x00ff0000;
+    const uint32_t background             = 0x000000ff;
+    mach64_t     *mach64                  = create_machine();
+    int           failures                = 0;
+
+    if (!mach64)
+        return 1;
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t src_addr = SRC_BYTE_OFFSET +
+                                      ((y * SRC_PITCH_PIXELS + x) * 4);
+            const uint32_t dst_addr = ((DST_Y + y) * DST_PITCH_PIXELS +
+                                       DST_X + x) * 4;
+
+            *pixel32(mach64, src_addr) =
+                (x < WIDTH / 2) ? matching_source : nonmatching_source;
+            *pixel32(mach64, dst_addr) = background;
+        }
+    }
+
+    run_fifo_blit(mach64, 0x01000004, 0x00ffffff, 0x000000ff);
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t src_addr = SRC_BYTE_OFFSET +
+                                      ((y * SRC_PITCH_PIXELS + x) * 4);
+            const uint32_t dst_addr = ((DST_Y + y) * DST_PITCH_PIXELS +
+                                       DST_X + x) * 4;
+            const uint32_t expected_src =
+                (x < WIDTH / 2) ? matching_source : nonmatching_source;
+            const uint32_t expected_dst =
+                (x < WIDTH / 2) ? matching_source : background;
+            const uint32_t actual_src = *pixel32(mach64, src_addr);
+            const uint32_t actual_dst = *pixel32(mach64, dst_addr);
+
+            if ((actual_src != expected_src || actual_dst != expected_dst) &&
+                failures++ < 8) {
+                fprintf(stderr,
+                        "source_not_equal_masked mismatch at %d,%d: "
+                        "src %08x/%08x, dst %08x/%08x\n",
+                        x, y, actual_src, expected_src, actual_dst, expected_dst);
+            }
+        }
+    }
+
+    if (mach64->accel.busy || mach64->fifo_read_idx != mach64->fifo_write_idx)
+        failures++;
+
+    printf("source_not_equal_masked: match=%08x nonmatch=%08x "
+           "failures=%d busy=%d fifo=%d\n",
+           *pixel32(mach64, (DST_Y * DST_PITCH_PIXELS + DST_X) * 4),
+           *pixel32(mach64,
+                    (DST_Y * DST_PITCH_PIXELS + DST_X + WIDTH / 2) * 4),
+           failures,
+           mach64->accel.busy,
+           mach64->fifo_write_idx - mach64->fifo_read_idx);
+
+    destroy_machine(mach64);
+    return failures;
+}
+
 int
 main(void)
 {
     int failures = 0;
 
     failures += run_source_equal();
+    failures += run_source_not_equal_masked();
+    failures += run_destination_compare("compare_false",
+                                        0x00000000, 0xffffffff,
+                                        0x000000ff, 0x000000ff,
+                                        0x0000ff00, 0x0000ff00);
+    failures += run_destination_compare("compare_true",
+                                        0x00000001, 0xffffffff,
+                                        0x000000ff, 0x000000ff,
+                                        0x000000ff, 0x00ff0000);
     failures += run_destination_compare("destination_equal",
                                         0x00000005, 0xffffffff,
                                         0x000000ff, 0x000000ff,
