@@ -158,9 +158,10 @@ r3d_read_vram_pixel(mach64_t *m, uint32_t addr, uint8_t pixel_shift)
     uint32_t mask = m->vram_mask;
     uint8_t *vram = m->svga.vram;
 
-    uint32_t value = (uint32_t) vram[addr & mask] |
-                     ((uint32_t) vram[(addr + 1) & mask] << 8);
+    uint32_t value = (uint32_t) vram[addr & mask];
 
+    if (pixel_shift >= 1)
+        value |= (uint32_t) vram[(addr + 1) & mask] << 8;
     if (pixel_shift == 2) {
         value |= ((uint32_t) vram[(addr + 2) & mask] << 16) |
                  ((uint32_t) vram[(addr + 3) & mask] << 24);
@@ -250,6 +251,9 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
         return;
 
     switch (src_format) {
+        case 2:
+            pixel_shift = 0;
+            break;
         case 3:
         case 4:
             pixel_shift = 1;
