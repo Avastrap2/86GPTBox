@@ -129,13 +129,26 @@ mach64rage2p_overlay_key_cntl_legacy(uint32_t key_cntl)
 }
 
 /*
- * The legacy renderer expands RGB565 overlay samples to RGB888 before running
- * its video-key comparison.  GTB hardware compares the source stream in its
- * native format, and ATI's DirectDraw driver consequently programs RGB565 key
- * colour/mask values (for example 0x07e0 for green).  Expand those values with
- * exactly the same bit replication as the renderer so the comparison remains
- * equivalent without changing guest-visible register contents.
+ * The legacy renderer expands packed 15/16-bpp overlay samples to RGB888
+ * before running its video-key comparison.  GTB hardware compares the source
+ * stream in its native format, and ATI's DirectDraw driver programs key
+ * colour/mask values in that same native format.  Convert the key temporarily
+ * with the exact bit replication used by the renderer so both sides of the
+ * software comparison are in the same representation.
  */
+static uint32_t
+mach64rage2p_rgb555_to_rgb888(uint16_t pixel)
+{
+    uint32_t r = (pixel >> 10) & 0x1fu;
+    uint32_t g = (pixel >> 5) & 0x1fu;
+    uint32_t b = pixel & 0x1fu;
+
+    r = (r << 3) | (r >> 2);
+    g = (g << 3) | (g >> 2);
+    b = (b << 3) | (b >> 2);
+    return (r << 16) | (g << 8) | b;
+}
+
 static uint32_t
 mach64rage2p_rgb565_to_rgb888(uint16_t pixel)
 {
@@ -147,6 +160,18 @@ mach64rage2p_rgb565_to_rgb888(uint16_t pixel)
     g = (g << 2) | (g >> 4);
     b = (b << 3) | (b >> 2);
     return (r << 16) | (g << 8) | b;
+}
+
+static uint32_t
+mach64rage2p_rgb555_mask_to_rgb888(uint16_t mask)
+{
+    uint32_t expanded = 0;
+
+    for (unsigned bit = 0; bit < 15; bit++) {
+        if (mask & (1u << bit))
+            expanded |= mach64rage2p_rgb555_to_rgb888((uint16_t) (1u << bit));
+    }
+    return expanded;
 }
 
 static uint32_t
@@ -180,11 +205,23 @@ mach64rage2p_overlay_draw(svga_t *svga, int displine)
     video_key_fn = key_cntl & 0x7u;
 
     mach64->overlay_key_cntl = mach64rage2p_overlay_key_cntl_legacy(key_cntl);
-    if (mach64->scaler_format == 0x4 && (video_key_fn == 4 || video_key_fn == 5)) {
-        mach64->overlay_video_key_clr =
-            mach64rage2p_rgb565_to_rgb888((uint16_t) video_key_clr);
-        mach64->overlay_video_key_msk =
-            mach64rage2p_rgb565_mask_to_rgb888((uint16_t) video_key_msk);
+    if (video_key_fn == 4 || video_key_fn == 5) {
+        switch (mach64->scaler_format) {
+            case 0x3:
+                mach64->overlay_video_key_clr =
+                    mach64rage2p_rgb555_to_rgb888((uint16_t) video_key_clr);
+                mach64->overlay_video_key_msk =
+                    mach64rage2p_rgb555_mask_to_rgb888((uint16_t) video_key_msk);
+                break;
+            case 0x4:
+                mach64->overlay_video_key_clr =
+                    mach64rage2p_rgb565_to_rgb888((uint16_t) video_key_clr);
+                mach64->overlay_video_key_msk =
+                    mach64rage2p_rgb565_mask_to_rgb888((uint16_t) video_key_msk);
+                break;
+            default:
+                break;
+        }
     }
 
     state->legacy_overlay_draw(svga, displine);
