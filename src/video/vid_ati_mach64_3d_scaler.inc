@@ -118,8 +118,6 @@ r3d_scaler_debug_dump(mach64_t *m)
     if (slot < 0)
         return;
     state = &r3d_scaler_debug_states[slot];
-    if (!state->seq)
-        return;
 
     fp = fopen("rage2p_scaler_debug.log", "w");
     if (!fp) {
