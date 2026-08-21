@@ -71,6 +71,12 @@ pixel32(mach64_t *mach64, uint32_t byte_offset)
     return (uint32_t *) &mach64->svga.vram[byte_offset & mach64->vram_mask];
 }
 
+static uint8_t *
+pixel8(mach64_t *mach64, uint32_t byte_offset)
+{
+    return &mach64->svga.vram[byte_offset & mach64->vram_mask];
+}
+
 static uint16_t *
 pixel16(mach64_t *mach64, uint32_t byte_offset)
 {
@@ -123,13 +129,14 @@ destroy_machine(mach64_t *mach64)
 }
 
 static void
-run_fifo_blit(mach64_t *mach64, uint32_t compare_control,
+run_fifo_blit(mach64_t *mach64, uint32_t pixel_width,
+              uint32_t compare_control,
               uint32_t compare_mask, uint32_t compare_color)
 {
     /* Register sequence captured from the 640x480x32 DirectDraw test. */
     mach64_queue(mach64, 0x130, 0x00000003, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x2c8, 0xffffffff, FIFO_WRITE_DWORD);
-    mach64_queue(mach64, 0x2d0, 0x60060606, FIFO_WRITE_DWORD);
+    mach64_queue(mach64, 0x2d0, pixel_width, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x2a8, 0x027f0000, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x2b4, 0x01df0000, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x180, 0x04025e40, FIFO_WRITE_DWORD);
@@ -255,6 +262,72 @@ run_source_equal_16(void)
 }
 
 static int
+run_source_equal_8(void)
+{
+    const uint8_t transparent = 5;
+    const uint8_t opaque      = 2;
+    const uint8_t background  = 4;
+    mach64_t    *mach64       = create_machine();
+    int          failures     = 0;
+
+    if (!mach64)
+        return 1;
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t src_addr = SRC_BYTE_OFFSET +
+                                      y * SRC_PITCH_PIXELS + x;
+            const uint32_t dst_addr = (DST_Y + y) * DST_PITCH_PIXELS +
+                                      DST_X + x;
+
+            *pixel8(mach64, src_addr) =
+                (x >= 32 && x < 96 && y >= 32 && y < 96) ? opaque : transparent;
+            *pixel8(mach64, dst_addr) = background;
+        }
+    }
+
+    run_fifo_blit(mach64, 0x00020202, 0x01000005,
+                  0xffffffff, transparent);
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t src_addr = SRC_BYTE_OFFSET +
+                                      y * SRC_PITCH_PIXELS + x;
+            const uint32_t dst_addr = (DST_Y + y) * DST_PITCH_PIXELS +
+                                      DST_X + x;
+            const uint8_t expected_src =
+                (x >= 32 && x < 96 && y >= 32 && y < 96) ? opaque : transparent;
+            const uint8_t expected_dst =
+                (x >= 32 && x < 96 && y >= 32 && y < 96) ? opaque : background;
+            const uint8_t actual_src = *pixel8(mach64, src_addr);
+            const uint8_t actual_dst = *pixel8(mach64, dst_addr);
+
+            if ((actual_src != expected_src || actual_dst != expected_dst) &&
+                failures++ < 8) {
+                fprintf(stderr,
+                        "source_equal_8 mismatch at %d,%d: "
+                        "src %02x/%02x, dst %02x/%02x\n",
+                        x, y, actual_src, expected_src, actual_dst, expected_dst);
+            }
+        }
+    }
+
+    if (mach64->accel.busy || mach64->fifo_read_idx != mach64->fifo_write_idx)
+        failures++;
+
+    printf("source_equal_8: first=%02x center=%02x failures=%d busy=%d fifo=%d\n",
+           *pixel8(mach64, DST_Y * DST_PITCH_PIXELS + DST_X),
+           *pixel8(mach64,
+                   (DST_Y + 32) * DST_PITCH_PIXELS + DST_X + 32),
+           failures,
+           mach64->accel.busy,
+           mach64->fifo_write_idx - mach64->fifo_read_idx);
+
+    destroy_machine(mach64);
+    return failures;
+}
+
+static int
 run_source_equal(void)
 {
     const uint32_t transparent = 0x00ff00ff;
@@ -279,7 +352,8 @@ run_source_equal(void)
         }
     }
 
-    run_fifo_blit(mach64, 0x01000005, 0xffffffff, transparent);
+    run_fifo_blit(mach64, 0x60060606, 0x01000005,
+                  0xffffffff, transparent);
 
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
@@ -346,7 +420,7 @@ run_destination_compare(const char *name, uint32_t function,
         }
     }
 
-    run_fifo_blit(mach64, function, mask, compare_color);
+    run_fifo_blit(mach64, 0x60060606, function, mask, compare_color);
 
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
@@ -404,7 +478,8 @@ run_source_not_equal_masked(void)
         }
     }
 
-    run_fifo_blit(mach64, 0x01000004, 0x00ffffff, 0x000000ff);
+    run_fifo_blit(mach64, 0x60060606, 0x01000004,
+                  0x00ffffff, 0x000000ff);
 
     for (int y = 0; y < HEIGHT; y++) {
         for (int x = 0; x < WIDTH; x++) {
@@ -451,6 +526,7 @@ main(void)
     int failures = 0;
 
     failures += run_source_equal();
+    failures += run_source_equal_8();
     failures += run_source_equal_16();
     failures += run_source_not_equal_masked();
     failures += run_destination_compare("compare_false",
