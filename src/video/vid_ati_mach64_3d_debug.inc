@@ -16,6 +16,9 @@
 #define R3D_DEBUG_DRAWS        8192
 #define R3D_DEBUG_TEX_DRAWS    4096
 #define R3D_DEBUG_SYNCS        8192
+#define R3D_DEBUG_PALETTE_WRITES 4096
+#define R3D_DEBUG_TEX_PALETTE_INDEX 0x340
+#define R3D_DEBUG_TEX_PALETTE_DATA  0x37c
 
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 #define R3D_DEBUG_KEY_FIRST  0xF300
@@ -133,6 +136,11 @@ typedef struct r3d_debug_sync_t {
     uint32_t fifo_after;
 } r3d_debug_sync_t;
 
+typedef struct r3d_debug_palette_write_t {
+    r3d_debug_access_t index_candidate;
+    r3d_debug_access_t data;
+} r3d_debug_palette_write_t;
+
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 typedef struct r3d_debug_key_probe_t {
     uint64_t seq;
@@ -148,6 +156,7 @@ typedef struct r3d_debug_state_t {
     uint64_t draw_seq;
     uint64_t tex_draw_seq;
     uint64_t sync_seq;
+    uint64_t palette_write_seq;
     uint64_t total_candidate_pixels;
     uint64_t total_drawn_pixels;
     uint64_t total_alpha_rejects;
@@ -165,6 +174,9 @@ typedef struct r3d_debug_state_t {
 #endif
     r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
     r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
+    r3d_debug_access_t palette_index_candidate;
+    r3d_debug_palette_write_t palette_writes_first[R3D_DEBUG_PALETTE_WRITES];
+    r3d_debug_palette_write_t palette_writes_last[R3D_DEBUG_PALETTE_WRITES];
     r3d_debug_draw_t draws[R3D_DEBUG_DRAWS];
     /*
      * Textured HAL draws must survive later RGB/shading activity.  The normal
@@ -238,6 +250,19 @@ r3d_debug_access(mach64_3d_ctx_t *ctx, char op, unsigned width,
     if (e.seq <= R3D_DEBUG_ACCESS_FIRST)
         s->access_first[e.seq - 1] = e;
     s->access_last[(e.seq - 1) % R3D_DEBUG_ACCESS_LAST] = e;
+    if ((op == 'W') && ((addr & ~3u) == R3D_DEBUG_TEX_PALETTE_INDEX))
+        s->palette_index_candidate = e;
+    if ((op == 'W') && ((addr & ~3u) == R3D_DEBUG_TEX_PALETTE_DATA)) {
+        uint64_t seq = ++s->palette_write_seq;
+        r3d_debug_palette_write_t p;
+
+        memset(&p, 0, sizeof(p));
+        p.index_candidate = s->palette_index_candidate;
+        p.data = e;
+        if (seq <= R3D_DEBUG_PALETTE_WRITES)
+            s->palette_writes_first[seq - 1] = p;
+        s->palette_writes_last[(seq - 1) % R3D_DEBUG_PALETTE_WRITES] = p;
+    }
     if (fifo_entries > s->max_fifo_entries)
         s->max_fifo_entries = fifo_entries;
 }
@@ -467,6 +492,9 @@ r3d_debug_dump(mach64_t *m)
     uint64_t tex_draw_start;
     uint64_t sync_count;
     uint64_t sync_start;
+    uint64_t palette_first_count;
+    uint64_t palette_last_count;
+    uint64_t palette_last_start;
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     uint64_t key_probe_count;
     uint64_t key_probe_start;
@@ -481,7 +509,7 @@ r3d_debug_dump(mach64_t *m)
         return;
     }
 
-    fprintf(fp, "# Rage II+ complete 3D diagnostic trace v3\n");
+    fprintf(fp, "# Rage II+ complete 3D diagnostic trace v4\n");
     fprintf(fp, "# access=%llu draw=%llu tex_draw=%llu sync=%llu max_fifo=%u\n",
             (unsigned long long)s->access_seq,
             (unsigned long long)s->draw_seq,
@@ -507,6 +535,51 @@ r3d_debug_dump(mach64_t *m)
             (unsigned)m->fifo_read_idx, (unsigned)m->fifo_write_idx,
             (unsigned)(m->fifo_write_idx - m->fifo_read_idx),
             (int)m->blitter_busy, m->accel.busy);
+
+    fprintf(fp, "\n[texture_palette_writes_first]\n");
+    fprintf(fp, "# retained_first=%llu total=%llu\n",
+            (unsigned long long)(s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                                 s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES),
+            (unsigned long long)s->palette_write_seq);
+    fprintf(fp, "# data_seq data_access data_addr data_width data_value "
+                "index_access index_addr index_width index_value distance\n");
+    palette_first_count = s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                          s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES;
+    for (uint64_t i = 0; i < palette_first_count; i++) {
+        const r3d_debug_palette_write_t *p = &s->palette_writes_first[i];
+        fprintf(fp, "%010llu %010llu %04X %u %08X %010llu %04X %u %08X %llu\n",
+                (unsigned long long)(i + 1),
+                (unsigned long long)p->data.seq, p->data.addr,
+                (unsigned)p->data.width, p->data.value,
+                (unsigned long long)p->index_candidate.seq,
+                p->index_candidate.addr, (unsigned)p->index_candidate.width,
+                p->index_candidate.value,
+                (unsigned long long)(p->index_candidate.seq ?
+                                     p->data.seq - p->index_candidate.seq : 0));
+    }
+
+    fprintf(fp, "\n[texture_palette_writes_last]\n");
+    palette_last_count = s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                         s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES;
+    palette_last_start = s->palette_write_seq - palette_last_count + 1;
+    fprintf(fp, "# retained_last=%llu total=%llu\n",
+            (unsigned long long)palette_last_count,
+            (unsigned long long)s->palette_write_seq);
+    fprintf(fp, "# data_seq data_access data_addr data_width data_value "
+                "index_access index_addr index_width index_value distance\n");
+    for (uint64_t seq = palette_last_start; seq <= s->palette_write_seq; seq++) {
+        const r3d_debug_palette_write_t *p =
+            &s->palette_writes_last[(seq - 1) % R3D_DEBUG_PALETTE_WRITES];
+        fprintf(fp, "%010llu %010llu %04X %u %08X %010llu %04X %u %08X %llu\n",
+                (unsigned long long)seq,
+                (unsigned long long)p->data.seq, p->data.addr,
+                (unsigned)p->data.width, p->data.value,
+                (unsigned long long)p->index_candidate.seq,
+                p->index_candidate.addr, (unsigned)p->index_candidate.width,
+                p->index_candidate.value,
+                (unsigned long long)(p->index_candidate.seq ?
+                                     p->data.seq - p->index_candidate.seq : 0));
+    }
 
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     fprintf(fp, "\n[keyed_blt_last]\n");
