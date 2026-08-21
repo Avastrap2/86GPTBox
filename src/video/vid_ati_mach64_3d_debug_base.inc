@@ -1,0 +1,984 @@
+/*
+ * Rage II+ 3D diagnostic trace.
+ *
+ * Keep this separate from rage2p_trace.log: the latter records the last guest
+ * register accesses, while this file retains the information needed to explain
+ * a slow/black Direct3D frame without logging every rasterized pixel.  Per-pixel
+ * file I/O would change the timing we are trying to diagnose, so we record exact
+ * draw bounds/counters and FIFO wait durations in memory and dump on detach.
+ *
+ * The interpolation snapshot is intentionally captured at DRAW_TRAP entry,
+ * before the software renderer mutates START/increment state.  This lets a
+ * captured Win9x HAL command be replayed offline against the GT/GTB equations.
+ */
+#define R3D_DEBUG_ACCESS_FIRST 4096
+#define R3D_DEBUG_ACCESS_LAST  32768
+#define R3D_DEBUG_DRAWS        8192
+#define R3D_DEBUG_TEX_DRAWS    4096
+#define R3D_DEBUG_SYNCS        8192
+#define R3D_DEBUG_PALETTE_WRITES 4096
+#define R3D_DEBUG_TEX_PALETTE_INDEX 0x340
+#define R3D_DEBUG_TEX_PALETTE_DATA  0x37c
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+#define R3D_DEBUG_KEY_FIRST  0xF300
+#define R3D_DEBUG_KEY_LAST   0xF338
+#define R3D_DEBUG_KEY_VALUES 15
+#define R3D_DEBUG_KEY_PROBES 256
+#endif
+
+typedef struct r3d_debug_access_t {
+    uint64_t seq;
+    uint32_t addr;
+    uint32_t value;
+    uint32_t fifo_entries;
+    uint32_t dst_cntl;
+    uint32_t dp_pix_width;
+    uint32_t scale_3d_cntl;
+    uint8_t op;
+    uint8_t width;
+    uint8_t claimed;
+} r3d_debug_access_t;
+
+typedef struct r3d_debug_draw_t {
+    uint64_t seq;
+    uint64_t start_tick;
+    uint64_t end_tick;
+    uint64_t candidate_pixels;
+    uint64_t drawn_pixels;
+    uint64_t alpha_rejects;
+    uint64_t z_rejects;
+    uint64_t texture_samples;
+    uint64_t nonzero_source_pixels;
+    uint32_t source_rgb_or;
+    uint8_t source_r_max;
+    uint8_t source_g_max;
+    uint8_t source_b_max;
+
+    uint32_t cmd;
+    uint32_t ctl;
+    uint32_t dst_cntl;
+    uint32_t dst_y_x;
+    uint32_t dst_off_pitch;
+    uint32_t sc_left_right;
+    uint32_t sc_top_bottom;
+    uint32_t z_cntl;
+    uint32_t z_off_pitch;
+    uint32_t dp_pix_width;
+    uint32_t write_mask;
+    uint32_t dp_src;
+    uint32_t dp_mix;
+    uint32_t dp_frgd_clr;
+    uint32_t tex_size_pitch;
+    uint32_t tex_base;
+    uint32_t fifo_entries_begin;
+    uint32_t fifo_entries_end;
+
+    /* Raw edge state at DRAW_TRAP entry. */
+    uint32_t lead_bres_err;
+    uint32_t lead_bres_inc;
+    uint32_t lead_bres_dec;
+    uint32_t trail_bres_err;
+    uint32_t trail_bres_inc;
+    uint32_t trail_bres_dec;
+
+    /* Raw GT quadratic texture interpolator state at DRAW_TRAP entry. */
+    uint32_t s_x_inc2;
+    uint32_t s_y_inc2;
+    uint32_t s_xy_inc2;
+    uint32_t s_xinc_start;
+    uint32_t s_y_inc;
+    uint32_t s_start;
+    uint32_t t_x_inc2;
+    uint32_t t_y_inc2;
+    uint32_t t_xy_inc2;
+    uint32_t t_xinc_start;
+    uint32_t t_y_inc;
+    uint32_t t_start;
+
+    /* Raw colour/Z/alpha interpolator state at DRAW_TRAP entry. */
+    uint32_t red_x_inc;
+    uint32_t red_y_inc;
+    uint32_t red_start;
+    uint32_t green_x_inc;
+    uint32_t green_y_inc;
+    uint32_t green_start;
+    uint32_t blue_x_inc;
+    uint32_t blue_y_inc;
+    uint32_t blue_start;
+    uint32_t z_x_inc;
+    uint32_t z_y_inc;
+    uint32_t z_start;
+    uint32_t alpha_x_inc;
+    uint32_t alpha_y_inc;
+    uint32_t alpha_start;
+
+    int lead_begin;
+    int trail_begin;
+    int y_begin;
+    int lead_end;
+    int trail_end;
+    int y_end;
+    int left;
+    int right;
+    int top;
+    int bottom;
+    int pitch_pixels;
+    int length;
+    int dst_format;
+    int dst_bpp;
+    int tex_format;
+    int tex_bpp;
+    int fcn;
+    int alpha_fog;
+    int bilinear;
+    int z_enabled;
+    int z_write;
+} r3d_debug_draw_t;
+
+typedef struct r3d_debug_sync_t {
+    uint64_t seq;
+    uint64_t start_tick;
+    uint64_t end_tick;
+    uint32_t fifo_before;
+    uint32_t fifo_after;
+} r3d_debug_sync_t;
+
+typedef struct r3d_debug_palette_write_t {
+    r3d_debug_access_t index_candidate;
+    r3d_debug_access_t data;
+} r3d_debug_palette_write_t;
+
+#define R3D_DEBUG_RECTS 4096
+
+typedef struct r3d_debug_rect_t {
+    uint64_t seq;
+    uint32_t dst_off_pitch;
+    uint32_t dst_y_x;
+    uint32_t dst_height_width;
+    uint32_t dp_frgd_clr;
+    uint32_t dp_src;
+    uint32_t dp_mix;
+    uint32_t dst_offset;
+    uint32_t dst_pitch;
+    int dst_size;
+    int dst_x;
+    int dst_y;
+    int width;
+    int height;
+    uint32_t first_before;
+    uint32_t center_before;
+    uint32_t first_after;
+    uint32_t center_after;
+    int complete;
+} r3d_debug_rect_t;
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+typedef struct r3d_debug_key_probe_t {
+    uint64_t seq;
+    uint32_t values[R3D_DEBUG_KEY_VALUES];
+    uint16_t valid;
+    uint8_t complete;
+} r3d_debug_key_probe_t;
+#endif
+
+typedef struct r3d_debug_state_t {
+    mach64_t *mach64;
+    uint64_t access_seq;
+    uint64_t draw_seq;
+    uint64_t tex_draw_seq;
+    uint64_t sync_seq;
+    uint64_t palette_write_seq;
+    uint64_t rect_seq;
+    uint64_t active_rect_seq;
+    uint64_t total_candidate_pixels;
+    uint64_t total_drawn_pixels;
+    uint64_t total_alpha_rejects;
+    uint64_t total_z_rejects;
+    uint64_t total_texture_samples;
+    uint64_t total_draw_ticks;
+    uint64_t total_sync_ticks;
+    uint64_t max_draw_ticks;
+    uint64_t max_sync_ticks;
+    uint32_t max_fifo_entries;
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    uint64_t key_probe_seq;
+    r3d_debug_key_probe_t key_probes[R3D_DEBUG_KEY_PROBES];
+    r3d_debug_key_probe_t key_probe_nonzero;
+#endif
+    r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
+    r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
+    r3d_debug_access_t palette_index_candidate;
+    r3d_debug_palette_write_t palette_writes_first[R3D_DEBUG_PALETTE_WRITES];
+    r3d_debug_palette_write_t palette_writes_last[R3D_DEBUG_PALETTE_WRITES];
+    r3d_debug_rect_t rects[R3D_DEBUG_RECTS];
+    r3d_debug_draw_t draws[R3D_DEBUG_DRAWS];
+    /*
+     * Textured HAL draws must survive later RGB/shading activity.  The normal
+     * draw ring is intentionally a recent-history window and can therefore
+     * overwrite the exact S/T setup that produced an earlier bad HAL frame.
+     * Keep a second ring which is advanced only by FCN=Texture Mapping draws.
+     */
+    r3d_debug_draw_t tex_draws[R3D_DEBUG_TEX_DRAWS];
+    r3d_debug_sync_t syncs[R3D_DEBUG_SYNCS];
+} r3d_debug_state_t;
+
+static r3d_debug_state_t r3d_debug_states[MACH64_3D_CONTEXTS];
+
+static r3d_debug_state_t *
+r3d_debug_find(mach64_t *m, int create)
+{
+    r3d_debug_state_t *free_state = NULL;
+
+    if (!m)
+        return NULL;
+    for (unsigned i = 0; i < MACH64_3D_CONTEXTS; i++) {
+        if (r3d_debug_states[i].mach64 == m)
+            return &r3d_debug_states[i];
+        if (!r3d_debug_states[i].mach64 && !free_state)
+            free_state = &r3d_debug_states[i];
+    }
+    if (!create || !free_state)
+        return NULL;
+    memset(free_state, 0, sizeof(*free_state));
+    free_state->mach64 = m;
+    return free_state;
+}
+
+static void
+r3d_debug_reset(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 1);
+    if (!s)
+        return;
+    memset(s, 0, sizeof(*s));
+    s->mach64 = m;
+}
+
+static uint32_t
+r3d_debug_rect_pixel(mach64_t *m, const r3d_debug_rect_t *r, int x, int y)
+{
+    uint32_t index;
+
+    if (!m || !r || x < 0 || y < 0)
+        return 0;
+    index = r->dst_offset + (uint32_t)y * r->dst_pitch + (uint32_t)x;
+    switch (r->dst_size) {
+        case 0:
+            return m->svga.vram[index & m->vram_mask];
+        case 1:
+            return *(uint16_t *)&m->svga.vram[(index << 1) & m->vram_mask];
+        case 2:
+            return *(uint32_t *)&m->svga.vram[(index << 2) & m->vram_mask];
+        default:
+            return 0;
+    }
+}
+
+void
+mach64_3d_rect_debug_begin(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 0);
+    r3d_debug_rect_t *r;
+
+    if (!s)
+        return;
+    s->rect_seq++;
+    s->active_rect_seq = s->rect_seq;
+    r = &s->rects[(s->rect_seq - 1) % R3D_DEBUG_RECTS];
+    memset(r, 0, sizeof(*r));
+    r->seq = s->rect_seq;
+    r->dst_off_pitch = m->dst_off_pitch;
+    r->dst_y_x = m->dst_y_x;
+    r->dst_height_width = m->dst_height_width;
+    r->dp_frgd_clr = m->dp_frgd_clr;
+    r->dp_src = m->dp_src;
+    r->dp_mix = m->dp_mix;
+    r->dst_offset = m->accel.dst_offset;
+    r->dst_pitch = m->accel.dst_pitch;
+    r->dst_size = m->accel.dst_size;
+    r->dst_x = m->accel.dst_x_start;
+    r->dst_y = m->accel.dst_y_start;
+    r->width = m->accel.dst_width;
+    r->height = m->accel.dst_height;
+    r->first_before = r3d_debug_rect_pixel(m, r, r->dst_x, r->dst_y);
+    r->center_before = r3d_debug_rect_pixel(
+        m, r, r->dst_x + r->width / 2, r->dst_y + r->height / 2);
+}
+
+void
+mach64_3d_rect_debug_end(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 0);
+    r3d_debug_rect_t *r;
+
+    if (!s || !s->active_rect_seq)
+        return;
+    r = &s->rects[(s->active_rect_seq - 1) % R3D_DEBUG_RECTS];
+    if (r->seq != s->active_rect_seq)
+        return;
+    r->first_after = r3d_debug_rect_pixel(m, r, r->dst_x, r->dst_y);
+    r->center_after = r3d_debug_rect_pixel(
+        m, r, r->dst_x + r->width / 2, r->dst_y + r->height / 2);
+    r->complete = 1;
+    s->active_rect_seq = 0;
+}
+
+static void
+r3d_debug_access(mach64_3d_ctx_t *ctx, char op, unsigned width,
+                 uint32_t addr, uint32_t value, int claimed)
+{
+    r3d_debug_state_t *s;
+    r3d_debug_access_t e;
+    uint32_t fifo_entries;
+
+    if (!ctx || !ctx->mach64)
+        return;
+    s = r3d_debug_find(ctx->mach64, 1);
+    if (!s)
+        return;
+
+    fifo_entries = ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
+    memset(&e, 0, sizeof(e));
+    e.seq = ++s->access_seq;
+    e.addr = addr;
+    e.value = value;
+    e.fifo_entries = fifo_entries;
+    e.dst_cntl = ctx->mach64->dst_cntl;
+    e.dp_pix_width = ctx->mach64->dp_pix_width;
+    e.scale_3d_cntl = ctx->regs[R3D_SCALE_3D_CNTL >> 2];
+    e.op = (uint8_t) op;
+    e.width = (uint8_t) width;
+    e.claimed = claimed ? 1 : 0;
+
+    if (e.seq <= R3D_DEBUG_ACCESS_FIRST)
+        s->access_first[e.seq - 1] = e;
+    s->access_last[(e.seq - 1) % R3D_DEBUG_ACCESS_LAST] = e;
+    if ((op == 'W') && ((addr & ~3u) == R3D_DEBUG_TEX_PALETTE_INDEX))
+        s->palette_index_candidate = e;
+    if ((op == 'W') && ((addr & ~3u) == R3D_DEBUG_TEX_PALETTE_DATA)) {
+        uint64_t seq = ++s->palette_write_seq;
+        r3d_debug_palette_write_t p;
+
+        memset(&p, 0, sizeof(p));
+        p.index_candidate = s->palette_index_candidate;
+        p.data = e;
+        if (seq <= R3D_DEBUG_PALETTE_WRITES)
+            s->palette_writes_first[seq - 1] = p;
+        s->palette_writes_last[(seq - 1) % R3D_DEBUG_PALETTE_WRITES] = p;
+    }
+    if (fifo_entries > s->max_fifo_entries)
+        s->max_fifo_entries = fifo_entries;
+}
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+/*
+ * K accesses also live in the generic recent-history ring.  Preserve the
+ * probes separately so normal Windows shutdown traffic cannot overwrite the
+ * keyed BLT evidence before the diagnostic log is flushed.  GDI commonly
+ * emits hundreds of destination compares against zero during shutdown, so
+ * also retain the latest probe with a nonzero compare color.
+ */
+static void
+r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
+{
+    r3d_debug_state_t *s;
+    r3d_debug_key_probe_t *probe;
+    unsigned index;
+
+    if (!ctx || !ctx->mach64 || addr < R3D_DEBUG_KEY_FIRST ||
+        addr > R3D_DEBUG_KEY_LAST || ((addr - R3D_DEBUG_KEY_FIRST) & 3))
+        return;
+
+    s = r3d_debug_find(ctx->mach64, 1);
+    if (!s)
+        return;
+
+    if (addr == R3D_DEBUG_KEY_FIRST) {
+        uint64_t seq = ++s->key_probe_seq;
+        probe = &s->key_probes[(seq - 1) % R3D_DEBUG_KEY_PROBES];
+        memset(probe, 0, sizeof(*probe));
+        probe->seq = seq;
+    } else if (!s->key_probe_seq) {
+        return;
+    } else
+        probe = &s->key_probes[(s->key_probe_seq - 1) % R3D_DEBUG_KEY_PROBES];
+
+    index = (addr - R3D_DEBUG_KEY_FIRST) >> 2;
+    probe->values[index] = value;
+    probe->valid |= (uint16_t) (1u << index);
+    if (addr == R3D_DEBUG_KEY_LAST)
+        probe->complete = 1;
+    if ((probe->valid & (1u << 1)) && probe->values[1])
+        s->key_probe_nonzero = *probe;
+}
+#endif
+
+static void
+r3d_debug_sync(mach64_3d_ctx_t *ctx, uint64_t start_tick, uint64_t end_tick,
+               uint32_t fifo_before, uint32_t fifo_after)
+{
+    r3d_debug_state_t *s;
+    r3d_debug_sync_t *e;
+    uint64_t dt;
+
+    if (!ctx || !ctx->mach64)
+        return;
+    s = r3d_debug_find(ctx->mach64, 1);
+    if (!s)
+        return;
+    e = &s->syncs[s->sync_seq % R3D_DEBUG_SYNCS];
+    memset(e, 0, sizeof(*e));
+    e->seq = ++s->sync_seq;
+    e->start_tick = start_tick;
+    e->end_tick = end_tick;
+    e->fifo_before = fifo_before;
+    e->fifo_after = fifo_after;
+    dt = end_tick - start_tick;
+    s->total_sync_ticks += dt;
+    if (dt > s->max_sync_ticks)
+        s->max_sync_ticks = dt;
+    if (fifo_before > s->max_fifo_entries)
+        s->max_fifo_entries = fifo_before;
+}
+
+static void
+r3d_debug_draw_begin(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d, uint32_t cmd,
+                     int lead, int trail, int y, int left, int right,
+                     int top, int bottom, int pitch_pixels, int length,
+                     int df, int dbpp, int tf, int tbpp)
+{
+    mach64_t *m;
+    uint32_t tsp;
+    unsigned sl;
+
+    if (!ctx || !ctx->mach64 || !d)
+        return;
+    m = ctx->mach64;
+    memset(d, 0, sizeof(*d));
+
+    d->start_tick = plat_timer_read();
+    d->cmd = cmd;
+    d->ctl = ctx->regs[R3D_SCALE_3D_CNTL >> 2];
+    d->dst_cntl = m->dst_cntl;
+    d->dst_y_x = m->dst_y_x;
+    d->dst_off_pitch = m->dst_off_pitch;
+    d->sc_left_right = m->sc_left_right;
+    d->sc_top_bottom = m->sc_top_bottom;
+    d->z_cntl = ctx->regs[R3D_Z_CNTL >> 2];
+    d->z_off_pitch = ctx->regs[R3D_Z_OFF_PITCH >> 2];
+    d->dp_pix_width = m->dp_pix_width;
+    d->write_mask = m->write_mask;
+    d->dp_src = m->dp_src;
+    d->dp_mix = m->dp_mix;
+    d->dp_frgd_clr = m->dp_frgd_clr;
+    d->tex_size_pitch = ctx->regs[R3D_TEX_SIZE_PITCH >> 2];
+
+    tsp = d->tex_size_pitch;
+    sl = (tsp >> 4) & 15;
+    if (sl > 10)
+        sl = 10;
+    d->tex_base = ctx->regs[(R3D_TEX_0_OFF + (sl << 2)) >> 2];
+
+    d->lead_bres_err = m->dst_bres_err;
+    d->lead_bres_inc = m->dst_bres_inc;
+    d->lead_bres_dec = m->dst_bres_dec;
+    d->trail_bres_err = ctx->regs[R3D_TRAIL_BRES_ERR >> 2];
+    d->trail_bres_inc = ctx->regs[R3D_TRAIL_BRES_INC >> 2];
+    d->trail_bres_dec = ctx->regs[R3D_TRAIL_BRES_DEC >> 2];
+
+#define SNAP_ST(name, lower) \
+    d->lower##_x_inc2 = ctx->regs[R3D_##name##_X_INC2 >> 2]; \
+    d->lower##_y_inc2 = ctx->regs[R3D_##name##_Y_INC2 >> 2]; \
+    d->lower##_xy_inc2 = ctx->regs[R3D_##name##_XY_INC2 >> 2]; \
+    d->lower##_xinc_start = ctx->regs[R3D_##name##_XINC_START >> 2]; \
+    d->lower##_y_inc = ctx->regs[R3D_##name##_Y_INC >> 2]; \
+    d->lower##_start = ctx->regs[R3D_##name##_START >> 2]
+    SNAP_ST(S, s);
+    SNAP_ST(T, t);
+#undef SNAP_ST
+
+#define SNAP_COLOR(name, lower) \
+    d->lower##_x_inc = ctx->regs[R3D_##name##_X_INC >> 2]; \
+    d->lower##_y_inc = ctx->regs[R3D_##name##_Y_INC >> 2]; \
+    d->lower##_start = ctx->regs[R3D_##name##_START >> 2]
+    SNAP_COLOR(RED, red);
+    SNAP_COLOR(GREEN, green);
+    SNAP_COLOR(BLUE, blue);
+    SNAP_COLOR(Z, z);
+    SNAP_COLOR(ALPHA, alpha);
+#undef SNAP_COLOR
+
+    d->fifo_entries_begin = m->fifo_write_idx - m->fifo_read_idx;
+    d->lead_begin = lead;
+    d->trail_begin = trail;
+    d->y_begin = y;
+    d->left = left;
+    d->right = right;
+    d->top = top;
+    d->bottom = bottom;
+    d->pitch_pixels = pitch_pixels;
+    d->length = length;
+    d->dst_format = df;
+    d->dst_bpp = dbpp;
+    d->tex_format = tf;
+    d->tex_bpp = tbpp;
+    d->fcn = (d->ctl >> R3D_FCN_SHIFT) & R3D_FCN_MASK;
+    d->alpha_fog = (d->ctl >> R3D_ALPHA_FOG_SHIFT) & R3D_ALPHA_FOG_MASK;
+    d->bilinear = !!(d->ctl & R3D_BILINEAR_TEX_EN);
+    d->z_enabled = !!((d->z_cntl & R3D_Z_EN) &&
+                      (((d->z_off_pitch >> 22) & 0x3ff) != 0));
+    d->z_write = !!(d->z_enabled && (d->z_cntl & R3D_Z_MASK));
+}
+
+static void
+r3d_debug_draw_end(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d,
+                   int lead, int trail, int y)
+{
+    r3d_debug_state_t *s;
+    r3d_debug_draw_t *slot;
+    uint64_t dt;
+
+    if (!ctx || !ctx->mach64 || !d)
+        return;
+    s = r3d_debug_find(ctx->mach64, 1);
+    if (!s)
+        return;
+
+    d->end_tick = plat_timer_read();
+    d->lead_end = lead;
+    d->trail_end = trail;
+    d->y_end = y;
+    d->fifo_entries_end =
+        ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
+    d->seq = ++s->draw_seq;
+    slot = &s->draws[(d->seq - 1) % R3D_DEBUG_DRAWS];
+    *slot = *d;
+
+    if (d->fcn == 2) {
+        uint64_t tex_seq = ++s->tex_draw_seq;
+        slot = &s->tex_draws[(tex_seq - 1) % R3D_DEBUG_TEX_DRAWS];
+        *slot = *d;
+    }
+
+    dt = d->end_tick - d->start_tick;
+    s->total_draw_ticks += dt;
+    s->total_candidate_pixels += d->candidate_pixels;
+    s->total_drawn_pixels += d->drawn_pixels;
+    s->total_alpha_rejects += d->alpha_rejects;
+    s->total_z_rejects += d->z_rejects;
+    s->total_texture_samples += d->texture_samples;
+    if (dt > s->max_draw_ticks)
+        s->max_draw_ticks = dt;
+    if (d->fifo_entries_begin > s->max_fifo_entries)
+        s->max_fifo_entries = d->fifo_entries_begin;
+    if (d->fifo_entries_end > s->max_fifo_entries)
+        s->max_fifo_entries = d->fifo_entries_end;
+}
+
+static void
+r3d_debug_dump_access(FILE *fp, const r3d_debug_access_t *e)
+{
+    fprintf(fp, "%010llu %c %u %u %04X %08X %u %08X %08X %08X\n",
+            (unsigned long long)e->seq, e->op, e->width, e->claimed,
+            e->addr, e->value, e->fifo_entries, e->dst_cntl,
+            e->dp_pix_width, e->scale_3d_cntl);
+}
+
+static void
+r3d_debug_dump(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 0);
+    FILE *fp;
+    uint64_t first_count;
+    uint64_t last_count;
+    uint64_t last_start;
+    uint64_t draw_count;
+    uint64_t draw_start;
+    uint64_t tex_draw_count;
+    uint64_t tex_draw_start;
+    uint64_t sync_count;
+    uint64_t sync_start;
+    uint64_t palette_first_count;
+    uint64_t palette_last_count;
+    uint64_t palette_last_start;
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    uint64_t key_probe_count;
+    uint64_t key_probe_start;
+#endif
+    mach64_3d_ctx_t *ctx;
+
+    if (!s || !s->access_seq)
+        return;
+    fp = fopen("rage2p_3d_debug.log", "w");
+    if (!fp) {
+        pclog("ATI Rage II+: unable to create rage2p_3d_debug.log\n");
+        return;
+    }
+
+    fprintf(fp, "# Rage II+ complete 3D diagnostic trace v4\n");
+    fprintf(fp, "# access=%llu draw=%llu tex_draw=%llu sync=%llu max_fifo=%u\n",
+            (unsigned long long)s->access_seq,
+            (unsigned long long)s->draw_seq,
+            (unsigned long long)s->tex_draw_seq,
+            (unsigned long long)s->sync_seq,
+            s->max_fifo_entries);
+    fprintf(fp,
+            "# pixels candidate=%llu drawn=%llu alpha_reject=%llu "
+            "z_reject=%llu texture_samples=%llu\n",
+            (unsigned long long)s->total_candidate_pixels,
+            (unsigned long long)s->total_drawn_pixels,
+            (unsigned long long)s->total_alpha_rejects,
+            (unsigned long long)s->total_z_rejects,
+            (unsigned long long)s->total_texture_samples);
+    fprintf(fp,
+            "# ticks draw_total=%llu draw_max=%llu sync_total=%llu sync_max=%llu\n",
+            (unsigned long long)s->total_draw_ticks,
+            (unsigned long long)s->max_draw_ticks,
+            (unsigned long long)s->total_sync_ticks,
+            (unsigned long long)s->max_sync_ticks);
+    fprintf(fp,
+            "# final FIFO read=%u write=%u entries=%u blitter_busy=%d accel_busy=%d\n",
+            (unsigned)m->fifo_read_idx, (unsigned)m->fifo_write_idx,
+            (unsigned)(m->fifo_write_idx - m->fifo_read_idx),
+            (int)m->blitter_busy, m->accel.busy);
+
+    fprintf(fp, "\n[legacy_rects]\n");
+    fprintf(fp,
+            "# seq complete dst_off_pitch dst_y_x dst_hw dp_frgd dp_src "
+            "dp_mix offset pitch size x y width height first0 center0 "
+            "first1 center1\n");
+    {
+        uint64_t count = s->rect_seq < R3D_DEBUG_RECTS ?
+                         s->rect_seq : R3D_DEBUG_RECTS;
+        uint64_t start = s->rect_seq - count + 1;
+        for (uint64_t seq = start; seq <= s->rect_seq; seq++) {
+            const r3d_debug_rect_t *r =
+                &s->rects[(seq - 1) % R3D_DEBUG_RECTS];
+            fprintf(fp,
+                    "%010llu %d %08X %08X %08X %08X %08X %08X "
+                    "%08X %u %d %d %d %d %d %08X %08X %08X %08X\n",
+                    (unsigned long long)r->seq, r->complete,
+                    r->dst_off_pitch, r->dst_y_x, r->dst_height_width,
+                    r->dp_frgd_clr, r->dp_src, r->dp_mix,
+                    r->dst_offset, r->dst_pitch, r->dst_size,
+                    r->dst_x, r->dst_y, r->width, r->height,
+                    r->first_before, r->center_before,
+                    r->first_after, r->center_after);
+        }
+    }
+
+    fprintf(fp, "\n[overlay_state]\n");
+    fprintf(fp,
+            "# type yx_start yx_end scale_inc scale_cntl height_width "
+            "scaler_off0 scaler_off1 scaler_pitch format key_cntl "
+            "legacy_off0 legacy_pitch0 svga_addr svga_pitch svga_ena\n");
+    fprintf(fp,
+            "%d %08X %08X %08X %08X %08X %08X %08X %08X %X %08X "
+            "%08X %08X %08X %08X %d\n",
+            m->type, m->overlay_y_x_start, m->overlay_y_x_end,
+            m->overlay_scale_inc, m->overlay_scale_cntl,
+            m->scaler_height_width, m->scaler_buf_offset[0],
+            m->scaler_buf_offset[1], m->scaler_buf_pitch,
+            m->scaler_format, m->overlay_key_cntl,
+            m->buf_offset[0], m->buf_pitch[0], m->svga.overlay.addr,
+            m->svga.overlay.pitch, m->svga.overlay.ena);
+    {
+        uint32_t base = m->scaler_buf_offset[0] & m->vram_mask;
+        uint32_t pitch = m->scaler_buf_pitch & 0xfff;
+        uint32_t p0 = *(uint16_t *)&m->svga.vram[base];
+        uint32_t pc_pixels = *(uint16_t *)&m->svga.vram[
+            (base + 120u * pitch * 2u + 160u * 2u) & m->vram_mask];
+        uint32_t pc_bytes = *(uint16_t *)&m->svga.vram[
+            (base + 120u * pitch + 160u * 2u) & m->vram_mask];
+        fprintf(fp, "# raw16 base=%06X first=%04X center_pitch_pixels=%04X "
+                    "center_pitch_bytes=%04X\n",
+                base, p0, pc_pixels, pc_bytes);
+    }
+
+    fprintf(fp, "\n[texture_palette_writes_first]\n");
+    fprintf(fp, "# retained_first=%llu total=%llu\n",
+            (unsigned long long)(s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                                 s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES),
+            (unsigned long long)s->palette_write_seq);
+    fprintf(fp, "# data_seq data_access data_addr data_width data_value "
+                "index_access index_addr index_width index_value distance\n");
+    palette_first_count = s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                          s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES;
+    for (uint64_t i = 0; i < palette_first_count; i++) {
+        const r3d_debug_palette_write_t *p = &s->palette_writes_first[i];
+        fprintf(fp, "%010llu %010llu %04X %u %08X %010llu %04X %u %08X %llu\n",
+                (unsigned long long)(i + 1),
+                (unsigned long long)p->data.seq, p->data.addr,
+                (unsigned)p->data.width, p->data.value,
+                (unsigned long long)p->index_candidate.seq,
+                p->index_candidate.addr, (unsigned)p->index_candidate.width,
+                p->index_candidate.value,
+                (unsigned long long)(p->index_candidate.seq ?
+                                     p->data.seq - p->index_candidate.seq : 0));
+    }
+
+    fprintf(fp, "\n[texture_palette_writes_last]\n");
+    palette_last_count = s->palette_write_seq < R3D_DEBUG_PALETTE_WRITES ?
+                         s->palette_write_seq : R3D_DEBUG_PALETTE_WRITES;
+    palette_last_start = s->palette_write_seq - palette_last_count + 1;
+    fprintf(fp, "# retained_last=%llu total=%llu\n",
+            (unsigned long long)palette_last_count,
+            (unsigned long long)s->palette_write_seq);
+    fprintf(fp, "# data_seq data_access data_addr data_width data_value "
+                "index_access index_addr index_width index_value distance\n");
+    for (uint64_t seq = palette_last_start; seq <= s->palette_write_seq; seq++) {
+        const r3d_debug_palette_write_t *p =
+            &s->palette_writes_last[(seq - 1) % R3D_DEBUG_PALETTE_WRITES];
+        fprintf(fp, "%010llu %010llu %04X %u %08X %010llu %04X %u %08X %llu\n",
+                (unsigned long long)seq,
+                (unsigned long long)p->data.seq, p->data.addr,
+                (unsigned)p->data.width, p->data.value,
+                (unsigned long long)p->index_candidate.seq,
+                p->index_candidate.addr, (unsigned)p->index_candidate.width,
+                p->index_candidate.value,
+                (unsigned long long)(p->index_candidate.seq ?
+                                     p->data.seq - p->index_candidate.seq : 0));
+    }
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    fprintf(fp, "\n[keyed_blt_last]\n");
+    fprintf(fp, "# probe_count=%llu\n",
+            (unsigned long long)s->key_probe_seq);
+    if (s->key_probe_seq) {
+        const r3d_debug_key_probe_t *probe =
+            &s->key_probes[(s->key_probe_seq - 1) % R3D_DEBUG_KEY_PROBES];
+        fprintf(fp, "# seq=%llu complete=%u valid=%04X\n",
+                (unsigned long long)probe->seq, (unsigned)probe->complete,
+                (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
+    }
+
+    fprintf(fp, "\n[keyed_blt_nonzero_last]\n");
+    if (s->key_probe_nonzero.seq) {
+        const r3d_debug_key_probe_t *probe = &s->key_probe_nonzero;
+        fprintf(fp, "# seq=%llu complete=%u valid=%04X\n",
+                (unsigned long long)probe->seq, (unsigned)probe->complete,
+                (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
+    }
+
+    fprintf(fp, "\n[keyed_blt_probes]\n");
+    key_probe_count = s->key_probe_seq < R3D_DEBUG_KEY_PROBES ?
+                      s->key_probe_seq : R3D_DEBUG_KEY_PROBES;
+    key_probe_start = s->key_probe_seq - key_probe_count + 1;
+    fprintf(fp, "# retained=%llu total=%llu\n",
+            (unsigned long long)key_probe_count,
+            (unsigned long long)s->key_probe_seq);
+    for (uint64_t seq = key_probe_start; seq <= s->key_probe_seq; seq++) {
+        const r3d_debug_key_probe_t *probe =
+            &s->key_probes[(seq - 1) % R3D_DEBUG_KEY_PROBES];
+        fprintf(fp, "P %010llu %u %04X\n", (unsigned long long)probe->seq,
+                (unsigned)probe->complete, (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
+    }
+#endif
+
+    fprintf(fp, "\n[access_first]\n");
+    fprintf(fp,
+            "# seq op width claimed addr value fifo dst_cntl dp_pix_width "
+            "scale_3d_cntl\n");
+    first_count = s->access_seq < R3D_DEBUG_ACCESS_FIRST ?
+                  s->access_seq : R3D_DEBUG_ACCESS_FIRST;
+    for (uint64_t i = 0; i < first_count; i++)
+        r3d_debug_dump_access(fp, &s->access_first[i]);
+
+    fprintf(fp, "\n[access_last]\n");
+    fprintf(fp,
+            "# seq op width claimed addr value fifo dst_cntl dp_pix_width "
+            "scale_3d_cntl\n");
+    last_count = s->access_seq < R3D_DEBUG_ACCESS_LAST ?
+                 s->access_seq : R3D_DEBUG_ACCESS_LAST;
+    last_start = s->access_seq - last_count + 1;
+    for (uint64_t seq = last_start; seq <= s->access_seq; seq++)
+        r3d_debug_dump_access(
+            fp, &s->access_last[(seq - 1) % R3D_DEBUG_ACCESS_LAST]);
+
+    fprintf(fp, "\n[draws]\n");
+    fprintf(fp,
+            "# seq ticks candidate drawn alpha_rej z_rej tex cmd ctl dst_cntl "
+            "dst_y_x dst_off_pitch sc_lr sc_tb z_cntl z_off dp_pix write_mask "
+            "tex_size tex_base fifo0 fifo1 lead0 trail0 y0 lead1 trail1 y1 "
+            "left right top bottom pitch len df dbpp tf tbpp fcn af bilinear "
+            "zen zwrite\n");
+    draw_count = s->draw_seq < R3D_DEBUG_DRAWS ?
+                 s->draw_seq : R3D_DEBUG_DRAWS;
+    draw_start = s->draw_seq - draw_count + 1;
+    for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
+        const r3d_debug_draw_t *d =
+            &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
+        fprintf(fp,
+                "%010llu %llu %llu %llu %llu %llu %llu "
+                "%08X %08X %08X %08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %u %u "
+                "%d %d %d %d %d %d %d %d %d %d %d %d "
+                "%d %d %d %d %d %d %d %d %d\n",
+                (unsigned long long)d->seq,
+                (unsigned long long)(d->end_tick - d->start_tick),
+                (unsigned long long)d->candidate_pixels,
+                (unsigned long long)d->drawn_pixels,
+                (unsigned long long)d->alpha_rejects,
+                (unsigned long long)d->z_rejects,
+                (unsigned long long)d->texture_samples,
+                d->cmd, d->ctl, d->dst_cntl, d->dst_y_x, d->dst_off_pitch,
+                d->sc_left_right, d->sc_top_bottom, d->z_cntl, d->z_off_pitch,
+                d->dp_pix_width, d->write_mask, d->tex_size_pitch, d->tex_base,
+                d->fifo_entries_begin, d->fifo_entries_end,
+                d->lead_begin, d->trail_begin, d->y_begin,
+                d->lead_end, d->trail_end, d->y_end,
+                d->left, d->right, d->top, d->bottom,
+                d->pitch_pixels, d->length,
+                d->dst_format, d->dst_bpp, d->tex_format, d->tex_bpp,
+                d->fcn, d->alpha_fog, d->bilinear,
+                d->z_enabled, d->z_write);
+    }
+
+    fprintf(fp, "\n[pixel_paths]\n");
+    fprintf(fp,
+            "# seq dp_src dp_mix dp_frgd_clr nonzero_src rgb_or "
+            "r_max g_max b_max\n");
+    for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
+        const r3d_debug_draw_t *d =
+            &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
+        fprintf(fp, "%010llu %08X %08X %08X %llu %06X %u %u %u\n",
+                (unsigned long long)d->seq,
+                d->dp_src, d->dp_mix, d->dp_frgd_clr,
+                (unsigned long long)d->nonzero_source_pixels,
+                d->source_rgb_or & 0xffffffu,
+                d->source_r_max, d->source_g_max, d->source_b_max);
+    }
+
+    /*
+     * Keep the legacy draw table stable and place the high-detail raw state in
+     * a second table.  This makes old scripts continue to parse [draws], while
+     * the new table is sufficient to replay the GTB edge and S/T equations.
+     */
+    fprintf(fp, "\n[interpolators]\n");
+    fprintf(fp,
+            "# seq lead_err lead_inc lead_dec trail_err trail_inc trail_dec "
+            "sx2 sy2 sxy2 sxi sy s0 tx2 ty2 txy2 txi ty t0 "
+            "rx ry r0 gx gy g0 bx by b0 zx zy z0 ax ay a0\n");
+    for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
+        const r3d_debug_draw_t *d =
+            &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
+        fprintf(fp,
+                "%010llu "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X\n",
+                (unsigned long long)d->seq,
+                d->lead_bres_err, d->lead_bres_inc, d->lead_bres_dec,
+                d->trail_bres_err, d->trail_bres_inc, d->trail_bres_dec,
+                d->s_x_inc2, d->s_y_inc2, d->s_xy_inc2,
+                d->s_xinc_start, d->s_y_inc, d->s_start,
+                d->t_x_inc2, d->t_y_inc2, d->t_xy_inc2,
+                d->t_xinc_start, d->t_y_inc, d->t_start,
+                d->red_x_inc, d->red_y_inc, d->red_start,
+                d->green_x_inc, d->green_y_inc, d->green_start,
+                d->blue_x_inc, d->blue_y_inc, d->blue_start,
+                d->z_x_inc, d->z_y_inc, d->z_start,
+                d->alpha_x_inc, d->alpha_y_inc, d->alpha_start);
+    }
+
+    /*
+     * Dedicated texture history.  This is the important section for the HAL
+     * cube: later RGB/shading draws can no longer erase the texture register
+     * state that produced the bad frame.
+     */
+    fprintf(fp, "\n[texture_draws]\n");
+    fprintf(fp,
+            "# seq ticks candidate drawn tex cmd ctl dst_cntl dst_y_x "
+            "dst_off_pitch sc_lr sc_tb dp_pix tex_size tex_base "
+            "lead0 trail0 y0 lead1 trail1 y1 pitch len tf tbpp bilinear "
+            "sx2 sy2 sxy2 sxi sy s0 tx2 ty2 txy2 txi ty t0\n");
+    tex_draw_count = s->tex_draw_seq < R3D_DEBUG_TEX_DRAWS ?
+                     s->tex_draw_seq : R3D_DEBUG_TEX_DRAWS;
+    tex_draw_start = s->tex_draw_seq - tex_draw_count + 1;
+    for (uint64_t tseq = tex_draw_start; tseq <= s->tex_draw_seq; tseq++) {
+        const r3d_debug_draw_t *d =
+            &s->tex_draws[(tseq - 1) % R3D_DEBUG_TEX_DRAWS];
+        fprintf(fp,
+                "%010llu %llu %llu %llu %llu "
+                "%08X %08X %08X %08X %08X %08X %08X %08X %08X %08X "
+                "%d %d %d %d %d %d %d %d %d %d %d "
+                "%08X %08X %08X %08X %08X %08X "
+                "%08X %08X %08X %08X %08X %08X\n",
+                (unsigned long long)d->seq,
+                (unsigned long long)(d->end_tick - d->start_tick),
+                (unsigned long long)d->candidate_pixels,
+                (unsigned long long)d->drawn_pixels,
+                (unsigned long long)d->texture_samples,
+                d->cmd, d->ctl, d->dst_cntl, d->dst_y_x,
+                d->dst_off_pitch, d->sc_left_right, d->sc_top_bottom,
+                d->dp_pix_width, d->tex_size_pitch, d->tex_base,
+                d->lead_begin, d->trail_begin, d->y_begin,
+                d->lead_end, d->trail_end, d->y_end,
+                d->pitch_pixels, d->length, d->tex_format, d->tex_bpp,
+                d->bilinear,
+                d->s_x_inc2, d->s_y_inc2, d->s_xy_inc2,
+                d->s_xinc_start, d->s_y_inc, d->s_start,
+                d->t_x_inc2, d->t_y_inc2, d->t_xy_inc2,
+                d->t_xinc_start, d->t_y_inc, d->t_start);
+    }
+
+    fprintf(fp, "\n[syncs]\n");
+    fprintf(fp, "# seq ticks fifo_before fifo_after\n");
+    sync_count = s->sync_seq < R3D_DEBUG_SYNCS ?
+                 s->sync_seq : R3D_DEBUG_SYNCS;
+    sync_start = s->sync_seq - sync_count + 1;
+    for (uint64_t seq = sync_start; seq <= s->sync_seq; seq++) {
+        const r3d_debug_sync_t *e =
+            &s->syncs[(seq - 1) % R3D_DEBUG_SYNCS];
+        fprintf(fp, "%010llu %llu %u %u\n",
+                (unsigned long long)e->seq,
+                (unsigned long long)(e->end_tick - e->start_tick),
+                e->fifo_before, e->fifo_after);
+    }
+
+    /*
+     * The GT HAL uses 8-bit pseudocolor textures in the failing Flip3D path.
+     * Snapshot the complete DAC lookup table so a texture-index problem can be
+     * separated from S/T addressing without adding any per-pixel file I/O.
+     */
+    fprintf(fp, "\n[pseudocolor_palette]\n");
+    fprintf(fp, "# index pallook\n");
+    for (unsigned i = 0; i < 256; i++)
+        fprintf(fp, "%02X %08X\n", i, m->svga.pallook[i]);
+
+    fprintf(fp, "\n[final_3d_registers]\n");
+    ctx = r3d_find(m);
+    if (ctx) {
+        for (unsigned i = 0; i < 256; i++)
+            if (ctx->regs[i])
+                fprintf(fp, "%03X %08X\n", i << 2, ctx->regs[i]);
+    }
+
+    fclose(fp);
+    pclog("ATI Rage II+: wrote rage2p_3d_debug.log "
+          "(access=%llu draw=%llu tex_draw=%llu sync=%llu)\n",
+          (unsigned long long)s->access_seq,
+          (unsigned long long)s->draw_seq,
+          (unsigned long long)s->tex_draw_seq,
+          (unsigned long long)s->sync_seq);
+    memset(s, 0, sizeof(*s));
+}
