@@ -79,6 +79,7 @@ typedef struct mach64rage2p_aux_state_t {
     mach64_t *mach64;
     mem_mapping_t mapping;
     uint32_t bar;
+    void (*legacy_vblank_start)(svga_t *svga);
     int initialized;
 } mach64rage2p_aux_state_t;
 
@@ -105,6 +106,28 @@ mach64rage2p_aux_state(mach64_t *mach64, int create)
     free_state->mach64 = mach64;
     free_state->bar = 0;
     return free_state;
+}
+
+/*
+ * GTB keeps the pre-VT3 display/DDC behavior used by the mature VT2 core, but
+ * its video overlay fetches from the scaler buffer register family.  The
+ * legacy vblank callback chooses BUF_OFFSET/BUF_PITCH for all pre-VT3 types;
+ * correct only the Rage II+ fetch state after that callback has performed the
+ * normal interrupt, window, enable and accumulator setup.
+ */
+static void
+mach64rage2p_vblank_start(svga_t *svga)
+{
+    mach64_t *mach64 = (mach64_t *) svga->priv;
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (state && state->legacy_vblank_start)
+        state->legacy_vblank_start(svga);
+
+    svga->overlay.addr  = mach64->scaler_buf_offset[0] & 0x3fffff;
+    svga->overlay.pitch = mach64->scaler_buf_pitch & 0xfff;
+    mach64->overlay_uv_addr = svga->overlay.addr;
+    mach64->overlay_base    = svga->overlay.addr;
 }
 
 static uint8_t
@@ -144,6 +167,11 @@ mach64rage2p_aux_attach(mach64_t *mach64)
 
     if (!state)
         return 0;
+
+    if (!state->legacy_vblank_start) {
+        state->legacy_vblank_start = mach64->svga.vblank_start;
+        mach64->svga.vblank_start = mach64rage2p_vblank_start;
+    }
 
     if (!state->initialized) {
         mem_mapping_add(&state->mapping,
@@ -196,8 +224,13 @@ mach64rage2p_aux_detach(mach64_t *mach64)
     if (!state)
         return;
 
+    if (state->legacy_vblank_start &&
+        mach64->svga.vblank_start == mach64rage2p_vblank_start)
+        mach64->svga.vblank_start = state->legacy_vblank_start;
+
     mem_mapping_disable(&state->mapping);
     state->bar = 0;
+    state->legacy_vblank_start = NULL;
     state->mach64 = NULL;
 }
 
