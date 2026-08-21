@@ -424,6 +424,7 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
     int scissor_top = m->sc_top_bottom & 0x7fff;
     int scissor_bottom = (m->sc_top_bottom >> 16) & 0x7fff;
     int replicate = !!(control & R3D_SCALE_PIX_REP);
+    uint64_t vram_bytes = (uint64_t) m->vram_mask + 1u;
     uint64_t start_tick = plat_timer_read();
 
     if (!source_width || !source_height || !source_pitch ||
@@ -502,7 +503,8 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
                                   ((int64_t) y * destination_pitch + x) *
                                   destination_bpp;
             if (destination_address < 0 ||
-                destination_address + destination_bpp > m->vram_size) {
+                (uint64_t) destination_address +
+                    (uint64_t) destination_bpp > vram_bytes) {
                 if (debug)
                     debug->clipped++;
                 if (debug)

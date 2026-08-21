@@ -115,7 +115,8 @@ create_machine(void)
         goto failure;
 
     mach64->svga.monitor = monitor;
-    mach64->vram_size = VRAM_SIZE;
+    /* mach64_t stores this field in MiB; vram_mask is the byte range. */
+    mach64->vram_size = VRAM_SIZE >> 20;
     mach64->vram_mask = VRAM_SIZE - 1;
     mach64->type = MACH64_GTB;
     return mach64;
