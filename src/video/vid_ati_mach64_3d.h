@@ -29,4 +29,9 @@ int mach64_3d_write(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type
  */
 int mach64_3d_read(mach64_t *mach64, uint32_t addr, uint32_t *val);
 
+/* Behavior-neutral snapshots for correlating legacy ColorFill destinations
+ * with the GT/GTB overlay fetch registers. */
+void mach64_3d_rect_debug_begin(mach64_t *mach64);
+void mach64_3d_rect_debug_end(mach64_t *mach64);
+
 #endif

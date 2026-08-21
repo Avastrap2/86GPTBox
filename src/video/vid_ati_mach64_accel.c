@@ -21,6 +21,9 @@
 
 #include "vid_ati_mach64.h"
 
+void mach64_3d_rect_debug_begin(mach64_t *mach64);
+void mach64_3d_rect_debug_end(mach64_t *mach64);
+
 static void
 mach64_accel_write_fifo_l(mach64_t *mach64, uint32_t addr, uint32_t val);
 
@@ -816,6 +819,7 @@ mach64_start_fill(mach64_t *mach64)
     mach64->accel.busy = 1;
 
     mach64->accel.op = OP_RECT;
+    mach64_3d_rect_debug_begin(mach64);
 }
 
 void
@@ -1145,6 +1149,7 @@ mach64_blit_rect(uint32_t cpu_dat, int count, mach64_t* mach64)
             if (mach64->accel.dst_height <= 0) {
                 /*Blit finished*/
                 mach64_log("mach64 blit finished\n");
+                mach64_3d_rect_debug_end(mach64);
                 mach64->accel.busy = 0;
                 if (mach64->dst_cntl & DST_X_TILE)
                     mach64->dst_y_x = (mach64->dst_y_x & 0xfff) | ((mach64->dst_y_x + (mach64->accel.dst_width << 16)) & 0xfff0000);

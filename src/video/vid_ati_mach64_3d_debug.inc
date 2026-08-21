@@ -149,6 +149,30 @@ typedef struct r3d_debug_palette_write_t {
     r3d_debug_access_t data;
 } r3d_debug_palette_write_t;
 
+#define R3D_DEBUG_RECTS 64
+
+typedef struct r3d_debug_rect_t {
+    uint64_t seq;
+    uint32_t dst_off_pitch;
+    uint32_t dst_y_x;
+    uint32_t dst_height_width;
+    uint32_t dp_frgd_clr;
+    uint32_t dp_src;
+    uint32_t dp_mix;
+    uint32_t dst_offset;
+    uint32_t dst_pitch;
+    int dst_size;
+    int dst_x;
+    int dst_y;
+    int width;
+    int height;
+    uint32_t first_before;
+    uint32_t center_before;
+    uint32_t first_after;
+    uint32_t center_after;
+    int complete;
+} r3d_debug_rect_t;
+
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 typedef struct r3d_debug_key_probe_t {
     uint64_t seq;
@@ -165,6 +189,8 @@ typedef struct r3d_debug_state_t {
     uint64_t tex_draw_seq;
     uint64_t sync_seq;
     uint64_t palette_write_seq;
+    uint64_t rect_seq;
+    uint64_t active_rect_seq;
     uint64_t total_candidate_pixels;
     uint64_t total_drawn_pixels;
     uint64_t total_alpha_rejects;
@@ -185,6 +211,7 @@ typedef struct r3d_debug_state_t {
     r3d_debug_access_t palette_index_candidate;
     r3d_debug_palette_write_t palette_writes_first[R3D_DEBUG_PALETTE_WRITES];
     r3d_debug_palette_write_t palette_writes_last[R3D_DEBUG_PALETTE_WRITES];
+    r3d_debug_rect_t rects[R3D_DEBUG_RECTS];
     r3d_debug_draw_t draws[R3D_DEBUG_DRAWS];
     /*
      * Textured HAL draws must survive later RGB/shading activity.  The normal
@@ -226,6 +253,75 @@ r3d_debug_reset(mach64_t *m)
         return;
     memset(s, 0, sizeof(*s));
     s->mach64 = m;
+}
+
+static uint32_t
+r3d_debug_rect_pixel(mach64_t *m, const r3d_debug_rect_t *r, int x, int y)
+{
+    uint32_t index;
+
+    if (!m || !r || x < 0 || y < 0)
+        return 0;
+    index = r->dst_offset + (uint32_t)y * r->dst_pitch + (uint32_t)x;
+    switch (r->dst_size) {
+        case 0:
+            return m->svga.vram[index & m->vram_mask];
+        case 1:
+            return *(uint16_t *)&m->svga.vram[(index << 1) & m->vram_mask];
+        case 2:
+            return *(uint32_t *)&m->svga.vram[(index << 2) & m->vram_mask];
+        default:
+            return 0;
+    }
+}
+
+void
+mach64_3d_rect_debug_begin(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 0);
+    r3d_debug_rect_t *r;
+
+    if (!s)
+        return;
+    s->rect_seq++;
+    s->active_rect_seq = s->rect_seq;
+    r = &s->rects[(s->rect_seq - 1) % R3D_DEBUG_RECTS];
+    memset(r, 0, sizeof(*r));
+    r->seq = s->rect_seq;
+    r->dst_off_pitch = m->dst_off_pitch;
+    r->dst_y_x = m->dst_y_x;
+    r->dst_height_width = m->dst_height_width;
+    r->dp_frgd_clr = m->dp_frgd_clr;
+    r->dp_src = m->dp_src;
+    r->dp_mix = m->dp_mix;
+    r->dst_offset = m->accel.dst_offset;
+    r->dst_pitch = m->accel.dst_pitch;
+    r->dst_size = m->accel.dst_size;
+    r->dst_x = m->accel.dst_x_start;
+    r->dst_y = m->accel.dst_y_start;
+    r->width = m->accel.dst_width;
+    r->height = m->accel.dst_height;
+    r->first_before = r3d_debug_rect_pixel(m, r, r->dst_x, r->dst_y);
+    r->center_before = r3d_debug_rect_pixel(
+        m, r, r->dst_x + r->width / 2, r->dst_y + r->height / 2);
+}
+
+void
+mach64_3d_rect_debug_end(mach64_t *m)
+{
+    r3d_debug_state_t *s = r3d_debug_find(m, 0);
+    r3d_debug_rect_t *r;
+
+    if (!s || !s->active_rect_seq)
+        return;
+    r = &s->rects[(s->active_rect_seq - 1) % R3D_DEBUG_RECTS];
+    if (r->seq != s->active_rect_seq)
+        return;
+    r->first_after = r3d_debug_rect_pixel(m, r, r->dst_x, r->dst_y);
+    r->center_after = r3d_debug_rect_pixel(
+        m, r, r->dst_x + r->width / 2, r->dst_y + r->height / 2);
+    r->complete = 1;
+    s->active_rect_seq = 0;
 }
 
 static void
@@ -546,6 +642,59 @@ r3d_debug_dump(mach64_t *m)
             (unsigned)m->fifo_read_idx, (unsigned)m->fifo_write_idx,
             (unsigned)(m->fifo_write_idx - m->fifo_read_idx),
             (int)m->blitter_busy, m->accel.busy);
+
+    fprintf(fp, "\n[legacy_rects]\n");
+    fprintf(fp,
+            "# seq complete dst_off_pitch dst_y_x dst_hw dp_frgd dp_src "
+            "dp_mix offset pitch size x y width height first0 center0 "
+            "first1 center1\n");
+    {
+        uint64_t count = s->rect_seq < R3D_DEBUG_RECTS ?
+                         s->rect_seq : R3D_DEBUG_RECTS;
+        uint64_t start = s->rect_seq - count + 1;
+        for (uint64_t seq = start; seq <= s->rect_seq; seq++) {
+            const r3d_debug_rect_t *r =
+                &s->rects[(seq - 1) % R3D_DEBUG_RECTS];
+            fprintf(fp,
+                    "%010llu %d %08X %08X %08X %08X %08X %08X "
+                    "%08X %u %d %d %d %d %d %08X %08X %08X %08X\n",
+                    (unsigned long long)r->seq, r->complete,
+                    r->dst_off_pitch, r->dst_y_x, r->dst_height_width,
+                    r->dp_frgd_clr, r->dp_src, r->dp_mix,
+                    r->dst_offset, r->dst_pitch, r->dst_size,
+                    r->dst_x, r->dst_y, r->width, r->height,
+                    r->first_before, r->center_before,
+                    r->first_after, r->center_after);
+        }
+    }
+
+    fprintf(fp, "\n[overlay_state]\n");
+    fprintf(fp,
+            "# type yx_start yx_end scale_inc scale_cntl height_width "
+            "scaler_off0 scaler_off1 scaler_pitch format key_cntl "
+            "legacy_off0 legacy_pitch0 svga_addr svga_pitch svga_ena\n");
+    fprintf(fp,
+            "%d %08X %08X %08X %08X %08X %08X %08X %08X %X %08X "
+            "%08X %08X %08X %08X %d\n",
+            m->type, m->overlay_y_x_start, m->overlay_y_x_end,
+            m->overlay_scale_inc, m->overlay_scale_cntl,
+            m->scaler_height_width, m->scaler_buf_offset[0],
+            m->scaler_buf_offset[1], m->scaler_buf_pitch,
+            m->scaler_format, m->overlay_key_cntl,
+            m->buf_offset[0], m->buf_pitch[0], m->svga.overlay.addr,
+            m->svga.overlay.pitch, m->svga.overlay.ena);
+    {
+        uint32_t base = m->scaler_buf_offset[0] & m->vram_mask;
+        uint32_t pitch = m->scaler_buf_pitch & 0xfff;
+        uint32_t p0 = *(uint16_t *)&m->svga.vram[base];
+        uint32_t pc_pixels = *(uint16_t *)&m->svga.vram[
+            (base + 120u * pitch * 2u + 160u * 2u) & m->vram_mask];
+        uint32_t pc_bytes = *(uint16_t *)&m->svga.vram[
+            (base + 120u * pitch + 160u * 2u) & m->vram_mask];
+        fprintf(fp, "# raw16 base=%06X first=%04X center_pitch_pixels=%04X "
+                    "center_pitch_bytes=%04X\n",
+                base, p0, pc_pixels, pc_bytes);
+    }
 
     fprintf(fp, "\n[texture_palette_writes_first]\n");
     fprintf(fp, "# retained_first=%llu total=%llu\n",
