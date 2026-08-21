@@ -328,6 +328,69 @@ run_source_equal_8(void)
 }
 
 static int
+run_destination_not_equal_8(void)
+{
+    const uint8_t source_color = 1;
+    const uint8_t key          = 0;
+    const uint8_t background   = 4;
+    mach64_t    *mach64        = create_machine();
+    int          failures      = 0;
+
+    if (!mach64)
+        return 1;
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t src_addr = SRC_BYTE_OFFSET +
+                                      y * SRC_PITCH_PIXELS + x;
+            const uint32_t dst_addr = (DST_Y + y) * DST_PITCH_PIXELS +
+                                      DST_X + x;
+
+            *pixel8(mach64, src_addr) = source_color;
+            *pixel8(mach64, dst_addr) =
+                (x >= 32 && x < 96 && y >= 32 && y < 96) ? key : background;
+        }
+    }
+
+    /* Destination-not-equal inhibits writes outside the keyed center. */
+    run_fifo_blit(mach64, 0x00020202, 0x00000004,
+                  0xffffffff, key);
+
+    for (int y = 0; y < HEIGHT; y++) {
+        for (int x = 0; x < WIDTH; x++) {
+            const uint32_t dst_addr = (DST_Y + y) * DST_PITCH_PIXELS +
+                                      DST_X + x;
+            const uint8_t expected =
+                (x >= 32 && x < 96 && y >= 32 && y < 96) ?
+                source_color : background;
+            const uint8_t actual = *pixel8(mach64, dst_addr);
+
+            if (actual != expected && failures++ < 8) {
+                fprintf(stderr,
+                        "destination_not_equal_8 mismatch at %d,%d: "
+                        "expected %02x, got %02x\n",
+                        x, y, expected, actual);
+            }
+        }
+    }
+
+    if (mach64->accel.busy || mach64->fifo_read_idx != mach64->fifo_write_idx)
+        failures++;
+
+    printf("destination_not_equal_8: first=%02x center=%02x "
+           "failures=%d busy=%d fifo=%d\n",
+           *pixel8(mach64, DST_Y * DST_PITCH_PIXELS + DST_X),
+           *pixel8(mach64,
+                   (DST_Y + 32) * DST_PITCH_PIXELS + DST_X + 32),
+           failures,
+           mach64->accel.busy,
+           mach64->fifo_write_idx - mach64->fifo_read_idx);
+
+    destroy_machine(mach64);
+    return failures;
+}
+
+static int
 run_source_equal(void)
 {
     const uint32_t transparent = 0x00ff00ff;
@@ -527,6 +590,7 @@ main(void)
 
     failures += run_source_equal();
     failures += run_source_equal_8();
+    failures += run_destination_not_equal_8();
     failures += run_source_equal_16();
     failures += run_source_not_equal_masked();
     failures += run_destination_compare("compare_false",
