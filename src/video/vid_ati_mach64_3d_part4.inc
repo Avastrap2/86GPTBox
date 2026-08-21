@@ -26,9 +26,36 @@ r3d_unique_register(uint32_t b)
 {
     return ((b >= R3D_TRAIL_BRES_ERR) && (b <= R3D_Z_CNTL)) ||
            ((b >= R3D_TEX_0_OFF) && (b <= R3D_TEX_10_OFF)) ||
+           ((b >= R3D_SCALE_Y_PITCH) && (b <= R3D_SCALE_VACC)) ||
            (b == R3D_SCALE_3D_CNTL) ||
            ((b >= R3D_S_X_INC2) && (b <= R3D_TEX_SIZE_PITCH)) ||
            ((b >= R3D_RED_X_INC) && (b <= R3D_ALPHA_START));
+}
+
+/*
+ * The register guide exposes three scaler registers at both the compact
+ * 0_7x addresses and the 3D interpolator addresses.  They are physical
+ * aliases, so reads through either address must observe the most recent write.
+ */
+static uint32_t
+r3d_scaler_alias(uint32_t b)
+{
+    switch (b) {
+        case R3D_SCALE_Y_PITCH:
+            return R3D_SCALE_Y_PITCH_ALIAS;
+        case R3D_SCALE_Y_PITCH_ALIAS:
+            return R3D_SCALE_Y_PITCH;
+        case R3D_SCALE_X_INC:
+            return R3D_SCALE_X_INC_ALIAS;
+        case R3D_SCALE_X_INC_ALIAS:
+            return R3D_SCALE_X_INC;
+        case R3D_SCALE_Y_INC:
+            return R3D_SCALE_Y_INC_ALIAS;
+        case R3D_SCALE_Y_INC_ALIAS:
+            return R3D_SCALE_Y_INC;
+        default:
+            return 0;
+    }
 }
 
 /*
@@ -533,7 +560,10 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
 
     r3d_sync_legacy_fifo(ctx);
     uint32_t i = b >> 2;
+    uint32_t alias = r3d_scaler_alias(b);
     ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
+    if (alias)
+        ctx->regs[alias >> 2] = ctx->regs[i];
     r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
     r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
     return 1;

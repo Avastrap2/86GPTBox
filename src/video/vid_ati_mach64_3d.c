@@ -231,6 +231,8 @@ r3d_line_debug_dump(mach64_t *m)
 #include "vid_ati_mach64_3d_part4.inc"
 #undef mach64_3d_write
 
+#include "vid_ati_mach64_3d_scaler.inc"
+
 int
 mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
 {
@@ -239,6 +241,9 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     if (ctx) {
         uint32_t aa = a & 0x3ffu;
         uint32_t b = aa & ~3u;
+
+        if (r3d_try_scaler_destination_write(ctx, aa, v, type))
+            return 1;
 
         /*
          * 3D RAGE exposes the lead/Bresenham length register at both MM
@@ -294,6 +299,7 @@ mach64_3d_attach(mach64_t *mach64)
     mach64_3d_attach_base(mach64);
     r3d_debug_reset(mach64);
     r3d_line_debug_reset(mach64);
+    r3d_scaler_debug_reset(mach64);
 }
 
 void
@@ -306,6 +312,7 @@ mach64_3d_detach(mach64_t *mach64)
     if (ctx)
         r3d_finish_2d_color_key_probe(ctx);
 #endif
+    r3d_scaler_debug_dump(mach64);
     r3d_line_debug_dump(mach64);
     r3d_debug_dump(mach64);
     mach64_3d_detach_base(mach64);

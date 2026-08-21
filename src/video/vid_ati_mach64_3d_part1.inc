@@ -21,6 +21,15 @@
 
 #define R3D_TEX_0_OFF 0x1c0
 #define R3D_TEX_10_OFF 0x1e8
+
+/* Front-end scaler register names and their texture/interpolator aliases. */
+#define R3D_SCALE_Y_OFF 0x1c0
+#define R3D_SCALE_WIDTH 0x1dc
+#define R3D_SCALE_HEIGHT 0x1e0
+#define R3D_SCALE_Y_PITCH 0x1ec
+#define R3D_SCALE_X_INC 0x1f0
+#define R3D_SCALE_Y_INC 0x1f4
+#define R3D_SCALE_VACC 0x1f8
 #define R3D_SCALE_3D_CNTL 0x1fc
 
 /* GT/GTB texture interpolators.  Rage Pro and later reused several of these
@@ -54,6 +63,11 @@
 #define R3D_ALPHA_X_INC 0x3f0
 #define R3D_ALPHA_Y_INC 0x3f4
 #define R3D_ALPHA_START 0x3f8
+
+#define R3D_SCALE_Y_PITCH_ALIAS R3D_S_Y_INC
+#define R3D_SCALE_X_INC_ALIAS R3D_RED_X_INC
+#define R3D_SCALE_HACC R3D_RED_START
+#define R3D_SCALE_Y_INC_ALIAS R3D_GREEN_X_INC
 
 #define R3D_DRAW_TRAP (1u << 15)
 #define R3D_TRAIL_X_DIR (1u << 28)
