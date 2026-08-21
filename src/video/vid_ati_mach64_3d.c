@@ -299,6 +299,13 @@ mach64_3d_attach(mach64_t *mach64)
 void
 mach64_3d_detach(mach64_t *mach64)
 {
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    mach64_3d_ctx_t *ctx = r3d_find(mach64);
+
+    /* Complete a final keyed BLT even if the guest performs no later GUI access. */
+    if (ctx)
+        r3d_finish_2d_color_key_probe(ctx);
+#endif
     r3d_line_debug_dump(mach64);
     r3d_debug_dump(mach64);
     mach64_3d_detach_base(mach64);
