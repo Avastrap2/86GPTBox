@@ -128,19 +128,69 @@ mach64rage2p_overlay_key_cntl_legacy(uint32_t key_cntl)
     return (key_cntl & ~0x0f00u) | ((key_cntl & 0x0100u) ? 0x0c00u : 0u);
 }
 
+/*
+ * The legacy renderer expands RGB565 overlay samples to RGB888 before running
+ * its video-key comparison.  GTB hardware compares the source stream in its
+ * native format, and ATI's DirectDraw driver consequently programs RGB565 key
+ * colour/mask values (for example 0x07e0 for green).  Expand those values with
+ * exactly the same bit replication as the renderer so the comparison remains
+ * equivalent without changing guest-visible register contents.
+ */
+static uint32_t
+mach64rage2p_rgb565_to_rgb888(uint16_t pixel)
+{
+    uint32_t r = (pixel >> 11) & 0x1fu;
+    uint32_t g = (pixel >> 5) & 0x3fu;
+    uint32_t b = pixel & 0x1fu;
+
+    r = (r << 3) | (r >> 2);
+    g = (g << 2) | (g >> 4);
+    b = (b << 3) | (b >> 2);
+    return (r << 16) | (g << 8) | b;
+}
+
+static uint32_t
+mach64rage2p_rgb565_mask_to_rgb888(uint16_t mask)
+{
+    uint32_t expanded = 0;
+
+    for (unsigned bit = 0; bit < 16; bit++) {
+        if (mask & (1u << bit))
+            expanded |= mach64rage2p_rgb565_to_rgb888((uint16_t) (1u << bit));
+    }
+    return expanded;
+}
+
 static void
 mach64rage2p_overlay_draw(svga_t *svga, int displine)
 {
     mach64_t *mach64 = (mach64_t *) svga->priv;
     mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
     uint32_t key_cntl;
+    uint32_t video_key_clr;
+    uint32_t video_key_msk;
+    unsigned video_key_fn;
 
     if (!state || !state->legacy_overlay_draw)
         return;
 
     key_cntl = mach64->overlay_key_cntl;
+    video_key_clr = mach64->overlay_video_key_clr;
+    video_key_msk = mach64->overlay_video_key_msk;
+    video_key_fn = key_cntl & 0x7u;
+
     mach64->overlay_key_cntl = mach64rage2p_overlay_key_cntl_legacy(key_cntl);
+    if (mach64->scaler_format == 0x4 && (video_key_fn == 4 || video_key_fn == 5)) {
+        mach64->overlay_video_key_clr =
+            mach64rage2p_rgb565_to_rgb888((uint16_t) video_key_clr);
+        mach64->overlay_video_key_msk =
+            mach64rage2p_rgb565_mask_to_rgb888((uint16_t) video_key_msk);
+    }
+
     state->legacy_overlay_draw(svga, displine);
+
+    mach64->overlay_video_key_clr = video_key_clr;
+    mach64->overlay_video_key_msk = video_key_msk;
     mach64->overlay_key_cntl = key_cntl;
 }
 
