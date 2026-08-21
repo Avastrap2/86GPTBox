@@ -17,6 +17,12 @@
 #define R3D_DEBUG_TEX_DRAWS    4096
 #define R3D_DEBUG_SYNCS        8192
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+#define R3D_DEBUG_KEY_FIRST  0xF300
+#define R3D_DEBUG_KEY_LAST   0xF338
+#define R3D_DEBUG_KEY_VALUES 15
+#endif
+
 typedef struct r3d_debug_access_t {
     uint64_t seq;
     uint32_t addr;
@@ -142,6 +148,12 @@ typedef struct r3d_debug_state_t {
     uint64_t max_draw_ticks;
     uint64_t max_sync_ticks;
     uint32_t max_fifo_entries;
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    uint64_t key_probe_count;
+    uint32_t key_probe_values[R3D_DEBUG_KEY_VALUES];
+    uint16_t key_probe_valid;
+    uint8_t key_probe_complete;
+#endif
     r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
     r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
     r3d_debug_draw_t draws[R3D_DEBUG_DRAWS];
@@ -220,6 +232,43 @@ r3d_debug_access(mach64_3d_ctx_t *ctx, char op, unsigned width,
     if (fifo_entries > s->max_fifo_entries)
         s->max_fifo_entries = fifo_entries;
 }
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+/*
+ * K accesses also live in the generic recent-history ring.  Preserve the
+ * latest probe separately so normal Windows shutdown traffic cannot overwrite
+ * the keyed BLT evidence before the diagnostic log is flushed.
+ */
+static void
+r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
+{
+    r3d_debug_state_t *s;
+    unsigned index;
+
+    if (!ctx || !ctx->mach64 || addr < R3D_DEBUG_KEY_FIRST ||
+        addr > R3D_DEBUG_KEY_LAST || ((addr - R3D_DEBUG_KEY_FIRST) & 3))
+        return;
+
+    s = r3d_debug_find(ctx->mach64, 1);
+    if (!s)
+        return;
+
+    if (addr == R3D_DEBUG_KEY_FIRST) {
+        s->key_probe_count++;
+        memset(s->key_probe_values, 0, sizeof(s->key_probe_values));
+        s->key_probe_valid = 0;
+        s->key_probe_complete = 0;
+    } else if (!s->key_probe_count) {
+        return;
+    }
+
+    index = (addr - R3D_DEBUG_KEY_FIRST) >> 2;
+    s->key_probe_values[index] = value;
+    s->key_probe_valid |= (uint16_t) (1u << index);
+    if (addr == R3D_DEBUG_KEY_LAST)
+        s->key_probe_complete = 1;
+}
+#endif
 
 static void
 r3d_debug_sync(mach64_3d_ctx_t *ctx, uint64_t start_tick, uint64_t end_tick,
@@ -439,6 +488,18 @@ r3d_debug_dump(mach64_t *m)
             (unsigned)m->fifo_read_idx, (unsigned)m->fifo_write_idx,
             (unsigned)(m->fifo_write_idx - m->fifo_read_idx),
             (int)m->blitter_busy, m->accel.busy);
+
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    fprintf(fp, "\n[keyed_blt_last]\n");
+    fprintf(fp, "# probe_count=%llu complete=%u valid=%04X\n",
+            (unsigned long long)s->key_probe_count,
+            (unsigned)s->key_probe_complete, (unsigned)s->key_probe_valid);
+    for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+        if (s->key_probe_valid & (1u << i))
+            fprintf(fp, "K %04X %08X\n", R3D_DEBUG_KEY_FIRST + (i << 2),
+                    s->key_probe_values[i]);
+    }
+#endif
 
     fprintf(fp, "\n[access_first]\n");
     fprintf(fp,

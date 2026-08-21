@@ -185,7 +185,7 @@ r3d_get_2d_key_probe(mach64_3d_ctx_t *ctx)
 }
 
 /*
- * Source-color-key diagnostics for the legacy 2D engine.  The Rage II+
+ * Color-key diagnostics for the legacy 2D engine.  The Rage II+
  * DirectDraw test programs CLR_CMP_* immediately before DST_HEIGHT_WIDTH.
  * Capture the exact first source and destination pixels after the preceding
  * FIFO state has committed, then remember the destination addresses so the
@@ -207,6 +207,15 @@ r3d_get_2d_key_probe(mach64_3d_ctx_t *ctx)
  *   F334 = comparator result predicted from the snapshot (0/1)
  *   F338 = raw center source pixel after blit
  */
+static void
+r3d_record_2d_color_key_value(mach64_3d_ctx_t *ctx, uint32_t addr,
+                              uint32_t value)
+{
+    r3d_trace_record(ctx->mach64, 'K', 4, addr, value, 1);
+    r3d_debug_access(ctx, 'K', 4, addr, value, 1);
+    r3d_debug_key_value(ctx, addr, value);
+}
+
 static void
 r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
 {
@@ -259,20 +268,13 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     probe->dst_center_before = r3d_read_vram32(m, probe->dst_center_addr);
     probe->pending = 1;
 
-    r3d_trace_record(m, 'K', 4, 0xF300, probe->src_raw, 1);
-    r3d_trace_record(m, 'K', 4, 0xF304, m->clr_cmp_clr, 1);
-    r3d_trace_record(m, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
-    r3d_trace_record(m, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
-    r3d_trace_record(m, 'K', 4, 0xF310, probe->dst_before, 1);
-    r3d_trace_record(m, 'K', 4, 0xF314, probe->src_center_before, 1);
-    r3d_trace_record(m, 'K', 4, 0xF318, probe->dst_center_before, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF300, probe->src_raw, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF304, m->clr_cmp_clr, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF308, m->clr_cmp_mask, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF30C, m->clr_cmp_cntl, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF310, probe->dst_before, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF314, probe->src_center_before, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF318, probe->dst_center_before, 1);
+    r3d_record_2d_color_key_value(ctx, 0xF300, probe->src_raw);
+    r3d_record_2d_color_key_value(ctx, 0xF304, m->clr_cmp_clr);
+    r3d_record_2d_color_key_value(ctx, 0xF308, m->clr_cmp_mask);
+    r3d_record_2d_color_key_value(ctx, 0xF30C, m->clr_cmp_cntl);
+    r3d_record_2d_color_key_value(ctx, 0xF310, probe->dst_before);
+    r3d_record_2d_color_key_value(ctx, 0xF314, probe->src_center_before);
+    r3d_record_2d_color_key_value(ctx, 0xF318, probe->dst_center_before);
 }
 
 static void
@@ -320,20 +322,13 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
             break;
     }
 
-    r3d_trace_record(m, 'K', 4, 0xF320, dst_after, 1);
-    r3d_trace_record(m, 'K', 4, 0xF324, dst_center_after, 1);
-    r3d_trace_record(m, 'K', 4, 0xF328, m->accel.clr_cmp_clr, 1);
-    r3d_trace_record(m, 'K', 4, 0xF32C, m->accel.clr_cmp_mask, 1);
-    r3d_trace_record(m, 'K', 4, 0xF330, accel_cntl, 1);
-    r3d_trace_record(m, 'K', 4, 0xF334, cmp_result, 1);
-    r3d_trace_record(m, 'K', 4, 0xF338, src_center_after, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF320, dst_after, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF324, dst_center_after, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF328, m->accel.clr_cmp_clr, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF32C, m->accel.clr_cmp_mask, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF330, accel_cntl, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF334, cmp_result, 1);
-    r3d_debug_access(ctx, 'K', 4, 0xF338, src_center_after, 1);
+    r3d_record_2d_color_key_value(ctx, 0xF320, dst_after);
+    r3d_record_2d_color_key_value(ctx, 0xF324, dst_center_after);
+    r3d_record_2d_color_key_value(ctx, 0xF328, m->accel.clr_cmp_clr);
+    r3d_record_2d_color_key_value(ctx, 0xF32C, m->accel.clr_cmp_mask);
+    r3d_record_2d_color_key_value(ctx, 0xF330, accel_cntl);
+    r3d_record_2d_color_key_value(ctx, 0xF334, cmp_result);
+    r3d_record_2d_color_key_value(ctx, 0xF338, src_center_after);
 
     probe->pending = 0;
 }
