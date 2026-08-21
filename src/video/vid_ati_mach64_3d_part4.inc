@@ -14,6 +14,7 @@ typedef struct r3d_2d_key_probe_t {
     uint32_t src_center_addr;
     uint32_t dst_addr;
     uint32_t dst_center_addr;
+    uint8_t pixel_shift;
     uint8_t pending;
 } r3d_2d_key_probe_t;
 
@@ -152,15 +153,19 @@ r3d_sync_legacy_fifo(mach64_3d_ctx_t *ctx)
 
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 static uint32_t
-r3d_read_vram32(mach64_t *m, uint32_t addr)
+r3d_read_vram_pixel(mach64_t *m, uint32_t addr, uint8_t pixel_shift)
 {
     uint32_t mask = m->vram_mask;
     uint8_t *vram = m->svga.vram;
 
-    return (uint32_t) vram[addr & mask] |
-           ((uint32_t) vram[(addr + 1) & mask] << 8) |
-           ((uint32_t) vram[(addr + 2) & mask] << 16) |
-           ((uint32_t) vram[(addr + 3) & mask] << 24);
+    uint32_t value = (uint32_t) vram[addr & mask] |
+                     ((uint32_t) vram[(addr + 1) & mask] << 8);
+
+    if (pixel_shift == 2) {
+        value |= ((uint32_t) vram[(addr + 2) & mask] << 16) |
+                 ((uint32_t) vram[(addr + 3) & mask] << 24);
+    }
+    return value;
 }
 
 static r3d_2d_key_probe_t *
@@ -232,13 +237,29 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     uint32_t dst_offset;
     uint32_t width;
     uint32_t height;
+    uint32_t src_format;
+    uint32_t dst_format;
+    uint8_t pixel_shift;
 
     if (!ctx || !(m = ctx->mach64) || ((m->clr_cmp_cntl & 7) == 0))
         return;
 
-    /* Current DirectDraw reproduction is 32-bpp source -> 32-bpp destination. */
-    if ((((m->dp_pix_width >> 8) & 7) != 6) || ((m->dp_pix_width & 7) != 6))
+    src_format = (m->dp_pix_width >> 8) & 7;
+    dst_format = m->dp_pix_width & 7;
+    if (src_format != dst_format)
         return;
+
+    switch (src_format) {
+        case 3:
+        case 4:
+            pixel_shift = 1;
+            break;
+        case 6:
+            pixel_shift = 2;
+            break;
+        default:
+            return;
+    }
 
     probe = r3d_get_2d_key_probe(ctx);
     if (!probe)
@@ -248,7 +269,7 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     src_y = m->src_y_x & 0x3fff;
     src_pitch = (m->src_off_pitch >> 22) << 3;
     src_offset = (m->src_off_pitch & 0xfffff) << 3;
-    src_addr = src_offset + ((src_y * src_pitch + src_x) << 2);
+    src_addr = src_offset + ((src_y * src_pitch + src_x) << pixel_shift);
 
     dst_x = (m->dst_y_x >> 16) & 0x1fff;
     dst_y = m->dst_y_x & 0x3fff;
@@ -258,14 +279,19 @@ r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     height = m->dst_height_width & 0x1fff;
 
     probe->src_center_addr = src_offset +
-        ((((src_y + (height >> 1)) * src_pitch) + src_x + (width >> 1)) << 2);
-    probe->src_raw = r3d_read_vram32(m, src_addr);
-    probe->src_center_before = r3d_read_vram32(m, probe->src_center_addr);
-    probe->dst_addr = dst_offset + ((dst_y * dst_pitch + dst_x) << 2);
+        ((((src_y + (height >> 1)) * src_pitch) + src_x + (width >> 1)) <<
+         pixel_shift);
+    probe->src_raw = r3d_read_vram_pixel(m, src_addr, pixel_shift);
+    probe->src_center_before =
+        r3d_read_vram_pixel(m, probe->src_center_addr, pixel_shift);
+    probe->dst_addr = dst_offset + ((dst_y * dst_pitch + dst_x) << pixel_shift);
     probe->dst_center_addr = dst_offset +
-        ((((dst_y + (height >> 1)) * dst_pitch) + dst_x + (width >> 1)) << 2);
-    probe->dst_before = r3d_read_vram32(m, probe->dst_addr);
-    probe->dst_center_before = r3d_read_vram32(m, probe->dst_center_addr);
+        ((((dst_y + (height >> 1)) * dst_pitch) + dst_x + (width >> 1)) <<
+         pixel_shift);
+    probe->dst_before = r3d_read_vram_pixel(m, probe->dst_addr, pixel_shift);
+    probe->dst_center_before =
+        r3d_read_vram_pixel(m, probe->dst_center_addr, pixel_shift);
+    probe->pixel_shift = pixel_shift;
     probe->pending = 1;
 
     r3d_record_2d_color_key_value(ctx, 0xF300, probe->src_raw);
@@ -299,9 +325,11 @@ r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
     /* The keyed DST_HEIGHT_WIDTH trigger is already in the legacy FIFO. */
     r3d_sync_legacy_fifo(ctx);
 
-    dst_after = r3d_read_vram32(m, probe->dst_addr);
-    dst_center_after = r3d_read_vram32(m, probe->dst_center_addr);
-    src_center_after = r3d_read_vram32(m, probe->src_center_addr);
+    dst_after = r3d_read_vram_pixel(m, probe->dst_addr, probe->pixel_shift);
+    dst_center_after =
+        r3d_read_vram_pixel(m, probe->dst_center_addr, probe->pixel_shift);
+    src_center_after =
+        r3d_read_vram_pixel(m, probe->src_center_addr, probe->pixel_shift);
     accel_cntl = ((m->accel.clr_cmp_src ? 1u : 0u) << 24) |
                  ((uint32_t) m->accel.clr_cmp_fn & 7u);
     cmp_input = m->accel.clr_cmp_src ? probe->src_raw : probe->dst_before;
