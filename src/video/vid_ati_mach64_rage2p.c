@@ -32,6 +32,7 @@
 #define MACH64_GTB_AUX_SIZE      0x1000u
 #define MACH64_GTB_AUX_MASK      0xfffff000u
 #define MACH64_GTB_AUX_STATES    4
+#define MACH64_GTB_OVERLAY_EN    (1u << 30)
 
 extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
@@ -80,6 +81,7 @@ typedef struct mach64rage2p_aux_state_t {
     mem_mapping_t mapping;
     uint32_t bar;
     void (*legacy_vblank_start)(svga_t *svga);
+    void (*legacy_overlay_draw)(svga_t *svga, int displine);
     int initialized;
 } mach64rage2p_aux_state_t;
 
@@ -109,11 +111,46 @@ mach64rage2p_aux_state(mach64_t *mach64, int create)
 }
 
 /*
+ * 264GT-B/GU (3D Rage II+) is a Rev-B multimedia implementation.  ATI's
+ * Windows 95 DirectDraw driver programs OVERLAY_KEY_CNTL differently from the
+ * older VT/GT Rev-A path: Rev-B uses only bit 8 for the mixer selection.
+ *
+ *   bit 8 = 0: GR_CMP
+ *   bit 8 = 1: GR_CMP & VID_CMP
+ *
+ * The mature Mach64 renderer implements the older four-bit truth table in
+ * bits 8..11, where the same functions are encodings 0x0 and 0xC.  Translate
+ * only while rendering so the guest-visible GTB register remains unchanged.
+ */
+static uint32_t
+mach64rage2p_overlay_key_cntl_legacy(uint32_t key_cntl)
+{
+    return (key_cntl & ~0x0f00u) | ((key_cntl & 0x0100u) ? 0x0c00u : 0u);
+}
+
+static void
+mach64rage2p_overlay_draw(svga_t *svga, int displine)
+{
+    mach64_t *mach64 = (mach64_t *) svga->priv;
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+    uint32_t key_cntl;
+
+    if (!state || !state->legacy_overlay_draw)
+        return;
+
+    key_cntl = mach64->overlay_key_cntl;
+    mach64->overlay_key_cntl = mach64rage2p_overlay_key_cntl_legacy(key_cntl);
+    state->legacy_overlay_draw(svga, displine);
+    mach64->overlay_key_cntl = key_cntl;
+}
+
+/*
  * GTB keeps the pre-VT3 display/DDC behavior used by the mature VT2 core, but
  * its video overlay fetches from the scaler buffer register family.  The
- * legacy vblank callback chooses BUF_OFFSET/BUF_PITCH for all pre-VT3 types;
- * correct only the Rage II+ fetch state after that callback has performed the
- * normal interrupt, window, enable and accumulator setup.
+ * legacy vblank callback chooses BUF_OFFSET/BUF_PITCH for all pre-VT3 types
+ * and also applies the old Rev-A key-mixer enable test.  Correct both pieces
+ * after that callback has performed the normal interrupt, window and
+ * accumulator setup.
  */
 static void
 mach64rage2p_vblank_start(svga_t *svga)
@@ -126,6 +163,7 @@ mach64rage2p_vblank_start(svga_t *svga)
 
     svga->overlay.addr  = mach64->scaler_buf_offset[0] & 0x3fffff;
     svga->overlay.pitch = mach64->scaler_buf_pitch & 0xfff;
+    svga->overlay.ena   = !!(mach64->overlay_scale_cntl & MACH64_GTB_OVERLAY_EN);
     mach64->overlay_uv_addr = svga->overlay.addr;
     mach64->overlay_base    = svga->overlay.addr;
 }
@@ -171,6 +209,10 @@ mach64rage2p_aux_attach(mach64_t *mach64)
     if (!state->legacy_vblank_start) {
         state->legacy_vblank_start = mach64->svga.vblank_start;
         mach64->svga.vblank_start = mach64rage2p_vblank_start;
+    }
+    if (!state->legacy_overlay_draw) {
+        state->legacy_overlay_draw = mach64->svga.overlay_draw;
+        mach64->svga.overlay_draw = mach64rage2p_overlay_draw;
     }
 
     if (!state->initialized) {
@@ -227,10 +269,14 @@ mach64rage2p_aux_detach(mach64_t *mach64)
     if (state->legacy_vblank_start &&
         mach64->svga.vblank_start == mach64rage2p_vblank_start)
         mach64->svga.vblank_start = state->legacy_vblank_start;
+    if (state->legacy_overlay_draw &&
+        mach64->svga.overlay_draw == mach64rage2p_overlay_draw)
+        mach64->svga.overlay_draw = state->legacy_overlay_draw;
 
     mem_mapping_disable(&state->mapping);
     state->bar = 0;
     state->legacy_vblank_start = NULL;
+    state->legacy_overlay_draw = NULL;
     state->mach64 = NULL;
 }
 
