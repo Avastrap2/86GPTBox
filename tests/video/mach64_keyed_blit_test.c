@@ -159,7 +159,8 @@ run_fifo_blit(mach64_t *mach64, uint32_t pixel_width,
 }
 
 static void
-run_fifo_blit_16(mach64_t *mach64)
+run_fifo_blit_16(mach64_t *mach64, uint32_t compare_control,
+                 uint32_t compare_color)
 {
     /* Register sequence captured from the 800x600x16 DirectDraw test. */
     mach64_queue(mach64, 0x130, 0x00000000, FIFO_WRITE_DWORD);
@@ -172,9 +173,9 @@ run_fifo_blit_16(mach64_t *mach64)
     mach64_queue(mach64, 0x198, 0x00400040, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x2d8, 0x00000300, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x2d4, 0x00070003, FIFO_WRITE_DWORD);
-    mach64_queue(mach64, 0x308, 0x01000005, FIFO_WRITE_DWORD);
+    mach64_queue(mach64, 0x308, compare_control, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x304, 0xffffffff, FIFO_WRITE_DWORD);
-    mach64_queue(mach64, 0x300, 0x00007c1f, FIFO_WRITE_DWORD);
+    mach64_queue(mach64, 0x300, compare_color, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x330, 0x00000003, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x18c, 0x00000000, FIFO_WRITE_DWORD);
     mach64_queue(mach64, 0x10c, 0x02d80008, FIFO_WRITE_DWORD);
@@ -221,7 +222,7 @@ run_source_equal_16(void)
         }
     }
 
-    run_fifo_blit_16(mach64);
+    run_fifo_blit_16(mach64, 0x01000005, transparent);
 
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -250,6 +251,76 @@ run_source_equal_16(void)
         failures++;
 
     printf("source_equal_16: first=%04x center=%04x failures=%d busy=%d fifo=%d\n",
+           *pixel16(mach64, (dst_y * dst_pitch_pixels + dst_x) * 2),
+           *pixel16(mach64,
+                    ((dst_y + 16) * dst_pitch_pixels + dst_x + 16) * 2),
+           failures,
+           mach64->accel.busy,
+           mach64->fifo_write_idx - mach64->fifo_read_idx);
+
+    destroy_machine(mach64);
+    return failures;
+}
+
+static int
+run_destination_not_equal_16(void)
+{
+    enum {
+        src_byte_offset  = 0x000ec540,
+        src_pitch_pixels = 128,
+        dst_pitch_pixels = 800,
+        dst_x            = 728,
+        dst_y            = 8,
+        width             = 64,
+        height            = 64
+    };
+    const uint16_t source_color = 0x7c00;
+    const uint16_t key          = 0x03e0;
+    const uint16_t background   = 0x001f;
+    mach64_t     *mach64        = create_machine();
+    int           failures      = 0;
+
+    if (!mach64)
+        return 1;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            const uint32_t src_addr = src_byte_offset +
+                                      ((y * src_pitch_pixels + x) * 2);
+            const uint32_t dst_addr = ((dst_y + y) * dst_pitch_pixels +
+                                       dst_x + x) * 2;
+
+            *pixel16(mach64, src_addr) = source_color;
+            *pixel16(mach64, dst_addr) =
+                (x >= 16 && x < 48 && y >= 16 && y < 48) ? key : background;
+        }
+    }
+
+    run_fifo_blit_16(mach64, 0x00000004, key);
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            const uint32_t dst_addr = ((dst_y + y) * dst_pitch_pixels +
+                                       dst_x + x) * 2;
+            const uint16_t expected =
+                (x >= 16 && x < 48 && y >= 16 && y < 48) ?
+                source_color : background;
+            const uint16_t actual = *pixel16(mach64, dst_addr);
+
+            if (actual != expected && failures++ < 8) {
+                fprintf(stderr,
+                        "destination_not_equal_16 mismatch at %d,%d: "
+                        "expected %04x, got %04x\n",
+                        x, y, expected, actual);
+            }
+        }
+    }
+
+    if (mach64->accel.busy || mach64->fifo_read_idx != mach64->fifo_write_idx)
+        failures++;
+
+    printf("destination_not_equal_16: first=%04x center=%04x "
+           "failures=%d busy=%d fifo=%d\n",
            *pixel16(mach64, (dst_y * dst_pitch_pixels + dst_x) * 2),
            *pixel16(mach64,
                     ((dst_y + 16) * dst_pitch_pixels + dst_x + 16) * 2),
@@ -592,6 +663,7 @@ main(void)
     failures += run_source_equal_8();
     failures += run_destination_not_equal_8();
     failures += run_source_equal_16();
+    failures += run_destination_not_equal_16();
     failures += run_source_not_equal_masked();
     failures += run_destination_compare("compare_false",
                                         0x00000000, 0xffffffff,

@@ -161,6 +161,7 @@ typedef struct r3d_debug_state_t {
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     uint64_t key_probe_seq;
     r3d_debug_key_probe_t key_probes[R3D_DEBUG_KEY_PROBES];
+    r3d_debug_key_probe_t key_probe_nonzero;
 #endif
     r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
     r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
@@ -244,8 +245,10 @@ r3d_debug_access(mach64_3d_ctx_t *ctx, char op, unsigned width,
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
 /*
  * K accesses also live in the generic recent-history ring.  Preserve the
- * latest probe separately so normal Windows shutdown traffic cannot overwrite
- * the keyed BLT evidence before the diagnostic log is flushed.
+ * probes separately so normal Windows shutdown traffic cannot overwrite the
+ * keyed BLT evidence before the diagnostic log is flushed.  GDI commonly
+ * emits hundreds of destination compares against zero during shutdown, so
+ * also retain the latest probe with a nonzero compare color.
  */
 static void
 r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
@@ -277,6 +280,8 @@ r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
     probe->valid |= (uint16_t) (1u << index);
     if (addr == R3D_DEBUG_KEY_LAST)
         probe->complete = 1;
+    if ((probe->valid & (1u << 1)) && probe->values[1])
+        s->key_probe_nonzero = *probe;
 }
 #endif
 
@@ -510,6 +515,19 @@ r3d_debug_dump(mach64_t *m)
     if (s->key_probe_seq) {
         const r3d_debug_key_probe_t *probe =
             &s->key_probes[(s->key_probe_seq - 1) % R3D_DEBUG_KEY_PROBES];
+        fprintf(fp, "# seq=%llu complete=%u valid=%04X\n",
+                (unsigned long long)probe->seq, (unsigned)probe->complete,
+                (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
+    }
+
+    fprintf(fp, "\n[keyed_blt_nonzero_last]\n");
+    if (s->key_probe_nonzero.seq) {
+        const r3d_debug_key_probe_t *probe = &s->key_probe_nonzero;
         fprintf(fp, "# seq=%llu complete=%u valid=%04X\n",
                 (unsigned long long)probe->seq, (unsigned)probe->complete,
                 (unsigned)probe->valid);
