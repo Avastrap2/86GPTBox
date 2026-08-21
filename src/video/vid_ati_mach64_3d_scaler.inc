@@ -9,6 +9,8 @@ typedef struct r3d_scaler_debug_entry_t {
     uint64_t ticks;
     uint64_t drawn;
     uint64_t clipped;
+    uint64_t scissor_clipped;
+    uint64_t vram_clipped;
     uint32_t trigger_addr;
     uint32_t scale_3d_cntl;
     uint32_t dp_pix_width;
@@ -27,6 +29,8 @@ typedef struct r3d_scaler_debug_entry_t {
     uint32_t dst_y_x;
     uint32_t dst_height_width;
     uint32_t dst_cntl;
+    uint32_t sc_left_right;
+    uint32_t sc_top_bottom;
     int source_format;
     int destination_format;
     int replicate;
@@ -93,6 +97,8 @@ r3d_scaler_debug_begin(mach64_3d_ctx_t *ctx, uint32_t trigger_addr)
     entry->dst_y_x = m->dst_y_x;
     entry->dst_height_width = m->dst_height_width;
     entry->dst_cntl = m->dst_cntl;
+    entry->sc_left_right = m->sc_left_right;
+    entry->sc_top_bottom = m->sc_top_bottom;
     entry->source_format = r3d_tex_format(m);
     entry->destination_format = r3d_dst_format(m);
     entry->replicate = !!(entry->scale_3d_cntl & R3D_SCALE_PIX_REP);
@@ -124,24 +130,26 @@ r3d_scaler_debug_dump(mach64_t *m)
     count = state->seq < R3D_SCALER_DEBUG_ENTRIES ?
             state->seq : R3D_SCALER_DEBUG_ENTRIES;
     first = state->seq - count + 1;
-    fprintf(fp, "# Rage II+ front-end scaler diagnostic v1\n");
+    fprintf(fp, "# Rage II+ front-end scaler diagnostic v2\n");
     fprintf(fp, "# total=%llu retained=%llu\n",
             (unsigned long long) state->seq, (unsigned long long) count);
     fprintf(fp,
-            "# seq ticks drawn clipped trigger ctl dp_pix dp_src dp_mix "
+            "# seq ticks drawn clipped sc_clip vram_clip trigger ctl dp_pix dp_src dp_mix "
             "src_off src_w src_h src_pitch x_inc y_inc hacc vacc0 vacc1 "
-            "dst_off dst_y_x dst_hw dst_cntl sf df replicate\n");
+            "dst_off dst_y_x dst_hw dst_cntl sc_lr sc_tb sf df replicate\n");
     for (uint64_t seq = first; seq <= state->seq; seq++) {
         const r3d_scaler_debug_entry_t *entry =
             &state->entries[(seq - 1) % R3D_SCALER_DEBUG_ENTRIES];
         fprintf(fp,
-                "%010llu %llu %llu %llu %04X %08X %08X %08X %08X "
+                "%010llu %llu %llu %llu %llu %llu %04X %08X %08X %08X %08X "
                 "%08X %u %u %u %08X %08X %08X %08X %08X "
-                "%08X %08X %08X %08X %d %d %d\n",
+                "%08X %08X %08X %08X %08X %08X %d %d %d\n",
                 (unsigned long long) entry->seq,
                 (unsigned long long) entry->ticks,
                 (unsigned long long) entry->drawn,
                 (unsigned long long) entry->clipped,
+                (unsigned long long) entry->scissor_clipped,
+                (unsigned long long) entry->vram_clipped,
                 entry->trigger_addr, entry->scale_3d_cntl,
                 entry->dp_pix_width, entry->dp_src, entry->dp_mix,
                 entry->source_offset, entry->source_width,
@@ -150,6 +158,7 @@ r3d_scaler_debug_dump(mach64_t *m)
                 entry->h_accumulator, entry->v_accumulator_begin,
                 entry->v_accumulator_end, entry->dst_off_pitch,
                 entry->dst_y_x, entry->dst_height_width, entry->dst_cntl,
+                entry->sc_left_right, entry->sc_top_bottom,
                 entry->source_format, entry->destination_format,
                 entry->replicate);
     }
@@ -453,6 +462,8 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
                 y < scissor_top || y > scissor_bottom) {
                 if (debug)
                     debug->clipped++;
+                if (debug)
+                    debug->scissor_clipped++;
                 continue;
             }
 
@@ -494,6 +505,8 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
                 destination_address + destination_bpp > m->vram_size) {
                 if (debug)
                     debug->clipped++;
+                if (debug)
+                    debug->vram_clipped++;
                 continue;
             }
             if (r3d_scaler_write_pixel(ctx, (uint32_t) destination_address,
