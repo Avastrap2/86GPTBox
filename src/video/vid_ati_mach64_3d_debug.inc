@@ -149,7 +149,7 @@ typedef struct r3d_debug_palette_write_t {
     r3d_debug_access_t data;
 } r3d_debug_palette_write_t;
 
-#define R3D_DEBUG_RECTS 64
+#define R3D_DEBUG_RECTS 4096
 
 typedef struct r3d_debug_rect_t {
     uint64_t seq;
