@@ -21,6 +21,7 @@
 #define R3D_DEBUG_KEY_FIRST  0xF300
 #define R3D_DEBUG_KEY_LAST   0xF338
 #define R3D_DEBUG_KEY_VALUES 15
+#define R3D_DEBUG_KEY_PROBES 256
 #endif
 
 typedef struct r3d_debug_access_t {
@@ -132,6 +133,15 @@ typedef struct r3d_debug_sync_t {
     uint32_t fifo_after;
 } r3d_debug_sync_t;
 
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+typedef struct r3d_debug_key_probe_t {
+    uint64_t seq;
+    uint32_t values[R3D_DEBUG_KEY_VALUES];
+    uint16_t valid;
+    uint8_t complete;
+} r3d_debug_key_probe_t;
+#endif
+
 typedef struct r3d_debug_state_t {
     mach64_t *mach64;
     uint64_t access_seq;
@@ -149,10 +159,8 @@ typedef struct r3d_debug_state_t {
     uint64_t max_sync_ticks;
     uint32_t max_fifo_entries;
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-    uint64_t key_probe_count;
-    uint32_t key_probe_values[R3D_DEBUG_KEY_VALUES];
-    uint16_t key_probe_valid;
-    uint8_t key_probe_complete;
+    uint64_t key_probe_seq;
+    r3d_debug_key_probe_t key_probes[R3D_DEBUG_KEY_PROBES];
 #endif
     r3d_debug_access_t access_first[R3D_DEBUG_ACCESS_FIRST];
     r3d_debug_access_t access_last[R3D_DEBUG_ACCESS_LAST];
@@ -243,6 +251,7 @@ static void
 r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
 {
     r3d_debug_state_t *s;
+    r3d_debug_key_probe_t *probe;
     unsigned index;
 
     if (!ctx || !ctx->mach64 || addr < R3D_DEBUG_KEY_FIRST ||
@@ -254,19 +263,20 @@ r3d_debug_key_value(mach64_3d_ctx_t *ctx, uint32_t addr, uint32_t value)
         return;
 
     if (addr == R3D_DEBUG_KEY_FIRST) {
-        s->key_probe_count++;
-        memset(s->key_probe_values, 0, sizeof(s->key_probe_values));
-        s->key_probe_valid = 0;
-        s->key_probe_complete = 0;
-    } else if (!s->key_probe_count) {
+        uint64_t seq = ++s->key_probe_seq;
+        probe = &s->key_probes[(seq - 1) % R3D_DEBUG_KEY_PROBES];
+        memset(probe, 0, sizeof(*probe));
+        probe->seq = seq;
+    } else if (!s->key_probe_seq) {
         return;
-    }
+    } else
+        probe = &s->key_probes[(s->key_probe_seq - 1) % R3D_DEBUG_KEY_PROBES];
 
     index = (addr - R3D_DEBUG_KEY_FIRST) >> 2;
-    s->key_probe_values[index] = value;
-    s->key_probe_valid |= (uint16_t) (1u << index);
+    probe->values[index] = value;
+    probe->valid |= (uint16_t) (1u << index);
     if (addr == R3D_DEBUG_KEY_LAST)
-        s->key_probe_complete = 1;
+        probe->complete = 1;
 }
 #endif
 
@@ -452,6 +462,10 @@ r3d_debug_dump(mach64_t *m)
     uint64_t tex_draw_start;
     uint64_t sync_count;
     uint64_t sync_start;
+#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
+    uint64_t key_probe_count;
+    uint64_t key_probe_start;
+#endif
     mach64_3d_ctx_t *ctx;
 
     if (!s || !s->access_seq)
@@ -491,13 +505,38 @@ r3d_debug_dump(mach64_t *m)
 
 #ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
     fprintf(fp, "\n[keyed_blt_last]\n");
-    fprintf(fp, "# probe_count=%llu complete=%u valid=%04X\n",
-            (unsigned long long)s->key_probe_count,
-            (unsigned)s->key_probe_complete, (unsigned)s->key_probe_valid);
-    for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
-        if (s->key_probe_valid & (1u << i))
-            fprintf(fp, "K %04X %08X\n", R3D_DEBUG_KEY_FIRST + (i << 2),
-                    s->key_probe_values[i]);
+    fprintf(fp, "# probe_count=%llu\n",
+            (unsigned long long)s->key_probe_seq);
+    if (s->key_probe_seq) {
+        const r3d_debug_key_probe_t *probe =
+            &s->key_probes[(s->key_probe_seq - 1) % R3D_DEBUG_KEY_PROBES];
+        fprintf(fp, "# seq=%llu complete=%u valid=%04X\n",
+                (unsigned long long)probe->seq, (unsigned)probe->complete,
+                (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
+    }
+
+    fprintf(fp, "\n[keyed_blt_probes]\n");
+    key_probe_count = s->key_probe_seq < R3D_DEBUG_KEY_PROBES ?
+                      s->key_probe_seq : R3D_DEBUG_KEY_PROBES;
+    key_probe_start = s->key_probe_seq - key_probe_count + 1;
+    fprintf(fp, "# retained=%llu total=%llu\n",
+            (unsigned long long)key_probe_count,
+            (unsigned long long)s->key_probe_seq);
+    for (uint64_t seq = key_probe_start; seq <= s->key_probe_seq; seq++) {
+        const r3d_debug_key_probe_t *probe =
+            &s->key_probes[(seq - 1) % R3D_DEBUG_KEY_PROBES];
+        fprintf(fp, "P %010llu %u %04X\n", (unsigned long long)probe->seq,
+                (unsigned)probe->complete, (unsigned)probe->valid);
+        for (unsigned i = 0; i < R3D_DEBUG_KEY_VALUES; i++) {
+            if (probe->valid & (1u << i))
+                fprintf(fp, "K %04X %08X\n",
+                        R3D_DEBUG_KEY_FIRST + (i << 2), probe->values[i]);
+        }
     }
 #endif
 
