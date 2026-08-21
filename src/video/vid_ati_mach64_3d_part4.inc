@@ -29,6 +29,7 @@ r3d_unique_register(uint32_t b)
            ((b >= R3D_SCALE_Y_PITCH) && (b <= R3D_SCALE_VACC)) ||
            (b == R3D_SCALE_3D_CNTL) ||
            ((b >= R3D_S_X_INC2) && (b <= R3D_TEX_SIZE_PITCH)) ||
+           (b == R3D_TEX_PALETTE) ||
            ((b >= R3D_RED_X_INC) && (b <= R3D_ALPHA_START));
 }
 
@@ -552,6 +553,24 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         return 0;
     }
 #endif
+
+    /*
+     * Rage II CI8 textures use a private 256-entry RGB palette, independent
+     * of the VGA display DAC palette.  The Windows 95 HAL writes each entry
+     * directly to 0x37c as index:RGB888 (index in bits 31:24).  The captured
+     * Globe stream contains complete 256-entry uploads in this exact format.
+     */
+    if (b == R3D_TEX_PALETTE) {
+        uint32_t i = b >> 2;
+
+        r3d_sync_legacy_fifo(ctx);
+        ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
+        if (r3d_write_complete(a, type))
+            mach64_3d_texture_palette_store(ctx->texture_palette, ctx->regs[i]);
+        r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
+        r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
+        return 1;
+    }
 
     if (!r3d_unique_register(b)) {
         ctx->legacy_fifo_pending = 1;

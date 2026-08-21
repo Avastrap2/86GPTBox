@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "vid_ati_mach64_3d.h"
+#include "vid_ati_mach64_3d_texture_palette.h"
 
 #define MACH64_3D_CONTEXTS 4
 #define R3D_TRACE_RING 16384
@@ -47,6 +48,7 @@
 #define R3D_T_Y_INC 0x368
 #define R3D_T_START 0x36c
 #define R3D_TEX_SIZE_PITCH 0x370
+#define R3D_TEX_PALETTE 0x37c
 
 #define R3D_RED_X_INC 0x3c0
 #define R3D_RED_Y_INC 0x3c4
@@ -103,6 +105,7 @@ typedef struct rgba_t { int r, g, b, a; } rgba_t;
 typedef struct mach64_3d_ctx_t {
     mach64_t *mach64;
     uint32_t regs[256];
+    uint32_t texture_palette[MACH64_3D_TEXTURE_PALETTE_ENTRIES];
     int trail_x;
     int trail_valid;
     /*

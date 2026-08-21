@@ -23,6 +23,12 @@ add_executable(mach64_scaler_math_test
 
 add_test(NAME mach64_scaler_math COMMAND mach64_scaler_math_test)
 
+add_executable(mach64_texture_palette_test
+    mach64_texture_palette_test.c
+)
+
+add_test(NAME mach64_texture_palette COMMAND mach64_texture_palette_test)
+
 add_executable(mach64_scaler_test
     mach64_scaler_test.c
     ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_3d.c
