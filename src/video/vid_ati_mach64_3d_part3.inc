@@ -1,3 +1,5 @@
+#include "vid_ati_mach64_3d_outline.h"
+
 #define R3D_GTB_DST_BRES_SIGN      (1u << 11)
 #define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
 #define R3D_GTB_TRAIL_X_DIR         (1u << 13)
@@ -67,7 +69,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
      */
     int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
     int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
-    int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
+    int tex=fcn==2,outline=mach64_3d_textured_outline(fcn,m->dst_cntl),bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
     for(int row=0;row<len;row++){
@@ -90,8 +92,9 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
-                    dbg.candidate_pixels++;
-                    if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,tex_s,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
+                    if(!mach64_3d_outline_span_pixel(outline,len,x,dl,dh))draw=0;
+                    if(draw)dbg.candidate_pixels++;
+                    if(draw&&tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,tex_s,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
                     if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
                     if(draw){
