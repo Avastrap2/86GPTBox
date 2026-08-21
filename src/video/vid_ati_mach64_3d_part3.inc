@@ -94,7 +94,19 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                     if(tex){rgba_t texel=r3d_sample_texel_cached(ctx,&ts,tex_s,tt);dbg.texture_samples+=bilinear?4:1;if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
                     if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
-                    if(draw){if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);dbg.drawn_pixels++;}
+                    if(draw){
+                        uint32_t source_rgb;
+                        if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));
+                        source_rgb=((uint32_t)r3d_clamp8(src.r)<<16)|
+                                   ((uint32_t)r3d_clamp8(src.g)<<8)|
+                                   (uint32_t)r3d_clamp8(src.b);
+                        dbg.source_rgb_or|=source_rgb;
+                        if(source_rgb)dbg.nonzero_source_pixels++;
+                        if(src.r>dbg.source_r_max)dbg.source_r_max=(uint8_t)r3d_clamp8(src.r);
+                        if(src.g>dbg.source_g_max)dbg.source_g_max=(uint8_t)r3d_clamp8(src.g);
+                        if(src.b>dbg.source_b_max)dbg.source_b_max=(uint8_t)r3d_clamp8(src.b);
+                        r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);dbg.drawn_pixels++;
+                    }
                     da+=dbpp;if(z_enabled)za+=2;
                     rr+=rrstep;gg+=ggstep;bb+=bbstep;aa+=aastep;zz+=zzstep;
                     if(tex){tex_s+=tex_sstep;tt+=ttstep;tex_sstep+=sx2;ttstep+=tx2;}

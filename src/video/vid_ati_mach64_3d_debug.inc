@@ -49,6 +49,11 @@ typedef struct r3d_debug_draw_t {
     uint64_t alpha_rejects;
     uint64_t z_rejects;
     uint64_t texture_samples;
+    uint64_t nonzero_source_pixels;
+    uint32_t source_rgb_or;
+    uint8_t source_r_max;
+    uint8_t source_g_max;
+    uint8_t source_b_max;
 
     uint32_t cmd;
     uint32_t ctl;
@@ -61,6 +66,9 @@ typedef struct r3d_debug_draw_t {
     uint32_t z_off_pitch;
     uint32_t dp_pix_width;
     uint32_t write_mask;
+    uint32_t dp_src;
+    uint32_t dp_mix;
+    uint32_t dp_frgd_clr;
     uint32_t tex_size_pitch;
     uint32_t tex_base;
     uint32_t fifo_entries_begin;
@@ -365,6 +373,9 @@ r3d_debug_draw_begin(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d, uint32_t cmd,
     d->z_off_pitch = ctx->regs[R3D_Z_OFF_PITCH >> 2];
     d->dp_pix_width = m->dp_pix_width;
     d->write_mask = m->write_mask;
+    d->dp_src = m->dp_src;
+    d->dp_mix = m->dp_mix;
+    d->dp_frgd_clr = m->dp_frgd_clr;
     d->tex_size_pitch = ctx->regs[R3D_TEX_SIZE_PITCH >> 2];
 
     tsp = d->tex_size_pitch;
@@ -688,6 +699,21 @@ r3d_debug_dump(mach64_t *m)
                 d->dst_format, d->dst_bpp, d->tex_format, d->tex_bpp,
                 d->fcn, d->alpha_fog, d->bilinear,
                 d->z_enabled, d->z_write);
+    }
+
+    fprintf(fp, "\n[pixel_paths]\n");
+    fprintf(fp,
+            "# seq dp_src dp_mix dp_frgd_clr nonzero_src rgb_or "
+            "r_max g_max b_max\n");
+    for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
+        const r3d_debug_draw_t *d =
+            &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
+        fprintf(fp, "%010llu %08X %08X %08X %llu %06X %u %u %u\n",
+                (unsigned long long)d->seq,
+                d->dp_src, d->dp_mix, d->dp_frgd_clr,
+                (unsigned long long)d->nonzero_source_pixels,
+                d->source_rgb_or & 0xffffffu,
+                d->source_r_max, d->source_g_max, d->source_b_max);
     }
 
     /*
