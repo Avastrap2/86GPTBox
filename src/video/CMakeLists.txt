@@ -27,7 +27,7 @@ add_library(vid OBJECT
     ramdac/vid_ramdac_att20c49x.c
     ramdac/vid_ramdac_att2xc498.c
     ramdac/vid_ramdac_bt48x.c 
-    ramdac/vid_ramdac_bt481.c 
+    ramdac/vid_ramdac_bt481.c
     ramdac/vid_ramdac_ibm_rgb528.c
     ramdac/vid_ramdac_sc1148x.c 
     ramdac/vid_ramdac_sc1502x.c 
@@ -110,6 +110,7 @@ add_library(vid OBJECT
     vid_ati_mach64.c
     vid_ati_mach64_accel.c
     vid_ati_mach64_3d.c
+    vid_ati_mach64_gtb_hook.c
     vid_ati_mach64_rage2p.c
 
     # Chips & Technologies
@@ -156,6 +157,30 @@ add_library(vid OBJECT
 # Rage/GT 3D register writes before forwarding ordinary 2D operations.
 set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
+
+# Keep the mature PCI implementation as legacy callbacks while routing Mach64
+# card registration through a dispatcher.  The force-included GTB hook also
+# wraps I/O handler registration and integrated-PLL clock output so ARS2D can
+# use its block-decoded BAR and PLL readback during option-ROM POST.
+set_source_files_properties(vid_ati_mach64.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
+
+# The Rage II+ shim reuses VT2's mature initializer through a small proxy that
+# changes only the low-byte core type to MACH64_GTB.  This keeps GTB out of the
+# VT/VT2 CONFIG_CNTL aperture-encoding special case without enabling VT3-only
+# overlay/DDC behavior.  PCI writes still pass through the GTB legacy dispatcher
+# for IOCONFIG/BAR remapping.  Ordinary MMIO reads are routed through trace-only
+# wrappers so a hidden FIFO/GUI status polling loop is visible in rage2p_trace.
+set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device;mach64_ext_readb=mach64_ext_readb_gtb_trace;mach64_ext_readw=mach64_ext_readw_gtb_trace;mach64_ext_readl=mach64_ext_readl_gtb_trace")
+
+if(MSVC)
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+else()
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "-include" "${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+endif()
 
 # Until the card table is split into a generated registry, expose Rage II+ in
 # the existing Mach64 VT2 slot without editing the large static table here.

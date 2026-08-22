@@ -21,6 +21,9 @@
 
 #include "vid_ati_mach64.h"
 
+void mach64_3d_rect_debug_begin(mach64_t *mach64);
+void mach64_3d_rect_debug_end(mach64_t *mach64);
+
 static void
 mach64_accel_write_fifo_l(mach64_t *mach64, uint32_t addr, uint32_t val);
 
@@ -816,6 +819,7 @@ mach64_start_fill(mach64_t *mach64)
     mach64->accel.busy = 1;
 
     mach64->accel.op = OP_RECT;
+    mach64_3d_rect_debug_begin(mach64);
 }
 
 void
@@ -913,10 +917,10 @@ mach64_blit_calc_cmp_clr(mach64_t* mach64, uint32_t src_dat, uint32_t dest_dat)
         case 1: /*TRUE*/
             cmp_clr = 1;
             break;
-        case 4: /*DST_CLR != CLR_CMP_CLR*/
+        case 4: /*SELECTED_CLR != CLR_CMP_CLR*/
             cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) != mach64->accel.clr_cmp_clr;
             break;
-        case 5: /*DST_CLR == CLR_CMP_CLR*/
+        case 5: /*SELECTED_CLR == CLR_CMP_CLR*/
             cmp_clr = (((mach64->accel.clr_cmp_src) ? src_dat : dest_dat) & mach64->accel.clr_cmp_mask) == mach64->accel.clr_cmp_clr;
             break;
         default:
@@ -1145,6 +1149,7 @@ mach64_blit_rect(uint32_t cpu_dat, int count, mach64_t* mach64)
             if (mach64->accel.dst_height <= 0) {
                 /*Blit finished*/
                 mach64_log("mach64 blit finished\n");
+                mach64_3d_rect_debug_end(mach64);
                 mach64->accel.busy = 0;
                 if (mach64->dst_cntl & DST_X_TILE)
                     mach64->dst_y_x = (mach64->dst_y_x & 0xfff) | ((mach64->dst_y_x + (mach64->accel.dst_width << 16)) & 0xfff0000);

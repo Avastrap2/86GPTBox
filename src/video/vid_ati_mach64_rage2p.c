@@ -2,17 +2,392 @@
  * ATI 3D Rage II+ DVD (Mach64 GTB/GU) integration shim.
  *
  * The mature Mach64 VT2 implementation supplies VGA, CRTC, PCI, 2D and
- * video-overlay behavior.  This shim changes the PCI/chip identity to GU and
- * inserts the GT 3D command decoder in front of the legacy Mach64 FIFO.
+ * video-overlay behavior.  This shim changes the PCI/chip identity to GU,
+ * supplies GTB-only POST/control register behavior and inserts the GT 3D
+ * command decoder in front of the legacy Mach64 FIFO.
  */
 #include "vid_ati_mach64_3d.h"
 
+/*
+ * ARS2D.bin is a complete ATI PCI option-ROM image for 1002:4755.  Its ROM
+ * header declares 0x48 512-byte blocks = 36 KiB.  Allocate a 64 KiB backing
+ * buffer so the ROM mask stays a power of two, but expose only the declared
+ * 36 KiB image to the guest.
+ */
+#define BIOS_ROMGTB_PATH         "roms/video/mach64/ARS2D.bin"
+#define BIOS_ROMGTB_IMAGE_SIZE   0x9000u
+#define BIOS_ROMGTB_MAP_SIZE     BIOS_ROMGTB_IMAGE_SIZE
+#define BIOS_ROMGTB_BACKING_SIZE 0x10000u
+#define MACH64_GTB_PCI_ID        0x4755u
+
+/*
+ * Real 215GTB/GU boards expose a third PCI BAR: a 4 KiB non-prefetchable
+ * auxiliary register aperture.  BAR0 remains the framebuffer and BAR1 remains
+ * the 256-byte block-decoded I/O aperture.  The auxiliary aperture contains
+ * the same Mach64 register blocks as the legacy top-of-framebuffer MMIO window;
+ * block 0 starts at BAR2+0x400 and block 1 wraps to BAR2+0x000.
+ */
+#define MACH64_GTB_AUX_BAR_BYTE0 0x18
+#define MACH64_GTB_AUX_BAR_BYTE3 0x1b
+#define MACH64_GTB_AUX_SIZE      0x1000u
+#define MACH64_GTB_AUX_MASK      0xfffff000u
+#define MACH64_GTB_AUX_STATES    4
+#define MACH64_GTB_OVERLAY_EN    (1u << 30)
+
 extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
+extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
+extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
 extern void mach64_close(void *priv);
 extern void mach64_speed_changed(void *priv);
 extern void mach64_force_redraw(void *priv);
-extern int mach64vt2_available(void);
 extern const device_t mach64vt2_device;
+extern mach64_t *reset_state[2];
+
+/* GTB-only non-GUI register latches implemented by vid_ati_mach64_gtb_hook.c. */
+extern int mach64_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val);
+extern int mach64_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val);
+
+/*
+ * GTB compatibility latches occupy only control Block 0 (offsets 0x000..0x0ff
+ * within the register bank selected by address bit 10).  Do not fold address
+ * bits 8-9 away: GUI registers at 0x100..0x3ff must continue to the mature 2D
+ * FIFO / Rage 3D decoder rather than aliasing onto the control shadow.
+ */
+static int
+mach64rage2p_gtb_cfg_readb(mach64_t *mach64, uint32_t addr, uint8_t *val)
+{
+    if (addr & 0x300u)
+        return 0;
+    return mach64_gtb_cfg_readb(mach64, addr, val);
+}
+
+static int
+mach64rage2p_gtb_cfg_writeb(mach64_t *mach64, uint32_t addr, uint8_t val)
+{
+    if (addr & 0x300u)
+        return 0;
+    return mach64_gtb_cfg_writeb(mach64, addr, val);
+}
+
+static uint8_t mach64rage2p_mmio_readb(uint32_t addr, void *priv);
+static uint16_t mach64rage2p_mmio_readw(uint32_t addr, void *priv);
+static uint32_t mach64rage2p_mmio_readl(uint32_t addr, void *priv);
+static void mach64rage2p_mmio_writeb(uint32_t addr, uint8_t val, void *priv);
+static void mach64rage2p_mmio_writew(uint32_t addr, uint16_t val, void *priv);
+static void mach64rage2p_mmio_writel(uint32_t addr, uint32_t val, void *priv);
+
+typedef struct mach64rage2p_aux_state_t {
+    mach64_t *mach64;
+    mem_mapping_t mapping;
+    uint32_t bar;
+    void (*legacy_vblank_start)(svga_t *svga);
+    void (*legacy_overlay_draw)(svga_t *svga, int displine);
+    int initialized;
+} mach64rage2p_aux_state_t;
+
+static mach64rage2p_aux_state_t mach64rage2p_aux_states[MACH64_GTB_AUX_STATES];
+
+static mach64rage2p_aux_state_t *
+mach64rage2p_aux_state(mach64_t *mach64, int create)
+{
+    mach64rage2p_aux_state_t *free_state = NULL;
+
+    if (!mach64)
+        return NULL;
+
+    for (unsigned i = 0; i < MACH64_GTB_AUX_STATES; i++) {
+        if (mach64rage2p_aux_states[i].mach64 == mach64)
+            return &mach64rage2p_aux_states[i];
+        if (!mach64rage2p_aux_states[i].mach64 && !free_state)
+            free_state = &mach64rage2p_aux_states[i];
+    }
+
+    if (!create || !free_state)
+        return NULL;
+
+    free_state->mach64 = mach64;
+    free_state->bar = 0;
+    return free_state;
+}
+
+/*
+ * 264GT-B/GU (3D Rage II+) is a Rev-B multimedia implementation.  ATI's
+ * Windows 95 DirectDraw driver programs OVERLAY_KEY_CNTL differently from the
+ * older VT/GT Rev-A path: Rev-B uses only bit 8 for the mixer selection.
+ *
+ *   bit 8 = 0: GR_CMP
+ *   bit 8 = 1: GR_CMP & VID_CMP
+ *
+ * The mature Mach64 renderer implements the older four-bit truth table in
+ * bits 8..11, where the same functions are encodings 0x0 and 0xC.  Translate
+ * only while rendering so the guest-visible GTB register remains unchanged.
+ */
+static uint32_t
+mach64rage2p_overlay_key_cntl_legacy(uint32_t key_cntl)
+{
+    return (key_cntl & ~0x0f00u) | ((key_cntl & 0x0100u) ? 0x0c00u : 0u);
+}
+
+/*
+ * The legacy renderer expands packed 15/16-bpp overlay samples to RGB888
+ * before running its video-key comparison.  GTB hardware compares the source
+ * stream in its native format, and ATI's DirectDraw driver programs key
+ * colour/mask values in that same native format.  Convert the key temporarily
+ * with the exact bit replication used by the renderer so both sides of the
+ * software comparison are in the same representation.
+ */
+static uint32_t
+mach64rage2p_rgb555_to_rgb888(uint16_t pixel)
+{
+    uint32_t r = (pixel >> 10) & 0x1fu;
+    uint32_t g = (pixel >> 5) & 0x1fu;
+    uint32_t b = pixel & 0x1fu;
+
+    r = (r << 3) | (r >> 2);
+    g = (g << 3) | (g >> 2);
+    b = (b << 3) | (b >> 2);
+    return (r << 16) | (g << 8) | b;
+}
+
+static uint32_t
+mach64rage2p_rgb565_to_rgb888(uint16_t pixel)
+{
+    uint32_t r = (pixel >> 11) & 0x1fu;
+    uint32_t g = (pixel >> 5) & 0x3fu;
+    uint32_t b = pixel & 0x1fu;
+
+    r = (r << 3) | (r >> 2);
+    g = (g << 2) | (g >> 4);
+    b = (b << 3) | (b >> 2);
+    return (r << 16) | (g << 8) | b;
+}
+
+static uint32_t
+mach64rage2p_rgb555_mask_to_rgb888(uint16_t mask)
+{
+    uint32_t expanded = 0;
+
+    for (unsigned bit = 0; bit < 15; bit++) {
+        if (mask & (1u << bit))
+            expanded |= mach64rage2p_rgb555_to_rgb888((uint16_t) (1u << bit));
+    }
+    return expanded;
+}
+
+static uint32_t
+mach64rage2p_rgb565_mask_to_rgb888(uint16_t mask)
+{
+    uint32_t expanded = 0;
+
+    for (unsigned bit = 0; bit < 16; bit++) {
+        if (mask & (1u << bit))
+            expanded |= mach64rage2p_rgb565_to_rgb888((uint16_t) (1u << bit));
+    }
+    return expanded;
+}
+
+static void
+mach64rage2p_overlay_draw(svga_t *svga, int displine)
+{
+    mach64_t *mach64 = (mach64_t *) svga->priv;
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+    uint32_t key_cntl;
+    uint32_t video_key_clr;
+    uint32_t video_key_msk;
+    unsigned video_key_fn;
+
+    if (!state || !state->legacy_overlay_draw)
+        return;
+
+    key_cntl = mach64->overlay_key_cntl;
+    video_key_clr = mach64->overlay_video_key_clr;
+    video_key_msk = mach64->overlay_video_key_msk;
+    video_key_fn = key_cntl & 0x7u;
+
+    mach64->overlay_key_cntl = mach64rage2p_overlay_key_cntl_legacy(key_cntl);
+    if (video_key_fn == 4 || video_key_fn == 5) {
+        switch (mach64->scaler_format) {
+            case 0x3:
+                mach64->overlay_video_key_clr =
+                    mach64rage2p_rgb555_to_rgb888((uint16_t) video_key_clr);
+                mach64->overlay_video_key_msk =
+                    mach64rage2p_rgb555_mask_to_rgb888((uint16_t) video_key_msk);
+                break;
+            case 0x4:
+                mach64->overlay_video_key_clr =
+                    mach64rage2p_rgb565_to_rgb888((uint16_t) video_key_clr);
+                mach64->overlay_video_key_msk =
+                    mach64rage2p_rgb565_mask_to_rgb888((uint16_t) video_key_msk);
+                break;
+            default:
+                break;
+        }
+    }
+
+    state->legacy_overlay_draw(svga, displine);
+
+    mach64->overlay_video_key_clr = video_key_clr;
+    mach64->overlay_video_key_msk = video_key_msk;
+    mach64->overlay_key_cntl = key_cntl;
+}
+
+/*
+ * GTB keeps the pre-VT3 display/DDC behavior used by the mature VT2 core, but
+ * its video overlay fetches from the scaler buffer register family.  The
+ * legacy vblank callback chooses BUF_OFFSET/BUF_PITCH for all pre-VT3 types
+ * and also applies the old Rev-A key-mixer enable test.  Correct both pieces
+ * after that callback has performed the normal interrupt, window and
+ * accumulator setup.
+ */
+static void
+mach64rage2p_vblank_start(svga_t *svga)
+{
+    mach64_t *mach64 = (mach64_t *) svga->priv;
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (state && state->legacy_vblank_start)
+        state->legacy_vblank_start(svga);
+
+    svga->overlay.addr  = mach64->scaler_buf_offset[0] & 0x3fffff;
+    svga->overlay.pitch = mach64->scaler_buf_pitch & 0xfff;
+    svga->overlay.ena   = !!(mach64->overlay_scale_cntl & MACH64_GTB_OVERLAY_EN);
+    mach64->overlay_uv_addr = svga->overlay.addr;
+    mach64->overlay_base    = svga->overlay.addr;
+}
+
+static uint8_t
+mach64rage2p_aux_readb(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t ret = mach64rage2p_mmio_readb(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 1, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static uint16_t
+mach64rage2p_aux_readw(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint16_t ret = mach64rage2p_mmio_readw(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 2, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static uint32_t
+mach64rage2p_aux_readl(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t ret = mach64rage2p_mmio_readl(addr, priv);
+
+    mach64_3d_trace_external(mach64, 'm', 4, 0x3000u | (addr & 0xfffu), ret, 1);
+    return ret;
+}
+
+static int
+mach64rage2p_aux_attach(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+
+    if (!state)
+        return 0;
+
+    if (!state->legacy_vblank_start) {
+        state->legacy_vblank_start = mach64->svga.vblank_start;
+        mach64->svga.vblank_start = mach64rage2p_vblank_start;
+    }
+    if (!state->legacy_overlay_draw) {
+        state->legacy_overlay_draw = mach64->svga.overlay_draw;
+        mach64->svga.overlay_draw = mach64rage2p_overlay_draw;
+    }
+
+    if (!state->initialized) {
+        mem_mapping_add(&state->mapping,
+                        0, 0,
+                        mach64rage2p_aux_readb,
+                        mach64rage2p_aux_readw,
+                        mach64rage2p_aux_readl,
+                        mach64rage2p_mmio_writeb,
+                        mach64rage2p_mmio_writew,
+                        mach64rage2p_mmio_writel,
+                        NULL, MEM_MAPPING_EXTERNAL, mach64);
+        state->initialized = 1;
+    } else {
+        mem_mapping_set_handler(&state->mapping,
+                                mach64rage2p_aux_readb,
+                                mach64rage2p_aux_readw,
+                                mach64rage2p_aux_readl,
+                                mach64rage2p_mmio_writeb,
+                                mach64rage2p_mmio_writew,
+                                mach64rage2p_mmio_writel);
+        mem_mapping_set_p(&state->mapping, mach64);
+    }
+
+    mem_mapping_disable(&state->mapping);
+    return 1;
+}
+
+static void
+mach64rage2p_aux_update_mapping(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (!state)
+        return;
+
+    /* 0xfffff000 is the BAR sizing probe value, never a live decode address. */
+    if ((mach64->pci_regs[PCI_REG_COMMAND] & PCI_COMMAND_MEM) &&
+        state->bar && state->bar != MACH64_GTB_AUX_MASK) {
+        mem_mapping_set_addr(&state->mapping, state->bar, MACH64_GTB_AUX_SIZE);
+    } else {
+        mem_mapping_disable(&state->mapping);
+    }
+}
+
+static void
+mach64rage2p_aux_detach(mach64_t *mach64)
+{
+    mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 0);
+
+    if (!state)
+        return;
+
+    if (state->legacy_vblank_start &&
+        mach64->svga.vblank_start == mach64rage2p_vblank_start)
+        mach64->svga.vblank_start = state->legacy_vblank_start;
+    if (state->legacy_overlay_draw &&
+        mach64->svga.overlay_draw == mach64rage2p_overlay_draw)
+        mach64->svga.overlay_draw = state->legacy_overlay_draw;
+
+    mem_mapping_disable(&state->mapping);
+    state->bar = 0;
+    state->legacy_vblank_start = NULL;
+    state->legacy_overlay_draw = NULL;
+    state->mach64 = NULL;
+}
+
+static uint16_t
+mach64rage2p_le16(const uint8_t *p)
+{
+    return (uint16_t) p[0] | ((uint16_t) p[1] << 8);
+}
+
+static int
+mach64rage2p_contains(const uint8_t *buf, size_t len, const char *needle)
+{
+    const size_t needle_len = strlen(needle);
+
+    if (!needle_len || needle_len > len)
+        return 0;
+
+    for (size_t i = 0; i <= len - needle_len; i++) {
+        if (!memcmp(buf + i, needle, needle_len))
+            return 1;
+    }
+
+    return 0;
+}
 
 void
 mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
@@ -21,48 +396,453 @@ mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
         mach64_queue_legacy(mach64, addr, val, type);
 }
 
+/*
+ * GU/GTB has its own PCI revision, a 4 KiB auxiliary MMIO BAR and an extra
+ * IOCONFIG disable bit that the VT2 core does not preserve.  Keep all other PCI
+ * behavior in the legacy core.
+ */
+static uint8_t
+mach64rage2p_pci_read(int func, int addr, int len, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t ret;
+
+    if (mach64->pci_id == MACH64_GTB_PCI_ID) {
+        if (addr >= MACH64_GTB_AUX_BAR_BYTE0 && addr <= MACH64_GTB_AUX_BAR_BYTE3) {
+            mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+            unsigned shift = (unsigned) (addr - MACH64_GTB_AUX_BAR_BYTE0) * 8;
+            ret = state ? (state->bar >> shift) & 0xff : 0;
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
+        if (addr == PCI_REG_REVISION) {
+            ret = 0x9a;
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
+        if (addr == MACH64_PCI_IOCONFIG) {
+            ret = mach64_gtb_pci_ioconfig_read(priv);
+            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
+            return ret;
+        }
+    }
+
+    return mach64_pci_read_legacy(func, addr, len, priv);
+}
+
+/*
+ * The legacy writer performs ordinary BAR/command handling.  Preserve the
+ * complete GTB IOCONFIG low nibble before forwarding because legacy VT2 keeps
+ * only bits 0..2.  BAR2 is handled here because the VT2 core does not expose
+ * the GU auxiliary register aperture.  ARS2D is 36 KiB, so correct the ROM
+ * mapping after legacy code applies its fixed 32 KiB mapping.
+ */
+static void
+mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64->pci_id == MACH64_GTB_PCI_ID &&
+        addr >= MACH64_GTB_AUX_BAR_BYTE0 && addr <= MACH64_GTB_AUX_BAR_BYTE3) {
+        mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
+        unsigned shift = (unsigned) (addr - MACH64_GTB_AUX_BAR_BYTE0) * 8;
+
+        if (state) {
+            state->bar = (state->bar & ~(0xffu << shift)) | ((uint32_t) val << shift);
+            state->bar &= MACH64_GTB_AUX_MASK;
+            mach64_3d_trace_external(mach64, 'P', 1, 0x1000u | (uint32_t) addr, state->bar, 1);
+            /* PCI config writes arrive one byte at a time.  Wait for the last
+             * BAR byte before moving a live mapping so sizing writes cannot
+             * transiently decode partial addresses such as 0x0000f000. */
+            if (addr == MACH64_GTB_AUX_BAR_BYTE3)
+                mach64rage2p_aux_update_mapping(mach64);
+        }
+        return;
+    }
+
+    if (mach64->pci_id == MACH64_GTB_PCI_ID && addr == MACH64_PCI_IOCONFIG)
+        mach64_gtb_pci_ioconfig_write(priv, val);
+
+    mach64_pci_write_legacy(func, addr, len, val, priv);
+
+    if (mach64->pci_id != MACH64_GTB_PCI_ID)
+        return;
+
+    if (addr == PCI_REG_COMMAND)
+        mach64rage2p_aux_update_mapping(mach64);
+
+    if ((addr != PCI_REG_ROM_BAR_BYTE0) &&
+        (addr != PCI_REG_ROM_BAR_BYTE1) &&
+        (addr != PCI_REG_ROM_BAR_BYTE2) &&
+        (addr != PCI_REG_ROM_BAR_BYTE3))
+        return;
+
+    if (mach64->pci_regs[PCI_REG_ROM_BAR_BYTE0] & 0x01) {
+        uint32_t biosaddr = ((uint32_t) mach64->pci_regs[PCI_REG_ROM_BAR_BYTE2] << 16) |
+                            ((uint32_t) mach64->pci_regs[PCI_REG_ROM_BAR_BYTE3] << 24);
+        mem_mapping_set_addr(&mach64->bios_rom.mapping, biosaddr, BIOS_ROMGTB_MAP_SIZE);
+    }
+}
+
+/*
+ * vid_ati_mach64.c is compiled with pci_add_card renamed to this dispatcher.
+ * The callbacks themselves remain shared with all Mach64 variants; the GTB
+ * special cases are gated by pci_id after Rage II+ initialization.
+ */
+void
+mach64_pci_add_card_dispatch(uint8_t add_type,
+                             uint8_t (*read)(int func, int addr, int len, void *priv),
+                             void (*write)(int func, int addr, int len, uint8_t val, void *priv),
+                             void *priv, uint8_t *slot)
+{
+    (void) read;
+    (void) write;
+    pci_add_card(add_type, mach64rage2p_pci_read, mach64rage2p_pci_write, priv, slot);
+}
+
+/*
+ * GTB has both non-GUI control registers absent from VT2 and GUI 3D registers.
+ * Read them before falling back to the mature VT2 MMIO implementation.
+ */
+static uint8_t
+mach64rage2p_mmio_readb(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t reg;
+    uint8_t val;
+
+    if (mach64rage2p_gtb_cfg_readb(mach64, addr, &val))
+        return val;
+
+    if (mach64_3d_read(mach64, addr, &reg))
+        return (reg >> ((addr & 3) * 8)) & 0xff;
+
+    return mach64_ext_readb(addr, priv);
+}
+
+static uint16_t
+mach64rage2p_mmio_readw(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t reg;
+    uint8_t val;
+
+    if (mach64rage2p_gtb_cfg_readb(mach64, addr, &val) ||
+        mach64rage2p_gtb_cfg_readb(mach64, addr + 1, &val)) {
+        return (uint16_t) mach64rage2p_mmio_readb(addr, priv) |
+               ((uint16_t) mach64rage2p_mmio_readb(addr + 1, priv) << 8);
+    }
+
+    if (mach64_3d_read(mach64, addr, &reg)) {
+        unsigned lane = addr & 3;
+        if (lane <= 2)
+            return (reg >> (lane * 8)) & 0xffff;
+
+        return (uint16_t) mach64rage2p_mmio_readb(addr, priv) |
+               ((uint16_t) mach64rage2p_mmio_readb(addr + 1, priv) << 8);
+    }
+
+    if (mach64_3d_read(mach64, addr + 1, &reg))
+        return (uint16_t) mach64rage2p_mmio_readb(addr, priv) |
+               ((uint16_t) mach64rage2p_mmio_readb(addr + 1, priv) << 8);
+
+    return mach64_ext_readw(addr, priv);
+}
+
+static uint32_t
+mach64rage2p_mmio_readl(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint32_t reg;
+    uint8_t val;
+
+    for (unsigned i = 0; i < 4; i++) {
+        if (mach64rage2p_gtb_cfg_readb(mach64, addr + i, &val)) {
+            return (uint32_t) mach64rage2p_mmio_readb(addr, priv) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 1, priv) << 8) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 2, priv) << 16) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 3, priv) << 24);
+        }
+    }
+
+    if (((addr & 3) == 0) && mach64_3d_read(mach64, addr, &reg))
+        return reg;
+
+    for (unsigned i = 0; i < 4; i++) {
+        if (mach64_3d_read(mach64, addr + i, &reg)) {
+            return (uint32_t) mach64rage2p_mmio_readb(addr, priv) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 1, priv) << 8) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 2, priv) << 16) |
+                   ((uint32_t) mach64rage2p_mmio_readb(addr + 3, priv) << 24);
+        }
+    }
+
+    return mach64_ext_readl(addr, priv);
+}
+
+static void
+mach64rage2p_mmio_writeb(uint32_t addr, uint8_t val, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    mach64_3d_trace_external(mach64, 'M', 1, addr, val, 0);
+    if (mach64rage2p_gtb_cfg_writeb(mach64, addr, val))
+        return;
+    mach64_ext_writeb(addr, val, priv);
+}
+
+static void
+mach64rage2p_mmio_writew(uint32_t addr, uint16_t val, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t probe;
+
+    mach64_3d_trace_external(mach64, 'M', 2, addr, val, 0);
+    if (mach64rage2p_gtb_cfg_readb(mach64, addr, &probe) ||
+        mach64rage2p_gtb_cfg_readb(mach64, addr + 1, &probe)) {
+        mach64rage2p_mmio_writeb(addr, val & 0xff, priv);
+        mach64rage2p_mmio_writeb(addr + 1, val >> 8, priv);
+        return;
+    }
+    mach64_ext_writew(addr, val, priv);
+}
+
+static void
+mach64rage2p_mmio_writel(uint32_t addr, uint32_t val, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+    uint8_t probe;
+
+    mach64_3d_trace_external(mach64, 'M', 4, addr, val, 0);
+    for (unsigned i = 0; i < 4; i++) {
+        if (mach64rage2p_gtb_cfg_readb(mach64, addr + i, &probe)) {
+            for (unsigned b = 0; b < 4; b++)
+                mach64rage2p_mmio_writeb(addr + b, (val >> (b * 8)) & 0xff, priv);
+            return;
+        }
+    }
+    mach64_ext_writel(addr, val, priv);
+}
+
+static void
+mach64rage2p_install_mmio_handlers(mach64_t *mach64)
+{
+    mem_mapping_set_handler(&mach64->mmio_mapping,
+                            mach64rage2p_mmio_readb,
+                            mach64rage2p_mmio_readw,
+                            mach64rage2p_mmio_readl,
+                            mach64rage2p_mmio_writeb,
+                            mach64rage2p_mmio_writew,
+                            mach64rage2p_mmio_writel);
+    mem_mapping_set_handler(&mach64->mmio_linear_mapping,
+                            mach64rage2p_mmio_readb,
+                            mach64rage2p_mmio_readw,
+                            mach64rage2p_mmio_readl,
+                            mach64rage2p_mmio_writeb,
+                            mach64rage2p_mmio_writew,
+                            mach64rage2p_mmio_writel);
+    mem_mapping_set_handler(&mach64->mmio_linear_mapping_2,
+                            mach64rage2p_mmio_readb,
+                            mach64rage2p_mmio_readw,
+                            mach64rage2p_mmio_readl,
+                            mach64rage2p_mmio_writeb,
+                            mach64rage2p_mmio_writew,
+                            mach64rage2p_mmio_writel);
+}
+
+/*
+ * Validate the exact properties the emulated board relies on instead of merely
+ * checking that a file exists.  This rejects truncated carves and unrelated
+ * ATI ROMs before they can select a wrong Windows acceleration path.
+ */
+static int
+mach64rage2p_vbios_valid(void)
+{
+    FILE *fp = rom_fopen(BIOS_ROMGTB_PATH, "rb");
+    uint8_t *rom;
+    long size;
+    uint16_t pcir;
+    unsigned checksum = 0;
+    int valid = 0;
+
+    if (!fp)
+        return 0;
+
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    size = ftell(fp);
+    if (size != BIOS_ROMGTB_IMAGE_SIZE || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        return 0;
+    }
+
+    rom = malloc(BIOS_ROMGTB_IMAGE_SIZE);
+    if (!rom) {
+        fclose(fp);
+        return 0;
+    }
+
+    if (fread(rom, 1, BIOS_ROMGTB_IMAGE_SIZE, fp) != BIOS_ROMGTB_IMAGE_SIZE)
+        goto done;
+
+    if (rom[0] != 0x55 || rom[1] != 0xaa)
+        goto done;
+    if (((uint32_t) rom[2] << 9) != BIOS_ROMGTB_IMAGE_SIZE)
+        goto done;
+
+    pcir = mach64rage2p_le16(rom + 0x18);
+    if ((uint32_t) pcir + 0x18u > BIOS_ROMGTB_IMAGE_SIZE)
+        goto done;
+    if (memcmp(rom + pcir, "PCIR", 4))
+        goto done;
+    if (mach64rage2p_le16(rom + pcir + 4) != 0x1002 ||
+        mach64rage2p_le16(rom + pcir + 6) != 0x4755)
+        goto done;
+    if (((uint32_t) mach64rage2p_le16(rom + pcir + 0x10) << 9) != BIOS_ROMGTB_IMAGE_SIZE)
+        goto done;
+
+    for (size_t i = 0; i < BIOS_ROMGTB_IMAGE_SIZE; i++)
+        checksum += rom[i];
+    if (checksum & 0xff)
+        goto done;
+
+    if (!mach64rage2p_contains(rom, BIOS_ROMGTB_IMAGE_SIZE, "MACH64GU") ||
+        !mach64rage2p_contains(rom, BIOS_ROMGTB_IMAGE_SIZE, "SGRAM"))
+        goto done;
+
+    valid = 1;
+
+done:
+    free(rom);
+    fclose(fp);
+    return valid;
+}
+
+static int
+mach64rage2p_available(void)
+{
+    return mach64rage2p_vbios_valid();
+}
+
+static int
+mach64rage2p_install_vbios(mach64_t *mach64)
+{
+    uint8_t *new_rom;
+
+    if (mach64->bios_rom.rom) {
+        /* VT2 successfully created the original mapping; retain that mapping. */
+        new_rom = realloc(mach64->bios_rom.rom, BIOS_ROMGTB_BACKING_SIZE);
+        if (!new_rom)
+            return 0;
+
+        mach64->bios_rom.rom = new_rom;
+        memset(new_rom, 0xff, BIOS_ROMGTB_BACKING_SIZE);
+        if (!rom_load_linear(BIOS_ROMGTB_PATH, 0, BIOS_ROMGTB_IMAGE_SIZE, 0, new_rom))
+            return 0;
+
+        mach64->bios_rom.sz   = BIOS_ROMGTB_MAP_SIZE;
+        mach64->bios_rom.mask = BIOS_ROMGTB_BACKING_SIZE - 1;
+        mach64->bios_rom.mapping.size = BIOS_ROMGTB_MAP_SIZE;
+        mem_mapping_set_exec(&mach64->bios_rom.mapping, new_rom);
+        mem_mapping_disable(&mach64->bios_rom.mapping);
+    } else {
+        new_rom = calloc(1, BIOS_ROMGTB_BACKING_SIZE);
+        if (!new_rom)
+            return 0;
+        memset(new_rom, 0xff, BIOS_ROMGTB_BACKING_SIZE);
+
+        if (!rom_load_linear(BIOS_ROMGTB_PATH, 0, BIOS_ROMGTB_IMAGE_SIZE, 0, new_rom)) {
+            free(new_rom);
+            return 0;
+        }
+
+        mach64->bios_rom.rom  = new_rom;
+        mach64->bios_rom.sz   = BIOS_ROMGTB_MAP_SIZE;
+        mach64->bios_rom.mask = BIOS_ROMGTB_BACKING_SIZE - 1;
+
+        mem_mapping_add(&mach64->bios_rom.mapping,
+                        0xc0000, BIOS_ROMGTB_MAP_SIZE,
+                        rom_read, rom_readw, rom_readl,
+                        NULL, NULL, NULL,
+                        new_rom, MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM_WS,
+                        &mach64->bios_rom);
+        mem_mapping_disable(&mach64->bios_rom.mapping);
+    }
+
+    ati_eeprom_load(&mach64->eeprom, "mach64rage2p_ars2d.nvr", 1);
+    return 1;
+}
+
 static void *
 mach64rage2p_init(const device_t *info)
 {
-    /*
-     * Force the mature VT2 core to allocate 4 MiB, then expose the GTB/GU
-     * identity used by ATI 3D Rage II+ boards.  GT/GTB are members of the
-     * same Mach64 register family; the separate 3D module handles registers
-     * which are aliases/reserved on VT2.
-     */
     void *priv = mach64vt2_device.init(info);
     mach64_t *mach64 = (mach64_t *) priv;
 
     if (!mach64)
         return NULL;
 
-    /* GU = Rage II / Rage II+ (GTB).  Pick a known UMC GT B2U2 revision. */
-    mach64->pci_id = 0x4755;
-    mach64->config_chip_id = 0x5a004755;
+    if (!mach64rage2p_install_vbios(mach64)) {
+        mach64_close(priv);
+        return NULL;
+    }
+
+    /*
+     * GU = Rage II+ DVD / Mach64 GT-B.  Keep the ASIC revision in
+     * CNFG_CHIP_ID owned here rather than in the I/O hook.  0x9a is the UMC
+     * GT B2U3 revision; PCI configuration space independently reports 0x9a.
+     */
+    mach64->pci_id         = MACH64_GTB_PCI_ID;
+    mach64->config_chip_id = 0x9a004755;
+
+    /* ARS2D identifies an SGRAM board.  GT/VT CNFG_STAT0 uses 5 for SGRAM. */
+    mach64->config_stat0 = (mach64->config_stat0 & ~0x07u) | 0x05u;
 
     /* GTB uses a 4-bit memory-size encoding; 4 MiB is 0x7, not VT's 0x3. */
     mach64->mem_cntl = (mach64->mem_cntl & ~0x0fu) | 0x07u;
 
+    /*
+     * Attach GTB POST state before the system BIOS executes ARS2D: this installs
+     * GENVS/GENENA fixed ports and a safe temporary VGA dot clock.
+     */
+    mach64_gtb_state_attach(mach64);
     mach64_3d_attach(mach64);
+    mach64rage2p_install_mmio_handlers(mach64);
+    if (!mach64rage2p_aux_attach(mach64)) {
+        mach64_gtb_state_detach(mach64);
+        mach64_3d_detach(mach64);
+        mach64_close(priv);
+        return NULL;
+    }
+
+    /* Refresh VT2's reset template with the complete GTB identity and handlers. */
+    if (reset_state[mach64->svga.monitor_index])
+        *reset_state[mach64->svga.monitor_index] = *mach64;
+
     return mach64;
 }
 
 static void
 mach64rage2p_close(void *priv)
 {
+    mach64rage2p_aux_detach((mach64_t *) priv);
+    mach64_gtb_state_detach(priv);
     mach64_3d_detach((mach64_t *) priv);
     mach64_close(priv);
 }
 
 const device_t mach64rage2p_device = {
-    .name          = "ATI 3D Rage II+ DVD (GTB/GU, 4 MB)",
+    .name          = "ATI 3D Rage II+ DVD (GTB/GU, 4 MB SGRAM)",
     .internal_name = "mach64_rage2p",
     .flags         = DEVICE_PCI,
     .local         = MACH64_VT2 | (1 << 20),
     .init          = mach64rage2p_init,
     .close         = mach64rage2p_close,
     .reset         = NULL,
-    .available     = mach64vt2_available,
+    .available     = mach64rage2p_available,
     .speed_changed = mach64_speed_changed,
     .force_redraw  = mach64_force_redraw,
     .config        = NULL
