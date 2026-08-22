@@ -1,0 +1,26 @@
+name: Temporary Rage II+ port bridge
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - .github/workflows/rage2p_port_bridge.yml
+
+permissions:
+  contents: write
+
+jobs:
+  bridge-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/rage2p-upstream-compat
+      - name: Prove write access to compatibility branch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit --allow-empty -m "ci: Rage II+ port bridge marker"
+          git push origin HEAD:agent/rage2p-upstream-compat
