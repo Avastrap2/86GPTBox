@@ -224,6 +224,7 @@ enum {
     MACHINE_CHIPSET_ALI_M1429,
     MACHINE_CHIPSET_ALI_M1429G,
     MACHINE_CHIPSET_ALI_M1489,
+    MACHINE_CHIPSET_ALI_ALADDIN_IV,
     MACHINE_CHIPSET_ALI_ALADDIN_IV_PLUS,
     MACHINE_CHIPSET_ALI_ALADDIN_V,
     MACHINE_CHIPSET_ALI_ALADDIN_PRO_II,
@@ -1248,10 +1249,13 @@ extern int             machine_at_sq578_init(const machine_t *);
 /* SiS 5591 */
 extern int             machine_at_ms5172_init(const machine_t *);
 
-/* ALi ALADDiN IV+ */
+/* ALi ALADDiN IV / IV+ */
 #ifdef EMU_DEVICE_H
+extern const device_t  v58xa_device;
 extern const device_t  m5ata_device;
 #endif
+extern int             aptiva_int15_enable;
+extern int             machine_at_v58xa_init(const machine_t *);
 extern int             machine_at_m5ata_init(const machine_t *);
 extern int             machine_at_ms5164_init(const machine_t *);
 extern int             machine_at_m560_init(const machine_t *);
