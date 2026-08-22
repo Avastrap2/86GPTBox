@@ -125,7 +125,10 @@ typedef struct r3d_tex_state_t {
  * derivatives at the pixel being sampled. */
 static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_state_t *ts){
     uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
-    if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
+    if(pl>10)pl=10;
+    if(sl>10)sl=10;
+    if(hl>10)hl=10;
+    if(!hl)hl=sl;
     ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->pl=pl;ts->sl=sl;ts->hl=hl;ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
     /*
      * GT/GTB S/T is a normalized 10.11 coordinate domain, not a direct texel

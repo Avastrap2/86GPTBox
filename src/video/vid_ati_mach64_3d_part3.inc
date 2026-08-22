@@ -54,7 +54,9 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
      * can turn a malformed/default 8191-pixel scissor into millions of host
      * pixel operations.  Likewise, rows beyond the physical destination
      * allocation only wrap VRAM and cannot be a valid DirectDraw surface. */
-    if(left<0)left=0;if(right>=dp)right=dp-1;if(right<left)return;
+    if(left<0)left=0;
+    if(right>=dp)right=dp-1;
+    if(right<left)return;
     {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}if(bottom<top)return;}
     uint32_t zc=ctx->regs[R3D_Z_CNTL>>2],zo=ctx->regs[R3D_Z_OFF_PITCH>>2],zb=(zo&0xfffff)<<3;int zp=((zo>>22)&0x3ff)<<3;
 #define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
