@@ -54,10 +54,10 @@ const machine_filter_t machine_types[] = {
     { "[1989] i386DX/i486",               MACHINE_TYPE_386DX_486   },
     { "[1989] Socket 168/1",              MACHINE_TYPE_SOCKET1     },
     { "[1992] Socket 2",                  MACHINE_TYPE_SOCKET2     },
-    { "[1994] Socket 3",                  MACHINE_TYPE_SOCKET3     },
+    { "[1993] Socket 3",                  MACHINE_TYPE_SOCKET3     },
     { "[1994] Socket 3 (PCI)",            MACHINE_TYPE_SOCKET3_PCI },
-    { "[1999] STMicroelectronics STPC",   MACHINE_TYPE_STPC        },
     { "[1993] Socket 3/4",                MACHINE_TYPE_SOCKET3_4   },
+    { "[1999] STMicroelectronics STPC",   MACHINE_TYPE_STPC        },
     { "[1993] Socket 4",                  MACHINE_TYPE_SOCKET4     },
     { "[1994] Socket 4/5",                MACHINE_TYPE_SOCKET4_5   },
     { "[1994] Socket 5",                  MACHINE_TYPE_SOCKET5     },
@@ -2992,9 +2992,9 @@ const machine_t machines[] = {
         .gpio_acpi_handler = NULL,
         .cpu               = {
             .package     = CPU_PKG_8086,
-            .block       = CPU_BLOCK_NONE,
-            .min_bus     = 0,
-            .max_bus     = 0,
+            .block       = CPU_BLOCK(CPU_V30),
+            .min_bus     = 8000000,
+            .max_bus     = 8000000,
             .min_voltage = 0,
             .max_voltage = 0,
             .min_multi   = 0,
@@ -5737,7 +5737,7 @@ const machine_t machines[] = {
             .package     = CPU_PKG_286 | CPU_PKG_486SLC_IBM,
             .block       = CPU_BLOCK_NONE,
             .min_bus     = 10000000,
-            .max_bus     = 10000000,
+            .max_bus     = 0,
             .min_voltage = 0,
             .max_voltage = 0,
             .min_multi   = 0,
@@ -5746,9 +5746,9 @@ const machine_t machines[] = {
         .bus_flags = MACHINE_PS2_MCA,
         .flags     = MACHINE_VIDEO,
         .ram       = {
-            .min  = 256,
-            .max  = 7168,
-            .step = 128
+            .min  = 1024,
+            .max  = 10240,
+            .step = 1024
         },
         .nvrmask                  = 63,
         .jumpered_ecp_dma         = 0,
@@ -5785,7 +5785,7 @@ const machine_t machines[] = {
             .package     = CPU_PKG_286 | CPU_PKG_486SLC_IBM,
             .block       = CPU_BLOCK_NONE,
             .min_bus     = 10000000,
-            .max_bus     = 10000000,
+            .max_bus     = 0,
             .min_voltage = 0,
             .max_voltage = 0,
             .min_multi   = 0,
@@ -5794,9 +5794,9 @@ const machine_t machines[] = {
         .bus_flags = MACHINE_PS2_MCA,
         .flags     = MACHINE_VIDEO,
         .ram       = {
-            .min  = 256,
-            .max  = 15360,
-            .step = 128
+            .min  = 1024,
+            .max  = 12288,
+            .step = 1024
         },
         .nvrmask                  = 63,
         .jumpered_ecp_dma         = 0,
@@ -8194,7 +8194,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_VIDEO | MACHINE_KEYBOARD_JIS,
         .ram       = {
             .min  = 2048,
-            .max  = 16384,
+            .max  = 65536,
             .step = 2048
         },
         .nvrmask                  = 63,
@@ -8532,9 +8532,9 @@ const machine_t machines[] = {
         .bus_flags = MACHINE_PS2_MCA,
         .flags     = MACHINE_VIDEO,
         .ram       = {
-            .min  = 2048,
+            .min  = 4096,
             .max  = 65536,
-            .step = 2048
+            .step = 4096
         },
         .nvrmask                  = 63,
         .jumpered_ecp_dma         = 0,
@@ -8581,7 +8581,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_VIDEO | MACHINE_KEYBOARD_JIS,
         .ram       = {
             .min  = 4096,
-            .max  = 16384,
+            .max  = 65536,
             .step = 4096
         },
         .nvrmask                  = 63,
@@ -10980,7 +10980,7 @@ const machine_t machines[] = {
         .kbc_p1                   = 0x00000cf0,
         .gpio                     = 0xffffffff,
         .gpio_acpi                = 0xffffffff,
-        .device                   = NULL,
+        .device                   = &win471t_device,
         .kbd_device               = NULL,
         .fdc_device               = NULL,
         .vid_device               = NULL,
@@ -14160,6 +14160,57 @@ const machine_t machines[] = {
         .aliases                  = { "Packard Bell Robin LC", "Intel Robin LC", "" }
     },
 
+    /* OPTi 571/572 */
+    /* Has a JetKey V5.0 KBC, which should be an AMI 'F' clone.
+       Also seen with an Award KBC, another 'F' clone. */
+    {
+        .name              = "[OPTi 571] TMC PCI58PL",
+        .internal_name     = "pci58pl",
+        .type              = MACHINE_TYPE_SOCKET4,
+        .chipset           = MACHINE_CHIPSET_OPTI_571,
+        .init              = machine_at_pci58pl_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET4,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 60000000,
+            .max_bus     = 66666667,
+            .min_voltage = 5000,
+            .max_voltage = 5000,
+            .min_multi   = 0,
+            .max_multi   = 0
+        },
+        .bus_flags = MACHINE_PCIV,
+        .flags     = MACHINE_FLAGS_NONE,
+        .ram       = {
+            .min  = 2048,
+            .max  = 65536, /* neither DOS nor Windows recognizes more than this amount */
+            .step = 2048
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = &kbc_at_device,
+        .kbc_params               = KBC_VEN_AMI | 0x00004600,
+        .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x000004f0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = &pci58pl_device,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = NULL,
+        .snd_device               = NULL,
+        .net_device               = NULL,
+        .aliases                  = { "" }
+    },
+
     /* OPTi 596/597 */
     /* This uses an AMI KBC firmware in PS/2 mode (it sends command A5 with the
        PS/2 "Load Security" meaning), most likely MegaKey as it sends command AF
@@ -14188,7 +14239,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_IDE,
         .ram       = {
             .min  = 2048,
-            .max  = 65536, /* AMIBIOS revision 080893 cannot handle more than 64MB despite being detected as 128MB (the machine's maximum memory) */
+            .max  = 65536, /* neither DOS nor Windows recognizes more than this amount */
             .step = 2048
         },
         .nvrmask                  = 127,
@@ -14211,8 +14262,6 @@ const machine_t machines[] = {
         .net_device               = NULL,
         .aliases                  = { "AMI S75", "" }
     },
-
-    /* OPTi 596/597/822 */
     /* Has a VIA VT82C42N KBC with AMI 'F' firmware */
     {
         .name              = "[OPTi 597] AT&T Globalyst 330 (Pentium)",
@@ -14287,6 +14336,54 @@ const machine_t machines[] = {
         .ram       = {
             .min  = 2048,
             .max  = 131072,
+            .step = 2048
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = &kbc_at_device,
+        .kbc_params               = KBC_VEN_AMI | 0x00004600,
+        .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x000004f0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = NULL,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = NULL,
+        .snd_device               = NULL,
+        .net_device               = NULL,
+        .aliases                  = { "" }
+    },
+    /* This probably has AMIKEY 'F' KBC */
+    {
+        .name              = "[OPTi 597] TMC PAT58PV",
+        .internal_name     = "pat58pv",
+        .type              = MACHINE_TYPE_SOCKET4,
+        .chipset           = MACHINE_CHIPSET_OPTI_597,
+        .init              = machine_at_pat58pv_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET4,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 60000000,
+            .max_bus     = 66666667,
+            .min_voltage = 5000,
+            .max_voltage = 5000,
+            .min_multi   = MACHINE_MULTIPLIER_FIXED,
+            .max_multi   = MACHINE_MULTIPLIER_FIXED
+        },
+        .bus_flags = MACHINE_VLB,
+        .flags     = MACHINE_FLAGS_NONE,
+        .ram       = {
+            .min  = 2048,
+            .max  = 65536, /* neither DOS nor Windows recognizes more than this amount */
             .step = 2048
         },
         .nvrmask                  = 127,
@@ -15342,6 +15439,56 @@ const machine_t machines[] = {
         .aliases                  = { "Northgate Computer Systems Elegance Pentium 90", "" }
     },
 
+    /* OPTi 571/572 */
+    /* Has an AMIKEY-2 'H' KBC */
+    {
+        .name              = "[OPTi 571] TMC PCI54PL",
+        .internal_name     = "pci54pl",
+        .type              = MACHINE_TYPE_SOCKET5,
+        .chipset           = MACHINE_CHIPSET_OPTI_571,
+        .init              = machine_at_pci54pl_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET5_7,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 50000000,
+            .max_bus     = 66666667,
+            .min_voltage = 3520,
+            .max_voltage = 3520,
+            .min_multi   = 1.5,
+            .max_multi   = 1.5
+        },
+        .bus_flags = MACHINE_PCIV,
+        .flags     = MACHINE_FLAGS_NONE,
+        .ram       = {
+            .min  = 2048,
+            .max  = 131072,
+            .step = 2048
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = &kbc_at_device,
+        .kbc_params               = KBC_VEN_AMI | 0x00004800,
+        .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x00000cf0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = NULL,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = NULL,
+        .snd_device               = NULL,
+        .net_device               = NULL,
+        .aliases                  = { "" }
+    },
+
     /* OPTi 596/597 */
     /* Has unknown KBC firmware. */
     {
@@ -15418,7 +15565,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_PS2_KBC,
         .ram       = {
             .min  = 2048,
-            .max  = 65536, /* AMIBIOS revision 080893 cannot handle more than 64MB despite being detected as 128MB (the machine's maximum memory) */
+            .max  = 65536, /* neither DOS nor Windows recognizes more than this amount */
             .step = 2048
         },
         .nvrmask                  = 127,
