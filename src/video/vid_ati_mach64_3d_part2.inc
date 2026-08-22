@@ -1,3 +1,5 @@
+#include "vid_ati_mach64_3d_mipmap.h"
+
 #define R3D_SCALE_DITHER_TABLE (1u << 1)
 #define R3D_DITHER_EN          (1u << 2)
 #define R3D_DITHER_INIT        (1u << 3)
@@ -114,17 +116,17 @@ static int r3d_blend_factor(int code,rgba_t s,rgba_t d,int ch,int sf){switch(cod
 static rgba_t r3d_blend(uint32_t ctl,rgba_t s,rgba_t d){rgba_t o;int sf=(ctl>>R3D_BLEND_SRC_SHIFT)&7,df=(ctl>>R3D_BLEND_DST_SHIFT)&7,*p[4]={&o.r,&o.g,&o.b,&o.a};for(int ch=0;ch<4;ch++){int sv=r3d_component(s,ch),dv=r3d_component(d,ch);*p[ch]=r3d_clamp8((sv*r3d_blend_factor(sf,s,d,ch,1)+dv*r3d_blend_factor(df,s,d,ch,0)+127)/255);}return o;}
 
 typedef struct r3d_tex_state_t {
-    int f,bpp,w,wmask,hmask,bilinear,coord_shift;
+    int f,bpp,pl,sl,hl,w,wmask,hmask,bilinear,coord_shift;
     uint32_t base;
 } r3d_tex_state_t;
 
-/* TEX_SIZE_PITCH and the selected mip base are invariant for a complete draw
- * command.  Cache them once per trapezoid rather than decoding them for every
- * texel. */
+/* TEX_SIZE_PITCH is invariant for a complete draw command.  Cache the largest
+ * map geometry once; mip-enabled draws derive the selected map from S/T
+ * derivatives at the pixel being sampled. */
 static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_state_t *ts){
     uint32_t tsp=ctx->regs[R3D_TEX_SIZE_PITCH>>2];int pl=tsp&15,sl=(tsp>>4)&15,hl=(tsp>>8)&15;
     if(pl>10)pl=10;if(sl>10)sl=10;if(hl>10)hl=10;if(!hl)hl=sl;
-    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
+    ts->f=f;ts->bpp=r3d_bytes_per_pixel(f);ts->pl=pl;ts->sl=sl;ts->hl=hl;ts->w=1<<pl;ts->wmask=ts->w-1;ts->hmask=(1<<hl)-1;ts->bilinear=bilinear;
     /*
      * GT/GTB S/T is a normalized 10.11 coordinate domain, not a direct texel
      * index.  The full texture spans 1024 coordinate units regardless of mip
@@ -141,6 +143,19 @@ static void r3d_tex_state_init(mach64_3d_ctx_t *ctx,int f,int bilinear,r3d_tex_s
      */
     ts->coord_shift=26-sl;
     ts->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
+}
+static void r3d_tex_state_select_lod(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,int lod,int bilinear,r3d_tex_state_t *selected){
+    int pl,sl,hl;
+    if(lod<0)lod=0;
+    if(lod>largest->sl)lod=largest->sl;
+    *selected=*largest;
+    pl=largest->pl-lod;if(pl<0)pl=0;
+    sl=largest->sl-lod;if(sl<0)sl=0;
+    hl=largest->hl-lod;if(hl<0)hl=0;
+    selected->pl=pl;selected->sl=sl;selected->hl=hl;
+    selected->w=1<<pl;selected->wmask=selected->w-1;selected->hmask=(1<<hl)-1;
+    selected->bilinear=bilinear;selected->coord_shift=26-sl;
+    selected->base=ctx->regs[(R3D_TEX_0_OFF+((uint32_t)sl<<2))>>2];
 }
 static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,uint32_t a){
     switch(ts->bpp){case 1:return r3d_vram_read8(ctx->mach64,a);case 2:return r3d_vram_read16(ctx->mach64,a);case 4:return r3d_vram_read32(ctx->mach64,a);default:return 0;}
@@ -161,6 +176,35 @@ static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t
     int fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
     rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
     return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
+}
+static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples){
+    mach64_3d_mip_lod_t lod;
+    r3d_tex_state_t a,b;
+    int blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
+    if(samples)*samples=1;
+    if(ctl&R3D_MIP_MAP_DISABLE){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    lod=mach64_3d_mip_lod(dsdx,dtdx,dsdy,dtdy,largest->coord_shift,largest->sl);
+    if(!lod.minifying){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    if(blend==1&&lod.floor_lod<largest->sl){
+        rgba_t ca,cb;
+        r3d_tex_state_select_lod(ctx,largest,lod.floor_lod,0,&a);
+        r3d_tex_state_select_lod(ctx,largest,lod.floor_lod+1,0,&b);
+        ca=r3d_sample_texel_cached(ctx,&a,s,t);cb=r3d_sample_texel_cached(ctx,&b,s,t);
+        if(samples)*samples=2;
+        return r3d_lerp(ca,cb,lod.fraction);
+    }
+    if(blend==2){r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,1,&a);if(samples)*samples=4;return r3d_sample_texel_cached(ctx,&a,s,t);}
+    if(blend==3){
+        int next=lod.nearest_lod==lod.floor_lod?lod.floor_lod+1:lod.floor_lod;
+        rgba_t c;
+        if(next>largest->sl)next=largest->sl;
+        r3d_tex_state_select_lod(ctx,largest,next,1,&a);c=r3d_sample_texel_cached(ctx,&a,s,t);
+        c.a=lod.nearest_lod==lod.floor_lod?lod.fraction:255-lod.fraction;
+        if(samples)*samples=4;
+        return c;
+    }
+    r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,0,&a);
+    return r3d_sample_texel_cached(ctx,&a,s,t);
 }
 static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
     if(!(ctl&R3D_TEX_MAP_AEN)){tex->a=interp_alpha;return 1;}

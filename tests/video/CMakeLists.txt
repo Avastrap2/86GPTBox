@@ -35,6 +35,12 @@ add_executable(mach64_texture_key_test
 
 add_test(NAME mach64_texture_key COMMAND mach64_texture_key_test)
 
+add_executable(mach64_mipmap_lod_test
+    mach64_mipmap_lod_test.c
+)
+
+add_test(NAME mach64_mipmap_lod COMMAND mach64_mipmap_lod_test)
+
 add_executable(mach64_scaler_test
     mach64_scaler_test.c
     ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_3d.c
