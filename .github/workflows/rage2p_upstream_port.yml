@@ -1,0 +1,303 @@
+name: Rage II+ upstream port runner
+
+on:
+  push:
+    branches:
+      - agent/rage2p-upstream-compat
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  port:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/rage2p-upstream-compat
+
+      - name: Apply explicit GTB integration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          def read(path):
+              return Path(path).read_text()
+
+          def write(path, text):
+              Path(path).write_text(text)
+
+          def replace_once(path, old, new):
+              s = read(path)
+              n = s.count(old)
+              if n != 1:
+                  raise SystemExit(f"{path}: expected one occurrence, found {n}: {old[:80]!r}")
+              write(path, s.replace(old, new, 1))
+
+          # 1. Give GTB its own core type.  Keep it before VT3 so all existing
+          # pre-VT3 overlay/DDC comparisons retain their upstream semantics.
+          replace_once(
+              "src/video/vid_ati_mach64.h",
+              "    MACH64_VT2,\n    MACH64_VT3\n",
+              "    MACH64_VT2,\n    MACH64_GTB,\n    MACH64_VT3\n",
+          )
+
+          replace_once(
+              "src/video/vid_ati_mach64.h",
+              "extern mach64_t* reset_state[2];\n",
+              """/* Core entry points intentionally exposed for the GTB extension. */
+void    *mach64vt2_init(const device_t *info);
+uint8_t  mach64_pci_read(int func, int addr, int len, void *priv);
+void     mach64_pci_write(int func, int addr, int len, uint8_t val, void *priv);
+uint8_t  mach64_pci_read_base(int func, int addr, int len, void *priv);
+void     mach64_pci_write_base(int func, int addr, int len, uint8_t val, void *priv);
+void     mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
+
+extern mach64_t* reset_state[2];
+""",
+          )
+
+          # 2. Keep the mature 2D FIFO implementation as an explicit legacy
+          # symbol.  The public mach64_queue dispatcher stays in rage2p.c.
+          replace_once(
+              "src/video/vid_ati_mach64_accel.c",
+              "void\nmach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)\n",
+              "void\nmach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)\n",
+          )
+
+          # 3. The hook header is now an API header only.  Never redefine core
+          # I/O/clock functions at compile time.
+          p = "src/video/vid_ati_mach64_gtb_hook.h"
+          s = read(p)
+          for line in (
+              "#define io_sethandler      mach64_io_sethandler_dispatch\n",
+              "#define io_removehandler   mach64_io_removehandler_dispatch\n",
+              "#define ics2595_setclock   mach64_ics2595_setclock_dispatch\n",
+          ):
+              if line not in s:
+                  raise SystemExit(f"{p}: missing legacy macro {line.strip()}")
+              s = s.replace(line, "")
+          write(p, s)
+
+          # 4. GTB compatibility code calls the actual upstream PCI base writer
+          # explicitly instead of a CMake-renamed symbol.
+          p = "src/video/vid_ati_mach64_gtb_hook.c"
+          s = read(p)
+          if s.count("mach64_pci_write_legacy") < 2:
+              raise SystemExit(f"{p}: legacy PCI symbol shape changed")
+          s = s.replace("mach64_pci_write_legacy", "mach64_pci_write_base")
+          write(p, s)
+
+          # 5. Route only GTB Mach64 I/O/PLL operations through the compatibility
+          # hook. Every other Mach64 variant calls the upstream functions directly.
+          p = "src/video/vid_ati_mach64.c"
+          s = read(p)
+          include = '#include "vid_ati_mach64.h"\n'
+          if s.count(include) != 1:
+              raise SystemExit(f"{p}: unexpected include shape")
+
+          helper = r'''
+#include "vid_ati_mach64_gtb_hook.h"
+
+static void
+mach64_core_io_sethandler(uint16_t base, uint16_t size,
+                          uint8_t (*inb)(uint16_t, void *),
+                          uint16_t (*inw)(uint16_t, void *),
+                          uint32_t (*inl)(uint16_t, void *),
+                          void (*outb)(uint16_t, uint8_t, void *),
+                          void (*outw)(uint16_t, uint16_t, void *),
+                          void (*outl)(uint16_t, uint32_t, void *),
+                          void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64 && mach64->type == MACH64_GTB)
+        mach64_io_sethandler_dispatch(base, size, inb, inw, inl,
+                                      outb, outw, outl, priv);
+    else
+        io_sethandler(base, size, inb, inw, inl, outb, outw, outl, priv);
+}
+
+static void
+mach64_core_io_removehandler(uint16_t base, uint16_t size,
+                             uint8_t (*inb)(uint16_t, void *),
+                             uint16_t (*inw)(uint16_t, void *),
+                             uint32_t (*inl)(uint16_t, void *),
+                             void (*outb)(uint16_t, uint8_t, void *),
+                             void (*outw)(uint16_t, uint16_t, void *),
+                             void (*outl)(uint16_t, uint32_t, void *),
+                             void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64 && mach64->type == MACH64_GTB)
+        mach64_io_removehandler_dispatch(base, size, inb, inw, inl,
+                                         outb, outw, outl, priv);
+    else
+        io_removehandler(base, size, inb, inw, inl, outb, outw, outl, priv);
+}
+
+static void
+mach64_core_setclock(mach64_t *mach64, void *clock_gen, double clock)
+{
+    if (mach64 && mach64->type == MACH64_GTB)
+        mach64_ics2595_setclock_dispatch(clock_gen, clock);
+    else
+        ics2595_setclock(clock_gen, clock);
+}
+'''
+
+          # Change call sites first, then add helpers containing the real names.
+          set_count = s.count("io_sethandler(")
+          remove_count = s.count("io_removehandler(")
+          if set_count != 4 or remove_count != 4:
+              raise SystemExit(f"{p}: expected 4 set/4 remove handlers, got {set_count}/{remove_count}")
+          s = s.replace("io_sethandler(", "mach64_core_io_sethandler(")
+          s = s.replace("io_removehandler(", "mach64_core_io_removehandler(")
+          s = s.replace(include, include + helper, 1)
+
+          if s.count("uint8_t\nmach64_pci_read(") != 1:
+              raise SystemExit(f"{p}: PCI read definition shape changed")
+          if s.count("void\nmach64_pci_write(") != 1:
+              raise SystemExit(f"{p}: PCI write definition shape changed")
+          s = s.replace("uint8_t\nmach64_pci_read(", "uint8_t\nmach64_pci_read_base(", 1)
+          s = s.replace("void\nmach64_pci_write(", "void\nmach64_pci_write_base(", 1)
+
+          if s.count("static void *\nmach64vt2_init(") != 1:
+              raise SystemExit(f"{p}: VT2 init definition shape changed")
+          s = s.replace("static void *\nmach64vt2_init(", "void *\nmach64vt2_init(", 1)
+
+          clock_old = "ics2595_setclock(svga->clock_gen, mach64->pll_freq[mach64->clock_cntl & 3]);"
+          if s.count(clock_old) != 1:
+              raise SystemExit(f"{p}: PLL setclock site changed")
+          s = s.replace(clock_old,
+                        "mach64_core_setclock(mach64, svga->clock_gen, mach64->pll_freq[mach64->clock_cntl & 3]);",
+                        1)
+          write(p, s)
+
+          # 6. Rage II+ uses the real VT2 initializer with a GTB local type,
+          # and supplies the public PCI dispatcher for all Mach64 cards.
+          p = "src/video/vid_ati_mach64_rage2p.c"
+          s = read(p)
+          if '#include "vid_ati_mach64_3d.h"\n' not in s:
+              raise SystemExit(f"{p}: include shape changed")
+          s = s.replace('#include "vid_ati_mach64_3d.h"\n',
+                        '#include "vid_ati_mach64_3d.h"\n#include "vid_ati_mach64_gtb_hook.h"\n', 1)
+          s = s.replace("mach64_pci_read_legacy", "mach64_pci_read_base")
+          # Only the forwarding call should use the GTB remap-aware base writer.
+          old_call = "    mach64_pci_write_legacy(func, addr, len, val, priv);\n"
+          if s.count(old_call) != 1:
+              raise SystemExit(f"{p}: expected one legacy PCI write call, found {s.count(old_call)}")
+          s = s.replace(old_call,
+                        "    mach64_pci_write_gtb_legacy_dispatch(func, addr, len, val, priv);\n", 1)
+
+          init_old = """    void *priv = mach64vt2_device.init(info);
+    mach64_t *mach64 = (mach64_t *) priv;
+"""
+          init_new = """    mach64_t *mach64 = (mach64_t *) mach64vt2_init(info);
+    void *priv = mach64;
+"""
+          if s.count(init_old) != 1:
+              raise SystemExit(f"{p}: Rage II+ init shape changed")
+          s = s.replace(init_old, init_new, 1)
+
+          if s.count(".local         = MACH64_VT2 | (1 << 20),") != 1:
+              raise SystemExit(f"{p}: Rage II+ local type shape changed")
+          s = s.replace(".local         = MACH64_VT2 | (1 << 20),",
+                        ".local         = MACH64_GTB | (1 << 20),", 1)
+
+          dispatch_marker = """void
+mach64_pci_add_card_dispatch(uint8_t add_type,
+                             uint8_t (*read)(int func, int addr, int len, void *priv),
+                             void (*write)(int func, int addr, int len, uint8_t val, void *priv),
+                             void *priv, uint8_t *slot)
+{
+    (void) read;
+    (void) write;
+    pci_add_card(add_type, mach64rage2p_pci_read, mach64rage2p_pci_write, priv, slot);
+}
+"""
+          if s.count(dispatch_marker) != 1:
+              raise SystemExit(f"{p}: old PCI dispatcher shape changed")
+          wrappers = dispatch_marker + r'''
+
+/* Public Mach64 PCI callbacks.  Non-GTB cards take the upstream path exactly. */
+uint8_t
+mach64_pci_read(int func, int addr, int len, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64 && mach64->type == MACH64_GTB)
+        return mach64rage2p_pci_read(func, addr, len, priv);
+    return mach64_pci_read_base(func, addr, len, priv);
+}
+
+void
+mach64_pci_write(int func, int addr, int len, uint8_t val, void *priv)
+{
+    mach64_t *mach64 = (mach64_t *) priv;
+
+    if (mach64 && mach64->type == MACH64_GTB) {
+        mach64rage2p_pci_write(func, addr, len, val, priv);
+        return;
+    }
+    mach64_pci_write_base(func, addr, len, val, priv);
+}
+'''
+          s = s.replace(dispatch_marker, wrappers, 1)
+          write(p, s)
+
+          # 7. Register the new card alongside VT2, never in place of it.
+          replace_once(
+              "src/include/86box/video.h",
+              "extern const device_t mach64vt2_device;\n",
+              "extern const device_t mach64vt2_device;\nextern const device_t mach64rage2p_device;\n",
+          )
+          replace_once(
+              "src/video/vid_table.c",
+              "    { .device = &mach64vt2_device,                              .flags = VIDEO_FLAG_TYPE_NONE      },\n",
+              "    { .device = &mach64vt2_device,                              .flags = VIDEO_FLAG_TYPE_NONE      },\n    { .device = &mach64rage2p_device,                           .flags = VIDEO_FLAG_TYPE_NONE      },\n",
+          )
+
+          # 8. Link the new modules normally.  No per-source symbol aliases and
+          # no forced includes.
+          replace_once(
+              "src/video/CMakeLists.txt",
+              "    vid_ati_mach64.c\n    vid_ati_mach64_accel.c\n",
+              "    vid_ati_mach64.c\n    vid_ati_mach64_accel.c\n    vid_ati_mach64_3d.c\n    vid_ati_mach64_gtb_hook.c\n    vid_ati_mach64_rage2p.c\n",
+          )
+
+          # Sanity: the old dangerous integration mechanisms must not exist in
+          # the build file we are producing.
+          cmake = read("src/video/CMakeLists.txt")
+          forbidden = (
+              "mach64_queue=mach64_queue_legacy",
+              "pci_add_card=mach64_pci_add_card_dispatch",
+              "mach64vt2_device=mach64rage2p_device",
+              "COMPILE_OPTIONS \"-include\"",
+          )
+          for token in forbidden:
+              if token in cmake:
+                  raise SystemExit(f"dangerous CMake interposition survived: {token}")
+          PY
+
+          git diff --check
+          git status --short
+
+      - name: Commit port
+        shell: bash
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/video src/include/86box/video.h
+          if git diff --cached --quiet; then
+            echo "No source changes to commit"
+            exit 0
+          fi
+          git commit -m "mach64: integrate Rage II+ without VT2 interposition"
+          git push origin HEAD:agent/rage2p-upstream-compat
