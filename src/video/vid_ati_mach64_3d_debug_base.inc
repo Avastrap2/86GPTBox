@@ -47,6 +47,7 @@ typedef struct r3d_debug_draw_t {
     uint64_t candidate_pixels;
     uint64_t drawn_pixels;
     uint64_t alpha_rejects;
+    uint64_t texel_key_rejects;
     uint64_t z_rejects;
     uint64_t texture_samples;
     uint64_t nonzero_source_pixels;
@@ -69,6 +70,9 @@ typedef struct r3d_debug_draw_t {
     uint32_t dp_src;
     uint32_t dp_mix;
     uint32_t dp_frgd_clr;
+    uint32_t clr_cmp_clr;
+    uint32_t clr_cmp_mask;
+    uint32_t clr_cmp_cntl;
     uint32_t tex_size_pitch;
     uint32_t tex_base;
     uint32_t fifo_entries_begin;
@@ -194,6 +198,7 @@ typedef struct r3d_debug_state_t {
     uint64_t total_candidate_pixels;
     uint64_t total_drawn_pixels;
     uint64_t total_alpha_rejects;
+    uint64_t total_texel_key_rejects;
     uint64_t total_z_rejects;
     uint64_t total_texture_samples;
     uint64_t total_draw_ticks;
@@ -472,6 +477,9 @@ r3d_debug_draw_begin(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d, uint32_t cmd,
     d->dp_src = m->dp_src;
     d->dp_mix = m->dp_mix;
     d->dp_frgd_clr = m->dp_frgd_clr;
+    d->clr_cmp_clr = m->clr_cmp_clr;
+    d->clr_cmp_mask = m->clr_cmp_mask;
+    d->clr_cmp_cntl = m->clr_cmp_cntl;
     d->tex_size_pitch = ctx->regs[R3D_TEX_SIZE_PITCH >> 2];
 
     tsp = d->tex_size_pitch;
@@ -566,6 +574,7 @@ r3d_debug_draw_end(mach64_3d_ctx_t *ctx, r3d_debug_draw_t *d,
     s->total_candidate_pixels += d->candidate_pixels;
     s->total_drawn_pixels += d->drawn_pixels;
     s->total_alpha_rejects += d->alpha_rejects;
+    s->total_texel_key_rejects += d->texel_key_rejects;
     s->total_z_rejects += d->z_rejects;
     s->total_texture_samples += d->texture_samples;
     if (dt > s->max_draw_ticks)
@@ -625,10 +634,11 @@ r3d_debug_dump(mach64_t *m)
             s->max_fifo_entries);
     fprintf(fp,
             "# pixels candidate=%llu drawn=%llu alpha_reject=%llu "
-            "z_reject=%llu texture_samples=%llu\n",
+            "texel_key_reject=%llu z_reject=%llu texture_samples=%llu\n",
             (unsigned long long)s->total_candidate_pixels,
             (unsigned long long)s->total_drawn_pixels,
             (unsigned long long)s->total_alpha_rejects,
+            (unsigned long long)s->total_texel_key_rejects,
             (unsigned long long)s->total_z_rejects,
             (unsigned long long)s->total_texture_samples);
     fprintf(fp,
@@ -852,14 +862,17 @@ r3d_debug_dump(mach64_t *m)
 
     fprintf(fp, "\n[pixel_paths]\n");
     fprintf(fp,
-            "# seq dp_src dp_mix dp_frgd_clr nonzero_src rgb_or "
-            "r_max g_max b_max\n");
+            "# seq dp_src dp_mix dp_frgd_clr cmp_clr cmp_mask cmp_cntl "
+            "key_reject nonzero_src rgb_or r_max g_max b_max\n");
     for (uint64_t seq = draw_start; seq <= s->draw_seq; seq++) {
         const r3d_debug_draw_t *d =
             &s->draws[(seq - 1) % R3D_DEBUG_DRAWS];
-        fprintf(fp, "%010llu %08X %08X %08X %llu %06X %u %u %u\n",
+        fprintf(fp, "%010llu %08X %08X %08X %08X %08X %08X "
+                    "%llu %llu %06X %u %u %u\n",
                 (unsigned long long)d->seq,
                 d->dp_src, d->dp_mix, d->dp_frgd_clr,
+                d->clr_cmp_clr, d->clr_cmp_mask, d->clr_cmp_cntl,
+                (unsigned long long)d->texel_key_rejects,
                 (unsigned long long)d->nonzero_source_pixels,
                 d->source_rgb_or & 0xffffffu,
                 d->source_r_max, d->source_g_max, d->source_b_max);
