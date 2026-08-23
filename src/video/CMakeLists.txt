@@ -14,12 +14,34 @@
 #          Copyright 2025 starfrost
 #
 
+# Keep the upstream video-card table source untouched.  Generate the build copy
+# by inserting Rage II+ immediately after Mach64VT2.  The exact-line guard makes
+# an upstream table change fail at configure time instead of silently replacing
+# or hiding an existing card.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vid_table.c" RAGE2P_VID_TABLE_SOURCE)
+set(RAGE2P_VT2_TABLE_LINE
+    "    { .device = &mach64vt2_device,                              .flags = VIDEO_FLAG_TYPE_NONE      },")
+string(FIND "${RAGE2P_VID_TABLE_SOURCE}" "${RAGE2P_VT2_TABLE_LINE}" RAGE2P_VT2_TABLE_POS)
+if(RAGE2P_VT2_TABLE_POS EQUAL -1)
+    message(FATAL_ERROR "Rage II+ integration: upstream Mach64VT2 video-table entry changed")
+endif()
+string(REPLACE
+    "${RAGE2P_VT2_TABLE_LINE}"
+    "${RAGE2P_VT2_TABLE_LINE}\n    { .device = &mach64rage2p_device,                           .flags = VIDEO_FLAG_TYPE_NONE      },"
+    RAGE2P_VID_TABLE_SOURCE "${RAGE2P_VID_TABLE_SOURCE}")
+string(REPLACE
+    "#include <86box/vid_svga.h>"
+    "#include <86box/vid_svga.h>\n\nextern const device_t mach64rage2p_device;"
+    RAGE2P_VID_TABLE_SOURCE "${RAGE2P_VID_TABLE_SOURCE}")
+set(RAGE2P_VID_TABLE "${CMAKE_CURRENT_BINARY_DIR}/vid_table_rage2p.c")
+file(WRITE "${RAGE2P_VID_TABLE}" "${RAGE2P_VID_TABLE_SOURCE}")
+
 add_library(vid OBJECT
 
     # Video Core
     agpgart.c
     video.c
-    vid_table.c
+    "${RAGE2P_VID_TABLE}"
 
     # RAMDAC (Should this be its own library?)
     ramdac/vid_ramdac_ati68860.c
@@ -109,6 +131,9 @@ add_library(vid OBJECT
     vid_ati_mach8.c
     vid_ati_mach64.c
     vid_ati_mach64_accel.c
+    vid_ati_mach64_3d.c
+    vid_ati_mach64_gtb_hook.c
+    vid_ati_mach64_rage2p.c
 
     # Chips & Technologies
     vid_chips_69000.c
@@ -148,6 +173,29 @@ add_library(vid OBJECT
     # Generic
     vid_bochs_vbe.c
 )
+
+# Keep the current upstream Mach64 source intact.  The aliases expose its
+# mature 2D/PCI entry points to the GTB extension while the video table retains
+# the original Mach64VT2 entry as a separate device.
+set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
+
+set_source_files_properties(vid_ati_mach64.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
+
+set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device;mach64_ext_readb=mach64_ext_readb_gtb_trace;mach64_ext_readw=mach64_ext_readw_gtb_trace;mach64_ext_readl=mach64_ext_readl_gtb_trace")
+
+# GTB needs to observe the legacy core's I/O registrations and integrated PLL
+# programming.  GTB-only register behavior is gated by PCI identity in the hook;
+# ordinary Mach64 variants forward to their original handlers.
+if(MSVC)
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+else()
+    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
+        COMPILE_OPTIONS "-include" "${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
+endif()
 
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_include_directories(vid PRIVATE /usr/local/include)
