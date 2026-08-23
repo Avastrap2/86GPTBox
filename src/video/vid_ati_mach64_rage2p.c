@@ -40,7 +40,6 @@ extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, vo
 extern void mach64_close(void *priv);
 extern void mach64_speed_changed(void *priv);
 extern void mach64_force_redraw(void *priv);
-extern const device_t mach64vt2_device;
 extern mach64_t *reset_state[2];
 
 /* GTB-only non-GUI register latches implemented by vid_ati_mach64_gtb_hook.c. */
@@ -779,7 +778,7 @@ mach64rage2p_install_vbios(mach64_t *mach64)
 static void *
 mach64rage2p_init(const device_t *info)
 {
-    void *priv = mach64vt2_device.init(info);
+    void *priv = mach64_gtb_core_init(info);
     mach64_t *mach64 = (mach64_t *) priv;
 
     if (!mach64)

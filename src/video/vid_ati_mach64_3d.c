@@ -355,19 +355,13 @@ mach64_gtb_cfg_writeb_block0(mach64_t *mach64, uint32_t addr, uint8_t val)
 extern const device_t mach64vt2_device;
 static device_t mach64gtb_core_info;
 
-static void *
-mach64gtb_core_init(const device_t *info)
+void *
+mach64_gtb_core_init(const device_t *info)
 {
     mach64gtb_core_info = *info;
     mach64gtb_core_info.local = (mach64gtb_core_info.local & ~0xffu) | MACH64_GTB;
     return mach64vt2_device.init(&mach64gtb_core_info);
 }
-
-const device_t mach64gtb_core_device = {
-    .name = "Mach64 GTB core proxy",
-    .internal_name = "mach64_gtb_core_proxy",
-    .init = mach64gtb_core_init
-};
 
 /*
  * The Rage II+ integration layer owns GTB/3D reads but forwards ordinary

@@ -186,7 +186,7 @@ set_source_files_properties(vid_ati_mach64.c PROPERTIES
 # Keep only the aliases that still affect hardware behavior.  The MMIO read
 # aliases were diagnostic-only and Stage 1a validated normal upstream readers.
 set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device")
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch")
 
 # GTB needs to observe the legacy core's I/O registrations and integrated PLL
 # programming.  GTB-only register behavior is gated by PCI identity in the hook;

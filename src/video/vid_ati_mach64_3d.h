@@ -11,6 +11,7 @@
 
 void mach64_3d_attach(mach64_t *mach64);
 void mach64_3d_detach(mach64_t *mach64);
+void *mach64_gtb_core_init(const device_t *info);
 
 /* Lightweight shared trace entry point used by GTB POST/mode-set hooks. */
 void mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
