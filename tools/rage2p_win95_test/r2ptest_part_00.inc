@@ -8,7 +8,6 @@
 #define DIRECTDRAW_VERSION 0x0500
 #define DIRECT3D_VERSION 0x0500
 #define COBJMACROS
-#define INITGUID
 
 #include <windows.h>
 #include <ddraw.h>
@@ -38,6 +37,18 @@
 #define STATUS_INFO 4
 
 typedef HRESULT (WINAPI *PFN_DirectDrawCreate)(GUID *, LPDIRECTDRAW *, IUnknown *);
+
+/* Keep the validator independent of DXGUID.LIB. These are the DirectX 5
+ * interface IIDs used by the program. */
+static const GUID IID_R2P_IDirectDraw2 =
+    { 0xB3A6F3E0, 0x2B43, 0x11CF,
+      { 0xA2, 0xDE, 0x00, 0xAA, 0x00, 0xB9, 0x33, 0x56 } };
+static const GUID IID_R2P_IDirect3D2 =
+    { 0x6AAE1EC1, 0x662A, 0x11D0,
+      { 0x88, 0x9D, 0x00, 0xAA, 0x00, 0xBB, 0xB7, 0x6A } };
+static const GUID IID_R2P_IDirect3DTexture2 =
+    { 0x93281502, 0x8CF8, 0x11D0,
+      { 0x89, 0xAB, 0x00, 0xA0, 0xC9, 0x05, 0x41, 0x29 } };
 
 typedef struct AppState {
     HINSTANCE instance;
@@ -136,7 +147,7 @@ static HRESULT init_ddraw(void)
     hr = g_app.pDirectDrawCreate(NULL, &g_app.dd1, NULL);
     if (FAILED(hr))
         return hr;
-    hr = IDirectDraw_QueryInterface(g_app.dd1, &IID_IDirectDraw2, (void **)&g_app.dd);
+    hr = IDirectDraw_QueryInterface(g_app.dd1, &IID_R2P_IDirectDraw2, (void **)&g_app.dd);
     if (FAILED(hr))
         return hr;
     hr = IDirectDraw2_SetCooperativeLevel(g_app.dd, g_app.hwnd, DDSCL_NORMAL);
