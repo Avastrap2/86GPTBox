@@ -152,12 +152,6 @@ add_library(vid OBJECT
     vid_bochs_vbe.c
 )
 
-# Keep the current upstream Mach64 source intact.  The aliases expose its
-# mature 2D/PCI entry points to the GTB extension while the video table retains
-# the original Mach64VT2 entry as a separate device.
-set_source_files_properties(vid_ati_mach64_accel.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_queue=mach64_queue_legacy")
-
 set_source_files_properties(vid_ati_mach64.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
 

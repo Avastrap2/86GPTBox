@@ -443,6 +443,7 @@ void     mach64_blit(uint32_t cpu_dat, int count, mach64_t *mach64);
 void     mach64_load_context(mach64_t *mach64);
 void     mach64_overlay_draw(svga_t *svga, int displine);
 void     mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
+void     mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 
 uint8_t  mach64_ext_readb(uint32_t addr, void *priv);
 uint16_t mach64_ext_readw(uint32_t addr, void *priv);

@@ -511,7 +511,7 @@ mach64_fifo_thread(void *param)
 }
 
 void
-mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
+mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
 {
     fifo_entry_t *fifo = &mach64->fifo[mach64->fifo_write_idx & FIFO_MASK];
     int limit = 0;

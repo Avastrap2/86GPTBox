@@ -35,7 +35,6 @@
 #define MACH64_GTB_AUX_STATES    4
 #define MACH64_GTB_OVERLAY_EN    (1u << 30)
 
-extern void mach64_queue_legacy(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type);
 extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
 extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
 extern void mach64_close(void *priv);
