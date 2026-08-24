@@ -82,7 +82,6 @@ uint8_t *pccache2;
 
 int        readlnext[2];
 int        readlookup[512];
-uintptr_t  old_rl2;
 int        writelnext;
 int        writelookup[256];
 
