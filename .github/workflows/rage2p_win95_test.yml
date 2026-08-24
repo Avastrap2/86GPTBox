@@ -8,8 +8,34 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    name: Build R2PTEST.EXE
+  build-cross:
+    name: Cross-build R2PTEST.EXE
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: open-watcom/setup-watcom@v1
+        with:
+          version: '2.0'
+          target: 'nt'
+      - name: Build Windows 95 validator
+        shell: bash
+        run: |
+          cd tools/rage2p_win95_test
+          wcl386 -q -bt=nt -l=nt_win -3r -os -s -w4 rage2p_test.c -fe=R2PTEST.EXE
+      - name: Package validator
+        shell: bash
+        run: |
+          mkdir -p artifact
+          cp tools/rage2p_win95_test/R2PTEST.EXE artifact/R2PTEST.EXE
+          cp tools/rage2p_win95_test/README.txt artifact/README.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: R2PTEST-Windows95-cross
+          path: artifact/*
+          if-no-files-found: error
+
+  build-windows:
+    name: Native-host build R2PTEST.EXE
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
