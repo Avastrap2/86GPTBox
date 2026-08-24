@@ -2,25 +2,6 @@
 #define R3D_GTB_FIFO_VISIBLE 48
 #define R3D_DST_Y_X_ALIAS 0x134
 
-#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-#include <stddef.h>
-
-typedef struct r3d_2d_key_probe_t {
-    mach64_t *mach64;
-    uint32_t src_raw;
-    uint32_t src_center_before;
-    uint32_t dst_before;
-    uint32_t dst_center_before;
-    uint32_t src_center_addr;
-    uint32_t dst_addr;
-    uint32_t dst_center_addr;
-    uint8_t pixel_shift;
-    uint8_t pending;
-} r3d_2d_key_probe_t;
-
-static r3d_2d_key_probe_t r3d_2d_key_probe[MACH64_3D_CONTEXTS];
-#endif
-
 static int
 r3d_unique_register(uint32_t b)
 {
@@ -69,7 +50,7 @@ r3d_scaler_alias(uint32_t b)
  * The original GT-A2 documentation describes a 48-entry parameter FIFO but
  * notes that that revision exposes FIFO_CNT only up to 32.  Do not carry that
  * early-GT reporting limit into the later GTB/GU path.  The Rage II+ Win9x HAL
- * issues bursts larger than 32 entries (the diagnostic trace reached 38) and
+ * issues bursts larger than 32 entries and
  * then polls GUI_STAT before it has emitted any 3D draw.  Reporting a permanent
  * maximum of 32 therefore leaves the HAL in an infinite reservation loop.
  * Expose the GTB parameter FIFO's full 48 entries here; VT/VT2 remain unchanged.
@@ -120,16 +101,6 @@ r3d_gtb_gui_stat(mach64_t *m)
     return ret;
 }
 
-static unsigned
-r3d_fifo_width(uint32_t type)
-{
-    if (type == FIFO_WRITE_DWORD)
-        return 4;
-    if (type == FIFO_WRITE_WORD)
-        return 2;
-    return 1;
-}
-
 static uint32_t
 r3d_merge_write(uint32_t old, uint32_t a, uint32_t v, uint32_t type)
 {
@@ -155,244 +126,17 @@ r3d_write_complete(uint32_t a, uint32_t type)
 /*
  * GT-only registers are not yet represented as entries in the legacy Mach64
  * worker FIFO.  We therefore need an ordering barrier when crossing from an
- * ordinary/shared 2D write into GT state or a DRAW_TRAP command.  Record the
- * exact FIFO depth and host timer duration for every barrier so a stalled
- * Direct3D program can be separated from a slow rasterizer in the trace.
+ * ordinary/shared 2D write into GT state or a DRAW_TRAP command.
  */
 static void
 r3d_sync_legacy_fifo(mach64_3d_ctx_t *ctx)
 {
-    uint32_t fifo_before;
-    uint32_t fifo_after;
-    uint64_t start_tick;
-    uint64_t end_tick;
-
     if (!ctx || !ctx->legacy_fifo_pending)
         return;
 
-    fifo_before = ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
-    start_tick = plat_timer_read();
     mach64_wait_fifo_idle(ctx->mach64);
-    end_tick = plat_timer_read();
-    fifo_after = ctx->mach64->fifo_write_idx - ctx->mach64->fifo_read_idx;
-    r3d_debug_sync(ctx, start_tick, end_tick, fifo_before, fifo_after);
     ctx->legacy_fifo_pending = 0;
 }
-
-#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-static uint32_t
-r3d_read_vram_pixel(mach64_t *m, uint32_t addr, uint8_t pixel_shift)
-{
-    uint32_t mask = m->vram_mask;
-    uint8_t *vram = m->svga.vram;
-
-    uint32_t value = (uint32_t) vram[addr & mask];
-
-    if (pixel_shift >= 1)
-        value |= (uint32_t) vram[(addr + 1) & mask] << 8;
-    if (pixel_shift == 2) {
-        value |= ((uint32_t) vram[(addr + 2) & mask] << 16) |
-                 ((uint32_t) vram[(addr + 3) & mask] << 24);
-    }
-    return value;
-}
-
-static r3d_2d_key_probe_t *
-r3d_get_2d_key_probe(mach64_3d_ctx_t *ctx)
-{
-    ptrdiff_t slot;
-    r3d_2d_key_probe_t *probe;
-
-    if (!ctx)
-        return NULL;
-
-    slot = ctx - mach64_3d_ctx;
-    if (slot < 0 || slot >= MACH64_3D_CONTEXTS)
-        return NULL;
-
-    probe = &r3d_2d_key_probe[slot];
-    if (probe->mach64 != ctx->mach64) {
-        memset(probe, 0, sizeof(*probe));
-        probe->mach64 = ctx->mach64;
-    }
-    return probe;
-}
-
-/*
- * Color-key diagnostics for the legacy 2D engine.  The Rage II+
- * DirectDraw test programs CLR_CMP_* immediately before DST_HEIGHT_WIDTH.
- * Capture the exact first source and destination pixels after the preceding
- * FIFO state has committed, then remember the destination addresses so the
- * next GUI access can sample the completed blit before later drawing starts.
- *
- * K records use pseudo addresses so they cannot be confused with real MMIO:
- *   F300 = raw first source pixel before blit
- *   F304 = CLR_CMP_CLR
- *   F308 = CLR_CMP_MASK
- *   F30C = CLR_CMP_CNTL
- *   F310 = raw first destination pixel before blit
- *   F314 = raw center source pixel before blit
- *   F318 = raw center destination pixel before blit
- *   F320 = raw first destination pixel after blit
- *   F324 = raw center destination pixel after blit
- *   F328 = accelerator snapshot CLR_CMP_CLR
- *   F32C = accelerator snapshot CLR_CMP_MASK
- *   F330 = accelerator snapshot compare source/function
- *   F334 = comparator result predicted from the snapshot (0/1)
- *   F338 = raw center source pixel after blit
- */
-static void
-r3d_record_2d_color_key_value(mach64_3d_ctx_t *ctx, uint32_t addr,
-                              uint32_t value)
-{
-    r3d_trace_record(ctx->mach64, 'K', 4, addr, value, 1);
-    r3d_debug_access(ctx, 'K', 4, addr, value, 1);
-    r3d_debug_key_value(ctx, addr, value);
-}
-
-static void
-r3d_begin_2d_color_key_probe(mach64_3d_ctx_t *ctx)
-{
-    mach64_t *m;
-    r3d_2d_key_probe_t *probe;
-    uint32_t src_x;
-    uint32_t src_y;
-    uint32_t src_pitch;
-    uint32_t src_offset;
-    uint32_t src_addr;
-    uint32_t dst_x;
-    uint32_t dst_y;
-    uint32_t dst_pitch;
-    uint32_t dst_offset;
-    uint32_t width;
-    uint32_t height;
-    uint32_t src_format;
-    uint32_t dst_format;
-    uint8_t pixel_shift;
-
-    if (!ctx || !(m = ctx->mach64) || ((m->clr_cmp_cntl & 7) == 0))
-        return;
-
-    src_format = (m->dp_pix_width >> 8) & 7;
-    dst_format = m->dp_pix_width & 7;
-    if (src_format != dst_format)
-        return;
-
-    switch (src_format) {
-        case 2:
-            pixel_shift = 0;
-            break;
-        case 3:
-        case 4:
-            pixel_shift = 1;
-            break;
-        case 6:
-            pixel_shift = 2;
-            break;
-        default:
-            return;
-    }
-
-    probe = r3d_get_2d_key_probe(ctx);
-    if (!probe)
-        return;
-
-    src_x = (m->src_y_x >> 16) & 0x0fff;
-    src_y = m->src_y_x & 0x3fff;
-    src_pitch = (m->src_off_pitch >> 22) << 3;
-    src_offset = (m->src_off_pitch & 0xfffff) << 3;
-    src_addr = src_offset + ((src_y * src_pitch + src_x) << pixel_shift);
-
-    dst_x = (m->dst_y_x >> 16) & 0x1fff;
-    dst_y = m->dst_y_x & 0x3fff;
-    dst_pitch = (m->dst_off_pitch >> 22) << 3;
-    dst_offset = (m->dst_off_pitch & 0xfffff) << 3;
-    width = (m->dst_height_width >> 16) & 0x1fff;
-    height = m->dst_height_width & 0x1fff;
-
-    probe->src_center_addr = src_offset +
-        ((((src_y + (height >> 1)) * src_pitch) + src_x + (width >> 1)) <<
-         pixel_shift);
-    probe->src_raw = r3d_read_vram_pixel(m, src_addr, pixel_shift);
-    probe->src_center_before =
-        r3d_read_vram_pixel(m, probe->src_center_addr, pixel_shift);
-    probe->dst_addr = dst_offset + ((dst_y * dst_pitch + dst_x) << pixel_shift);
-    probe->dst_center_addr = dst_offset +
-        ((((dst_y + (height >> 1)) * dst_pitch) + dst_x + (width >> 1)) <<
-         pixel_shift);
-    probe->dst_before = r3d_read_vram_pixel(m, probe->dst_addr, pixel_shift);
-    probe->dst_center_before =
-        r3d_read_vram_pixel(m, probe->dst_center_addr, pixel_shift);
-    probe->pixel_shift = pixel_shift;
-    probe->pending = 1;
-
-    r3d_record_2d_color_key_value(ctx, 0xF300, probe->src_raw);
-    r3d_record_2d_color_key_value(ctx, 0xF304, m->clr_cmp_clr);
-    r3d_record_2d_color_key_value(ctx, 0xF308, m->clr_cmp_mask);
-    r3d_record_2d_color_key_value(ctx, 0xF30C, m->clr_cmp_cntl);
-    r3d_record_2d_color_key_value(ctx, 0xF310, probe->dst_before);
-    r3d_record_2d_color_key_value(ctx, 0xF314, probe->src_center_before);
-    r3d_record_2d_color_key_value(ctx, 0xF318, probe->dst_center_before);
-}
-
-static void
-r3d_finish_2d_color_key_probe(mach64_3d_ctx_t *ctx)
-{
-    mach64_t *m;
-    r3d_2d_key_probe_t *probe;
-    uint32_t dst_after;
-    uint32_t dst_center_after;
-    uint32_t src_center_after;
-    uint32_t accel_cntl;
-    uint32_t cmp_input;
-    uint32_t cmp_result = 0;
-
-    if (!ctx || !(m = ctx->mach64))
-        return;
-
-    probe = r3d_get_2d_key_probe(ctx);
-    if (!probe || !probe->pending)
-        return;
-
-    /* The keyed DST_HEIGHT_WIDTH trigger is already in the legacy FIFO. */
-    r3d_sync_legacy_fifo(ctx);
-
-    dst_after = r3d_read_vram_pixel(m, probe->dst_addr, probe->pixel_shift);
-    dst_center_after =
-        r3d_read_vram_pixel(m, probe->dst_center_addr, probe->pixel_shift);
-    src_center_after =
-        r3d_read_vram_pixel(m, probe->src_center_addr, probe->pixel_shift);
-    accel_cntl = ((m->accel.clr_cmp_src ? 1u : 0u) << 24) |
-                 ((uint32_t) m->accel.clr_cmp_fn & 7u);
-    cmp_input = m->accel.clr_cmp_src ? probe->src_raw : probe->dst_before;
-
-    switch (m->accel.clr_cmp_fn) {
-        case 1:
-            cmp_result = 1;
-            break;
-        case 4:
-            cmp_result = ((cmp_input & m->accel.clr_cmp_mask) !=
-                          m->accel.clr_cmp_clr);
-            break;
-        case 5:
-            cmp_result = ((cmp_input & m->accel.clr_cmp_mask) ==
-                          m->accel.clr_cmp_clr);
-            break;
-        default:
-            break;
-    }
-
-    r3d_record_2d_color_key_value(ctx, 0xF320, dst_after);
-    r3d_record_2d_color_key_value(ctx, 0xF324, dst_center_after);
-    r3d_record_2d_color_key_value(ctx, 0xF328, m->accel.clr_cmp_clr);
-    r3d_record_2d_color_key_value(ctx, 0xF32C, m->accel.clr_cmp_mask);
-    r3d_record_2d_color_key_value(ctx, 0xF330, accel_cntl);
-    r3d_record_2d_color_key_value(ctx, 0xF334, cmp_result);
-    r3d_record_2d_color_key_value(ctx, 0xF338, src_center_after);
-
-    probe->pending = 0;
-}
-#endif
 
 int
 mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
@@ -401,17 +145,8 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     if (!ctx || !v)
         return 0;
 
-#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-    /* Finish a pending keyed BLT before this later GUI access can disturb it. */
-    r3d_finish_2d_color_key_probe(ctx);
-#endif
-
     a &= 0x3ff;
     uint32_t b = a & ~3u;
-
-    /* Every Rage II+ MMIO read reaches this probe before the VT2 fallback. */
-    r3d_trace_record(m, 'R', 0, a, 0, 0);
-    r3d_debug_access(ctx, 'R', 0, a, 0, 0);
 
     /*
      * GUI_STAT is common to the 2D and 3D engines, but GTB needs the complete
@@ -420,8 +155,6 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
      */
     if (b == R3D_GUI_STAT) {
         *v = r3d_gtb_gui_stat(m);
-        r3d_trace_record(m, 'V', 4, b, *v, 1);
-        r3d_debug_access(ctx, 'V', 4, b, *v, 1);
         return 1;
     }
 
@@ -436,8 +169,6 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
             return 0;
         r3d_sync_legacy_fifo(ctx);
         *v = cmd;
-        r3d_trace_record(m, 'V', 4, b, *v, 1);
-        r3d_debug_access(ctx, 'V', 4, b, *v, 1);
         return 1;
     }
 
@@ -452,8 +183,6 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     else
         *v = ctx->regs[b >> 2];
 
-    r3d_trace_record(m, 'V', 4, b, *v, 1);
-    r3d_debug_access(ctx, 'V', 4, b, *v, 1);
     return 1;
 }
 
@@ -461,27 +190,12 @@ int
 mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
 {
     mach64_3d_ctx_t *ctx = r3d_find(m);
-    unsigned width;
 
     if (!ctx)
         return 0;
 
-#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-    /* Finish a pending keyed BLT before this later GUI write is queued. */
-    r3d_finish_2d_color_key_probe(ctx);
-#endif
-
     a &= 0x3ff;
     uint32_t b = a & ~3u;
-    width = r3d_fifo_width(type);
-
-    /*
-     * mach64_queue() sends every GUI write here before the legacy 2D FIFO.
-     * Therefore W records include both 2D and 3D traffic.  C records indicate
-     * writes actually consumed by the GT/GTB 3D block.
-     */
-    r3d_trace_record(m, 'W', width, a, v, 0);
-    r3d_debug_access(ctx, 'W', width, a, v, 0);
 
     /*
      * 3D RAGE adds a write-only DST_Y_X alias at MM register 0_4D (byte
@@ -493,8 +207,6 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     if (b == R3D_DST_Y_X_ALIAS) {
         r3d_sync_legacy_fifo(ctx);
         m->dst_y_x = r3d_merge_write(m->dst_y_x, a, v, type);
-        r3d_trace_record(m, 'C', width, b, m->dst_y_x, 1);
-        r3d_debug_access(ctx, 'C', width, b, m->dst_y_x, 1);
         return 1;
     }
 
@@ -517,42 +229,12 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
             return 0;
         }
 
-        r3d_trace_record(m, 'C', width, b, cmd, 1);
-        r3d_debug_access(ctx, 'C', width, b, cmd, 1);
         r3d_sync_legacy_fifo(ctx);
         if ((cmd & R3D_DRAW_TRAP) && r3d_write_complete(a, type)) {
-            r3d_trace_record(m, 'T', width, b, cmd, 1);
-            r3d_debug_access(ctx, 'T', width, b, cmd, 1);
             r3d_draw_trapezoid(ctx, cmd);
         }
         return 1;
     }
-
-#ifdef RAGE2P_KEYED_BLT_DIAGNOSTICS
-    /*
-     * Keep a diagnostic shadow of the legacy 2D color-compare registers.
-     * They still fall through to the established FIFO implementation.
-     */
-    if ((b == 0x300) || (b == 0x304) || (b == 0x308)) {
-        ctx->regs[b >> 2] = r3d_merge_write(ctx->regs[b >> 2], a, v, type);
-        ctx->legacy_fifo_pending = 1;
-        return 0;
-    }
-
-    /*
-     * A completed DST_HEIGHT_WIDTH dword starts the DirectDraw rectangle in
-     * the current reproduction.  If the queued compare shadow says color key
-     * is enabled, drain only the preceding FIFO entries, sample the source and
-     * destination, then let this trigger write fall through normally.
-     */
-    if ((b == 0x118) && r3d_write_complete(a, type) &&
-        (ctx->regs[0x308 >> 2] & 7)) {
-        r3d_sync_legacy_fifo(ctx);
-        r3d_begin_2d_color_key_probe(ctx);
-        ctx->legacy_fifo_pending = 1;
-        return 0;
-    }
-#endif
 
     /*
      * Rage II CI8 textures use a private 256-entry RGB palette, independent
@@ -567,8 +249,6 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
         if (r3d_write_complete(a, type))
             mach64_3d_texture_palette_store(ctx->texture_palette, ctx->regs[i]);
-        r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
-        r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
         return 1;
     }
 
@@ -583,7 +263,5 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
     if (alias)
         ctx->regs[alias >> 2] = ctx->regs[i];
-    r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
-    r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
     return 1;
 }

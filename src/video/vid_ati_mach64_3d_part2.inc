@@ -180,30 +180,27 @@ static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t
     rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
     return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
-static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples){
+static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy){
     mach64_3d_mip_lod_t lod;
     r3d_tex_state_t a,b;
     int blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
-    if(samples)*samples=1;
-    if(ctl&R3D_MIP_MAP_DISABLE){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    if(ctl&R3D_MIP_MAP_DISABLE)return r3d_sample_texel_cached(ctx,largest,s,t);
     lod=mach64_3d_mip_lod(dsdx,dtdx,dsdy,dtdy,largest->coord_shift,largest->sl);
-    if(!lod.minifying){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    if(!lod.minifying)return r3d_sample_texel_cached(ctx,largest,s,t);
     if(blend==1&&lod.floor_lod<largest->sl){
         rgba_t ca,cb;
         r3d_tex_state_select_lod(ctx,largest,lod.floor_lod,0,&a);
         r3d_tex_state_select_lod(ctx,largest,lod.floor_lod+1,0,&b);
         ca=r3d_sample_texel_cached(ctx,&a,s,t);cb=r3d_sample_texel_cached(ctx,&b,s,t);
-        if(samples)*samples=2;
         return r3d_lerp(ca,cb,lod.fraction);
     }
-    if(blend==2){r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,1,&a);if(samples)*samples=4;return r3d_sample_texel_cached(ctx,&a,s,t);}
+    if(blend==2){r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,1,&a);return r3d_sample_texel_cached(ctx,&a,s,t);}
     if(blend==3){
         int next=lod.nearest_lod==lod.floor_lod?lod.floor_lod+1:lod.floor_lod;
         rgba_t c;
         if(next>largest->sl)next=largest->sl;
         r3d_tex_state_select_lod(ctx,largest,next,1,&a);c=r3d_sample_texel_cached(ctx,&a,s,t);
         c.a=lod.nearest_lod==lod.floor_lod?lod.fraction:255-lod.fraction;
-        if(samples)*samples=4;
         return c;
     }
     r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,0,&a);

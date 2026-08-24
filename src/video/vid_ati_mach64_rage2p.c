@@ -255,31 +255,19 @@ mach64rage2p_vblank_start(svga_t *svga)
 static uint8_t
 mach64rage2p_aux_readb(uint32_t addr, void *priv)
 {
-    mach64_t *mach64 = (mach64_t *) priv;
-    uint8_t ret = mach64rage2p_mmio_readb(addr, priv);
-
-    mach64_3d_trace_external(mach64, 'm', 1, 0x3000u | (addr & 0xfffu), ret, 1);
-    return ret;
+    return mach64rage2p_mmio_readb(addr, priv);
 }
 
 static uint16_t
 mach64rage2p_aux_readw(uint32_t addr, void *priv)
 {
-    mach64_t *mach64 = (mach64_t *) priv;
-    uint16_t ret = mach64rage2p_mmio_readw(addr, priv);
-
-    mach64_3d_trace_external(mach64, 'm', 2, 0x3000u | (addr & 0xfffu), ret, 1);
-    return ret;
+    return mach64rage2p_mmio_readw(addr, priv);
 }
 
 static uint32_t
 mach64rage2p_aux_readl(uint32_t addr, void *priv)
 {
-    mach64_t *mach64 = (mach64_t *) priv;
-    uint32_t ret = mach64rage2p_mmio_readl(addr, priv);
-
-    mach64_3d_trace_external(mach64, 'm', 4, 0x3000u | (addr & 0xfffu), ret, 1);
-    return ret;
+    return mach64rage2p_mmio_readl(addr, priv);
 }
 
 static int
@@ -409,17 +397,14 @@ mach64rage2p_pci_read(int func, int addr, int len, void *priv)
             mach64rage2p_aux_state_t *state = mach64rage2p_aux_state(mach64, 1);
             unsigned shift = (unsigned) (addr - MACH64_GTB_AUX_BAR_BYTE0) * 8;
             ret = state ? (state->bar >> shift) & 0xff : 0;
-            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
             return ret;
         }
         if (addr == PCI_REG_REVISION) {
             ret = 0x9a;
-            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
             return ret;
         }
         if (addr == MACH64_PCI_IOCONFIG) {
             ret = mach64_gtb_pci_ioconfig_read(priv);
-            mach64_3d_trace_external(mach64, 'p', 1, 0x1000u | (uint32_t) addr, ret, 1);
             return ret;
         }
     }
@@ -447,7 +432,6 @@ mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
         if (state) {
             state->bar = (state->bar & ~(0xffu << shift)) | ((uint32_t) val << shift);
             state->bar &= MACH64_GTB_AUX_MASK;
-            mach64_3d_trace_external(mach64, 'P', 1, 0x1000u | (uint32_t) addr, state->bar, 1);
             /* PCI config writes arrive one byte at a time.  Wait for the last
              * BAR byte before moving a live mapping so sizing writes cannot
              * transiently decode partial addresses such as 0x0000f000. */
@@ -585,7 +569,6 @@ mach64rage2p_mmio_writeb(uint32_t addr, uint8_t val, void *priv)
 {
     mach64_t *mach64 = (mach64_t *) priv;
 
-    mach64_3d_trace_external(mach64, 'M', 1, addr, val, 0);
     if (mach64rage2p_gtb_cfg_writeb(mach64, addr, val))
         return;
     mach64_ext_writeb(addr, val, priv);
@@ -597,7 +580,6 @@ mach64rage2p_mmio_writew(uint32_t addr, uint16_t val, void *priv)
     mach64_t *mach64 = (mach64_t *) priv;
     uint8_t probe;
 
-    mach64_3d_trace_external(mach64, 'M', 2, addr, val, 0);
     if (mach64rage2p_gtb_cfg_readb(mach64, addr, &probe) ||
         mach64rage2p_gtb_cfg_readb(mach64, addr + 1, &probe)) {
         mach64rage2p_mmio_writeb(addr, val & 0xff, priv);
@@ -613,7 +595,6 @@ mach64rage2p_mmio_writel(uint32_t addr, uint32_t val, void *priv)
     mach64_t *mach64 = (mach64_t *) priv;
     uint8_t probe;
 
-    mach64_3d_trace_external(mach64, 'M', 4, addr, val, 0);
     for (unsigned i = 0; i < 4; i++) {
         if (mach64rage2p_gtb_cfg_readb(mach64, addr + i, &probe)) {
             for (unsigned b = 0; b < 4; b++)
