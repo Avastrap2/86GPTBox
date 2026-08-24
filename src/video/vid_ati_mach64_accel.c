@@ -57,6 +57,7 @@ mach64_recalc_dp_set_engine(mach64_t *mach64)
     mach64->sc_left_right = 0x1FFF0000;
     mach64->write_mask = ~0u;
     mach64->clr_cmp_clr = 0;
+    mach64->clr_cmp_cntl = 0;
     mach64->src_y_x_start = 0;
     mach64->src_cntl &= ~((3 << 13) | (1 << 5) | (1 << 12));
     mach64->dst_cntl &= ~(7 << 13);
