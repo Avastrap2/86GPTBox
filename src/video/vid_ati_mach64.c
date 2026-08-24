@@ -1888,7 +1888,7 @@ mach64_writel_be(uint32_t addr, uint32_t val, void *priv)
 
 // PCI config space I/O read function
 uint8_t
-mach64_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
+mach64_pci_read_legacy(UNUSED(int func), int addr, UNUSED(int len), void *priv)
 {
     const mach64_t *mach64 = (mach64_t *) priv;
 
@@ -1961,7 +1961,7 @@ mach64_pci_read(UNUSED(int func), int addr, UNUSED(int len), void *priv)
 
 // PCI config space I/O write function
 void
-mach64_pci_write(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, void *priv)
+mach64_pci_write_legacy(UNUSED(int func), int addr, UNUSED(int len), uint8_t val, void *priv)
 {
     mach64_t *mach64 = (mach64_t *) priv;
 
@@ -2129,7 +2129,9 @@ mach64_common_init(const device_t *info)
     mach64_io_map(mach64);
 
     if (info->flags & DEVICE_PCI)
-        pci_add_card((info->local & MACH64_FLAG_ONBOARD) ? PCI_ADD_VIDEO : PCI_ADD_NORMAL, mach64_pci_read, mach64_pci_write, mach64, &mach64->pci_slot);
+        mach64_pci_add_card_dispatch((info->local & MACH64_FLAG_ONBOARD) ? PCI_ADD_VIDEO : PCI_ADD_NORMAL,
+                                     mach64_pci_read_legacy, mach64_pci_write_legacy,
+                                     mach64, &mach64->pci_slot);
 
     mach64->pci_regs[PCI_REG_COMMAND]       = 3;
     mach64->pci_regs[PCI_REG_ROM_BAR_BYTE0] = 0x00;

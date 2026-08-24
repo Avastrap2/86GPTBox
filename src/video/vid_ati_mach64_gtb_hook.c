@@ -8,6 +8,7 @@
  * CRTC, framebuffer and 2D implementation.
  */
 #include "vid_ati_mach64.h"
+#include "vid_ati_mach64_gtb_hook.h"
 
 #define GTB_PCI_ID        0x4755
 #define GTB_PLL_REF_DIV   0x02
@@ -19,7 +20,6 @@
 #define GTB_BLOCK_SIZE    0x0100
 
 extern void ics2595_setclock(void *priv, double clock);
-extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
 extern void mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
                                      uint32_t addr, uint32_t value, int claimed);
 

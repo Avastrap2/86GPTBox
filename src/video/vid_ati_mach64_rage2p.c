@@ -35,8 +35,6 @@
 #define MACH64_GTB_AUX_STATES    4
 #define MACH64_GTB_OVERLAY_EN    (1u << 30)
 
-extern uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
-extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
 extern void mach64_close(void *priv);
 extern void mach64_speed_changed(void *priv);
 extern void mach64_force_redraw(void *priv);
@@ -462,7 +460,7 @@ mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
     if (mach64->pci_id == MACH64_GTB_PCI_ID && addr == MACH64_PCI_IOCONFIG)
         mach64_gtb_pci_ioconfig_write(priv, val);
 
-    mach64_pci_write_legacy(func, addr, len, val, priv);
+    mach64_pci_write_gtb_legacy_dispatch(func, addr, len, val, priv);
 
     if (mach64->pci_id != MACH64_GTB_PCI_ID)
         return;
@@ -484,7 +482,7 @@ mach64rage2p_pci_write(int func, int addr, int len, uint8_t val, void *priv)
 }
 
 /*
- * vid_ati_mach64.c is compiled with pci_add_card renamed to this dispatcher.
+ * vid_ati_mach64.c calls this dispatcher when registering its PCI callbacks.
  * The callbacks themselves remain shared with all Mach64 variants; the GTB
  * special cases are gated by pci_id after Rage II+ initialization.
  */

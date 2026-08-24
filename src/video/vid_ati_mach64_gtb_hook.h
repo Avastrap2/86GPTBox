@@ -21,20 +21,18 @@ void mach64_io_removehandler_dispatch(uint16_t base, uint16_t size,
                                       void (*outl)(uint16_t port, uint32_t val, void *priv),
                                       void *priv);
 void mach64_ics2595_setclock_dispatch(void *priv, double clock);
+uint8_t mach64_pci_read_legacy(int func, int addr, int len, void *priv);
+void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
 void mach64_pci_write_gtb_legacy_dispatch(int func, int addr, int len, uint8_t val, void *priv);
+void mach64_pci_add_card_dispatch(uint8_t add_type,
+                                  uint8_t (*read)(int func, int addr, int len, void *priv),
+                                  void (*write)(int func, int addr, int len, uint8_t val, void *priv),
+                                  void *priv, uint8_t *slot);
 
 /* Rage II+ lifecycle and PCI configuration state. */
 void mach64_gtb_state_attach(void *priv);
 void mach64_gtb_state_detach(void *priv);
 uint8_t mach64_gtb_pci_ioconfig_read(void *priv);
 void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
-
-/*
- * CMake maps mach64_pci_write_legacy directly to the implemented GTB legacy
- * dispatcher.  Do not chain it through the older BAR guard: the failing guest
- * assigns BAR1 at 0x6400, already aligned to both 0x100 and 0x400, while the
- * extra dispatcher replay caused an observable regression in Windows fallback
- * behavior.  The legacy GTB dispatcher still remaps after BAR1/IOCONFIG writes.
- */
 
 #endif

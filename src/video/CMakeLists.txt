@@ -152,14 +152,6 @@ add_library(vid OBJECT
     vid_bochs_vbe.c
 )
 
-set_source_files_properties(vid_ati_mach64.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_read=mach64_pci_read_legacy;mach64_pci_write=mach64_pci_write_legacy;pci_add_card=mach64_pci_add_card_dispatch")
-
-# Keep only the aliases that still affect hardware behavior.  The MMIO read
-# aliases were diagnostic-only and Stage 1a validated normal upstream readers.
-set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch")
-
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_include_directories(vid PRIVATE /usr/local/include)
 endif()

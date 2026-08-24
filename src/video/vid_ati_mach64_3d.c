@@ -1,5 +1,6 @@
 /* ATI 3D RAGE / Rage II+ software renderer. */
 #include "vid_ati_mach64_3d.h"
+#include "vid_ati_mach64_gtb_hook.h"
 
 /* Keep the original attach/detach bodies from part1, then wrap them below so
  * the diagnostic state can be reset and dumped without changing the renderer's
@@ -417,9 +418,6 @@ mach64_ext_readl_gtb_trace(uint32_t addr, void *priv)
  * the exact GTB BAR1 value requested by the guest at the correct 0x100-byte
  * granularity and remap after the legacy writer has run.
  */
-extern void mach64_pci_write_gtb_legacy_dispatch(int func, int addr, int len,
-                                                  uint8_t val, void *priv);
-
 void
 mach64_pci_write_gtb_bar_dispatch(int func, int addr, int len,
                                   uint8_t val, void *priv)
