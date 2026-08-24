@@ -246,7 +246,7 @@ void mach64_3d_attach(mach64_t *mach64) {
     for (int i = 0; i < MACH64_3D_CONTEXTS; i++) if (!mach64_3d_ctx[i].mach64) { memset(&mach64_3d_ctx[i], 0, sizeof(mach64_3d_ctx[i])); mach64_3d_ctx[i].mach64 = mach64; r3d_trace_reset(); return; }
     fatal("ATI 3D RAGE: no free 3D context slot\n");
 }
-void mach64_3d_detach(mach64_t *mach64) { mach64_3d_ctx_t *ctx = r3d_find(mach64); if (ctx) { r3d_trace_dump(mach64); memset(ctx, 0, sizeof(*ctx)); } }
+void mach64_3d_detach(mach64_t *mach64) { mach64_3d_ctx_t *ctx = r3d_find(mach64); if (ctx) memset(ctx, 0, sizeof(*ctx)); }
 
 /*
  * The software rasterizer touches VRAM for every color and Z sample.  Keep the
