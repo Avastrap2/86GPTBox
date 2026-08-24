@@ -102,8 +102,24 @@ main(void)
         return 1;
     }
 
-    printf("dp_set_gui_engine_compare_reset: CLR_CMP_CNTL=%08x\n",
-           mach64->clr_cmp_cntl);
+    if (mach64->clr_cmp_clr != 0x00007c1f) {
+        fprintf(stderr,
+                "DP_SET_GUI_ENGINE changed CLR_CMP_CLR=%08x; expected 00007c1f\n",
+                mach64->clr_cmp_clr);
+        free(mach64);
+        return 1;
+    }
+
+    if (mach64->clr_cmp_mask != 0xffffffff) {
+        fprintf(stderr,
+                "DP_SET_GUI_ENGINE changed CLR_CMP_MASK=%08x; expected ffffffff\n",
+                mach64->clr_cmp_mask);
+        free(mach64);
+        return 1;
+    }
+
+    printf("dp_set_gui_engine_compare_reset: CNTL=%08x CLR=%08x MASK=%08x\n",
+           mach64->clr_cmp_cntl, mach64->clr_cmp_clr, mach64->clr_cmp_mask);
     free(mach64);
     return 0;
 }
