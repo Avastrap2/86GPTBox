@@ -259,17 +259,29 @@ flushmmucache_nopc(void)
 }
 
 void
-mem_flush_write_page(uint32_t addr, uint32_t virt)
+mem_flush_write_page(uint32_t addr, UNUSED(uint32_t virt))
 {
-    const page_t *page_target = &pages[addr >> 12];
+    const page_t *  page_target = &pages[addr >> 12];
+    const uintptr_t target      = (uintptr_t) page_target->mem;
 
+    /* Fast write entries store a host-pointer bias for their own linear page.
+       Reconstruct the backing page so every alias of compiled code is flushed. */
     for (uint16_t c = 0; c < 256; c++) {
         if (writelookup[c] != (int) 0xffffffff) {
-            uintptr_t target = (uintptr_t) &ram[(uintptr_t) (addr & ~0xfff) - (virt & ~0xfff)];
-            if (writelookup2[writelookup[c]] == target || page_lookup[writelookup[c]] == page_target) {
-                writelookup2[writelookup[c]] = LOOKUP_INV;
-                page_lookup[writelookup[c]]  = NULL;
-                writelookup[c]               = 0xffffffff;
+            const uint32_t  lookup = writelookup[c];
+            const uintptr_t bias   = writelookup2[lookup];
+            const page_t *  cached_page = page_lookup[lookup];
+            const uintptr_t cached_target =
+                bias == (uintptr_t) LOOKUP_INV ?
+                    (uintptr_t) LOOKUP_INV :
+                    bias + ((uintptr_t) lookup << 12);
+
+            if (cached_target == target || cached_page == page_target ||
+                (cached_page && page_target->mem != page_ff &&
+                 cached_page->mem == page_target->mem)) {
+                writelookup2[lookup] = LOOKUP_INV;
+                page_lookup[lookup]  = NULL;
+                writelookup[c]       = 0xffffffff;
             }
         }
     }
@@ -636,7 +648,9 @@ addwritelookup(uint32_t virt, uint32_t phys)
         page_lookup[virt >> 12]  = &pages[phys >> 12];
     } else {
 
-        writelookup2[virt >> 12] = (uintptr_t) &ram[(uintptr_t) (phys & ~0xFFF) - (uintptr_t) (virt & ~0xfff)];
+        writelookup2[virt >> 12] = (uintptr_t) ram +
+                                   (uintptr_t) (phys & ~0xfff) -
+                                   (uintptr_t) (virt & ~0xfff);
     }
 
     writelookup[writelnext++] = virt >> 12;
