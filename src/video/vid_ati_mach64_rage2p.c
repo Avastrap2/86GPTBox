@@ -7,6 +7,7 @@
  * command decoder in front of the legacy Mach64 FIFO.
  */
 #include "vid_ati_mach64_3d.h"
+#include "vid_ati_mach64_gtb_hook.h"
 
 /*
  * ARS2D.bin is a complete ATI PCI option-ROM image for 1002:4755.  Its ROM

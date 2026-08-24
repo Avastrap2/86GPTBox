@@ -3,12 +3,7 @@
 
 #include <stdint.h>
 
-/*
- * This header is force-included only while compiling the legacy Mach64 core
- * and the Rage II+ integration shim.  It redirects legacy I/O registration
- * and clock output through the GTB compatibility layer without forcing GTB
- * behavior onto ordinary VT/VT2 cards.
- */
+/* Shared GTB I/O, clock, PCI, and lifecycle dispatch entry points. */
 void mach64_io_sethandler_dispatch(uint16_t base, uint16_t size,
                                    uint8_t (*inb)(uint16_t port, void *priv),
                                    uint16_t (*inw)(uint16_t port, void *priv),
@@ -33,15 +28,6 @@ void mach64_gtb_state_attach(void *priv);
 void mach64_gtb_state_detach(void *priv);
 uint8_t mach64_gtb_pci_ioconfig_read(void *priv);
 void mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val);
-
-/*
- * Keep only the core-level I/O and PLL redirects here.  GTB control-register
- * Block-0 gating is performed explicitly by the Rage II+ shim, so GUI offsets
- * 0x100..0x3ff cannot alias the 0x00..0xff control shadow.
- */
-#define io_sethandler      mach64_io_sethandler_dispatch
-#define io_removehandler   mach64_io_removehandler_dispatch
-#define ics2595_setclock   mach64_ics2595_setclock_dispatch
 
 /*
  * CMake maps mach64_pci_write_legacy directly to the implemented GTB legacy

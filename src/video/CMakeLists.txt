@@ -188,17 +188,6 @@ set_source_files_properties(vid_ati_mach64.c PROPERTIES
 set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
     COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch")
 
-# GTB needs to observe the legacy core's I/O registrations and integrated PLL
-# programming.  GTB-only register behavior is gated by PCI identity in the hook;
-# ordinary Mach64 variants forward to their original handlers.
-if(MSVC)
-    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
-        COMPILE_OPTIONS "/FI${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
-else()
-    set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY
-        COMPILE_OPTIONS "-include" "${CMAKE_CURRENT_SOURCE_DIR}/vid_ati_mach64_gtb_hook.h")
-endif()
-
 if(CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
     target_include_directories(vid PRIVATE /usr/local/include)
 endif()
