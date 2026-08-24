@@ -15,18 +15,43 @@ mach64_scaler_accum_pixel(int32_t accumulator)
     return pixel;
 }
 
+/*
+ * The final Rage Pro-and-derivatives programming guide explicitly describes
+ * the Rage II/II+/IIC front-end scaler as a 2-tap, 4-bit coefficient linear
+ * filter.  In the 16.16 register image this is the high four fractional bits.
+ * The preliminary 1996 GT register guide instead says five bits; use the later
+ * family guide for Rage II+ behavior.
+ */
+static inline unsigned
+mach64_scaler_accum_fraction4(int32_t accumulator)
+{
+    return ((uint32_t) accumulator >> 12) & 15u;
+}
+
+static inline uint8_t
+mach64_scaler_lerp4(uint8_t first, uint8_t second, unsigned coefficient)
+{
+    coefficient &= 15u;
+    return (uint8_t) (((unsigned) first * (16u - coefficient) +
+                       (unsigned) second * coefficient + 8u) >> 4);
+}
+
+/*
+ * Compatibility wrappers for the current scaler include.  Keep the old names
+ * temporarily so this correctness fix does not require a mechanically large
+ * renderer rewrite; their behavior now follows the documented Rage II+ 4-bit
+ * coefficient path above.
+ */
 static inline unsigned
 mach64_scaler_accum_fraction5(int32_t accumulator)
 {
-    return ((uint32_t) accumulator >> 11) & 31u;
+    return mach64_scaler_accum_fraction4(accumulator);
 }
 
 static inline uint8_t
 mach64_scaler_lerp5(uint8_t first, uint8_t second, unsigned coefficient)
 {
-    coefficient &= 31u;
-    return (uint8_t) (((unsigned) first * (32u - coefficient) +
-                       (unsigned) second * coefficient + 16u) >> 5);
+    return mach64_scaler_lerp4(first, second, coefficient);
 }
 
 /* Mach64 DP_MIX truth table. */

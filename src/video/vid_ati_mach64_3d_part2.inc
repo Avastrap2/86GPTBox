@@ -25,7 +25,7 @@ static rgba_t r3d_yuv_to_rgba(int y,int u,int v,int a){
 static rgba_t r3d_unpack(mach64_3d_ctx_t *ctx,int f,uint32_t raw,int texture){
     rgba_t c={0,0,0,255};
     switch(f){
-        case 2:{uint32_t p;if(texture){p=mach64_3d_texture_palette_lookup(ctx->texture_palette,(uint8_t)raw);c.r=mach64_3d_texture_palette_red(p);c.g=mach64_3d_texture_palette_green(p);c.b=mach64_3d_texture_palette_blue(p);}else{p=ctx->mach64->svga.pallook[raw&255];c.r=getcolr(p);c.g=getcolg(p);c.b=getcolb(p);}break;}
+        case 2:{uint32_t p;if(texture){uint8_t index=mach64_3d_texture_palette_texel_index(ctx->mach64->dp_pix_width,(uint8_t)raw);p=mach64_3d_texture_palette_lookup(ctx->texture_palette,index);c.r=mach64_3d_texture_palette_red(p);c.g=mach64_3d_texture_palette_green(p);c.b=mach64_3d_texture_palette_blue(p);}else{p=ctx->mach64->svga.pallook[raw&255];c.r=getcolr(p);c.g=getcolg(p);c.b=getcolb(p);}break;}
         case 3:c.a=(raw&0x8000)?255:0;c.r=((raw>>10)&31)*255/31;c.g=((raw>>5)&31)*255/31;c.b=(raw&31)*255/31;break;
         case 4:c.r=((raw>>11)&31)*255/31;c.g=((raw>>5)&63)*255/63;c.b=(raw&31)*255/31;break;
         case 6:c.a=(raw>>24)&255;c.r=(raw>>16)&255;c.g=(raw>>8)&255;c.b=raw&255;break;

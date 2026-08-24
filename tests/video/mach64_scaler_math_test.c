@@ -44,10 +44,20 @@ main(void)
                mach64_scaler_accum_pixel(-1), -1);
     expect_int("one-to-one accumulator",
                mach64_scaler_accum_pixel(7 * 0x10000), 7);
-    expect_int("half-pixel coefficient",
-               (int) mach64_scaler_accum_fraction5(0x8000), 16);
-    expect_int("half-pixel blend",
-               mach64_scaler_lerp5(0, 255, 16), 128);
+    expect_int("half-pixel 4-bit coefficient",
+               (int) mach64_scaler_accum_fraction4(0x8000), 8);
+    expect_int("quarter-pixel 4-bit coefficient",
+               (int) mach64_scaler_accum_fraction4(0x4000), 4);
+    expect_int("half-pixel 4-bit blend",
+               mach64_scaler_lerp4(0, 255, 8), 128);
+    expect_int("quarter-pixel 4-bit blend",
+               mach64_scaler_lerp4(0, 255, 4), 64);
+
+    /* Keep compatibility wrappers locked to the Rage II+ 4-bit behavior. */
+    expect_int("compat fraction wrapper",
+               (int) mach64_scaler_accum_fraction5(0x8000), 8);
+    expect_int("compat blend wrapper",
+               mach64_scaler_lerp5(0, 255, 8), 128);
 
     /* Exact geometry used by the DDTEST reproduction: 32x32 to 64x64. */
     for (int y = 0; y < 64; y++) {
