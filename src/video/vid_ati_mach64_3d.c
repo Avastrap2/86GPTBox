@@ -312,9 +312,6 @@ mach64_3d_detach(mach64_t *mach64)
     if (ctx)
         r3d_finish_2d_color_key_probe(ctx);
 #endif
-    r3d_scaler_debug_dump(mach64);
-    r3d_line_debug_dump(mach64);
-    r3d_debug_dump(mach64);
     mach64_3d_detach_base(mach64);
 }
 
