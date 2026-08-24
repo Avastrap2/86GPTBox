@@ -729,7 +729,13 @@ mach64_io_sethandler_dispatch(uint16_t base, uint16_t size,
                               void (*outl_cb)(uint16_t, uint32_t, void *),
                               void *priv)
 {
+    mach64_t *mach64 = (mach64_t *) priv;
     mach64_gtb_io_hook_t *hook;
+
+    if (!mach64 || mach64->type != MACH64_GTB) {
+        io_sethandler(base, size, inb_cb, inw_cb, inl_cb, outb_cb, outw_cb, outl_cb, priv);
+        return;
+    }
 
     if (size != 4 && size != GTB_BLOCK_SIZE) {
         io_sethandler(base, size, inb_cb, inw_cb, inl_cb, outb_cb, outw_cb, outl_cb, priv);
@@ -773,7 +779,15 @@ mach64_io_removehandler_dispatch(uint16_t base, uint16_t size,
                                  void (*outl_cb)(uint16_t, uint32_t, void *),
                                  void *priv)
 {
-    mach64_gtb_io_hook_t *hook = mach64_gtb_find_hook(base, size, priv);
+    mach64_t *mach64 = (mach64_t *) priv;
+    mach64_gtb_io_hook_t *hook;
+
+    if (!mach64 || mach64->type != MACH64_GTB) {
+        io_removehandler(base, size, inb_cb, inw_cb, inl_cb, outb_cb, outw_cb, outl_cb, priv);
+        return;
+    }
+
+    hook = mach64_gtb_find_hook(base, size, priv);
 
     if (!hook) {
         io_removehandler(base, size, inb_cb, inw_cb, inl_cb, outb_cb, outw_cb, outl_cb, priv);

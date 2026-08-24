@@ -492,9 +492,12 @@ mach64_pci_add_card_dispatch(uint8_t add_type,
                              void (*write)(int func, int addr, int len, uint8_t val, void *priv),
                              void *priv, uint8_t *slot)
 {
-    (void) read;
-    (void) write;
-    pci_add_card(add_type, mach64rage2p_pci_read, mach64rage2p_pci_write, priv, slot);
+    const mach64_t *mach64 = (const mach64_t *) priv;
+
+    if (mach64 && mach64->type == MACH64_GTB)
+        pci_add_card(add_type, mach64rage2p_pci_read, mach64rage2p_pci_write, priv, slot);
+    else
+        pci_add_card(add_type, read, write, priv, slot);
 }
 
 /*
