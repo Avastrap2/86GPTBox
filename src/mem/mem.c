@@ -574,6 +574,9 @@ mem_addr_translate(uint32_t addr, uint32_t chunk_start, uint32_t len)
 void
 addreadlookup(uint32_t virt, uint32_t phys)
 {
+    if (is_compare)
+        return;
+
     uint32_t large_offset = is_compare ? 1048576 : 0;
     uint32_t small_offset = is_compare ? 256 : 0;
     uint32_t index        = large_offset | (virt >> 12);
@@ -1036,7 +1039,7 @@ readmemwl_no_mmut(uint32_t addr, uint32_t *a64)
             }
 
             return readmembl_no_mmut(addr, a64[0]) | (((uint16_t) readmembl_no_mmut(addr + 1, a64[1])) << 8);
-        } else if (*rl2 != (uintptr_t) LOOKUP_INV)
+        } else if (!is_compare && *rl2 != (uintptr_t) LOOKUP_INV)
             return *(uint16_t *) (*rl2 + addr);
     }
 
@@ -1312,7 +1315,7 @@ readmemll_no_mmut(uint32_t addr, uint32_t *a64)
             }
 
             return readmemwl_no_mmut(addr, a64) | ((uint32_t) (readmemwl_no_mmut(addr + 2, &(a64[2]))) << 16);
-        } else if (*rl2 != (uintptr_t) LOOKUP_INV)
+        } else if (!is_compare && *rl2 != (uintptr_t) LOOKUP_INV)
             return *(uint32_t *) (*rl2 + addr);
     }
 
