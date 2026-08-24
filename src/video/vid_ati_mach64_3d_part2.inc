@@ -1,9 +1,11 @@
 #include "vid_ati_mach64_3d_mipmap.h"
+#include "vid_ati_mach64_3d_yuv_math.h"
 
 #define R3D_SCALE_DITHER_TABLE (1u << 1)
 #define R3D_DITHER_EN          (1u << 2)
 #define R3D_DITHER_INIT        (1u << 3)
 #define R3D_ROUND_EN           (1u << 4)
+#define R3D_APPLE_YUV_MODE     (1u << 10)
 
 typedef struct r3d_dither_state_t {
     int valid;
@@ -15,12 +17,14 @@ typedef struct r3d_dither_state_t {
 
 static r3d_dither_state_t r3d_dither_state[MACH64_3D_CONTEXTS];
 
-static rgba_t r3d_yuv_to_rgba(int y,int u,int v,int a){
-    int d=u-128,e=v-128;rgba_t c;
-    c.r=r3d_clamp8(y+((359*e)>>8));
-    c.g=r3d_clamp8(y-((88*d+183*e)>>8));
-    c.b=r3d_clamp8(y+((454*d)>>8));
-    c.a=r3d_clamp8(a);return c;
+static rgba_t r3d_yuv_centered_to_rgba(int y,int u,int v,int a){
+    mach64_yuv_rgb_t rgb=mach64_yuv_centered_to_rgb(y,u,v);rgba_t c;
+    c.r=rgb.r;c.g=rgb.g;c.b=rgb.b;c.a=r3d_clamp8(a);return c;
+}
+static rgba_t r3d_yuv_to_rgba_ctx(mach64_3d_ctx_t *ctx,int y,int u,int v,int a){
+    int signed_uv=ctx&&!!(ctx->regs[R3D_SCALE_3D_CNTL>>2]&R3D_APPLE_YUV_MODE);
+    mach64_yuv_rgb_t rgb=mach64_yuv_to_rgb((uint8_t)y,(uint8_t)u,(uint8_t)v,signed_uv);rgba_t c;
+    c.r=rgb.r;c.g=rgb.g;c.b=rgb.b;c.a=r3d_clamp8(a);return c;
 }
 static rgba_t r3d_unpack(mach64_3d_ctx_t *ctx,int f,uint32_t raw,int texture){
     rgba_t c={0,0,0,255};
@@ -31,7 +35,7 @@ static rgba_t r3d_unpack(mach64_3d_ctx_t *ctx,int f,uint32_t raw,int texture){
         case 6:c.a=(raw>>24)&255;c.r=(raw>>16)&255;c.g=(raw>>8)&255;c.b=raw&255;break;
         case 7:c.r=((raw>>5)&7)*255/7;c.g=((raw>>2)&7)*255/7;c.b=(raw&3)*255/3;break;
         case 8:c.r=c.g=c.b=raw&255;break;
-        case 14:return r3d_yuv_to_rgba((raw>>16)&255,(raw>>8)&255,raw&255,(raw>>24)&255);
+        case 14:return r3d_yuv_to_rgba_ctx(ctx,(raw>>16)&255,(raw>>8)&255,raw&255,(raw>>24)&255);
         case 15:c.a=((raw>>12)&15)*17;c.r=((raw>>8)&15)*17;c.g=((raw>>4)&15)*17;c.b=(raw&15)*17;break;
         default:break;
     }
@@ -164,7 +168,7 @@ static uint32_t r3d_texture_raw_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_
     switch(ts->bpp){case 1:return r3d_vram_read8(ctx->mach64,a);case 2:return r3d_vram_read16(ctx->mach64,a);case 4:return r3d_vram_read32(ctx->mach64,a);default:return 0;}
 }
 static rgba_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int u,int v){
-    if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);int y0=r3d_vram_read8(ctx->mach64,a),uu=r3d_vram_read8(ctx->mach64,a+1),y1=r3d_vram_read8(ctx->mach64,a+2),vv=r3d_vram_read8(ctx->mach64,a+3);return r3d_yuv_to_rgba((u&1)?y1:y0,uu,vv,255);}
+    if(ts->f==11){uint32_t a=ts->base+(uint32_t)((v*ts->w+(u&~1))*2);uint32_t raw=r3d_vram_read32(ctx->mach64,a);return r3d_yuv_to_rgba_ctx(ctx,mach64_yuyv_y(raw,(unsigned)u),mach64_yuyv_u(raw),mach64_yuyv_v(raw),255);}
     return r3d_unpack(ctx,ts->f,r3d_texture_raw_cached(ctx,ts,ts->base+(uint32_t)((v*ts->w+u)*ts->bpp)),1);
 }
 /*

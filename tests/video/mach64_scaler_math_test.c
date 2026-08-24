@@ -53,6 +53,27 @@ main(void)
     expect_int("quarter-pixel 4-bit blend",
                mach64_scaler_lerp4(0, 255, 4), 64);
 
+    expect_int("signed chroma zero crossing",
+               mach64_scaler_lerp4_signed(-64, 64, 8), 0);
+    expect_int("signed chroma negative half",
+               mach64_scaler_lerp4_signed(-128, 0, 8), -64);
+    expect_int("signed chroma positive half",
+               mach64_scaler_lerp4_signed(0, 126, 8), 63);
+
+    /*
+     * For 1:1 YUV422 output geometry the UV stream advances at half the luma
+     * rate: sample 0, midpoint 0->1, sample 1, midpoint 1->2.  These are the
+     * documented U0,(U0+U1)/2 positions when UV_HACC starts at zero.
+     */
+    for (int destination = 0; destination < 4; destination++) {
+        int32_t uv = destination * 0x8000;
+        expect_int("YUV422 UV sample coordinate",
+                   mach64_scaler_accum_pixel(uv), destination / 2);
+        expect_int("YUV422 UV sample fraction",
+                   (int) mach64_scaler_accum_fraction4(uv),
+                   (destination & 1) ? 8 : 0);
+    }
+
     /* Keep compatibility wrappers locked to the Rage II+ 4-bit behavior. */
     expect_int("compat fraction wrapper",
                (int) mach64_scaler_accum_fraction5(0x8000), 8);

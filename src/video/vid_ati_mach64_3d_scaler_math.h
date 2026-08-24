@@ -36,6 +36,21 @@ mach64_scaler_lerp4(uint8_t first, uint8_t second, unsigned coefficient)
                        (unsigned) second * coefficient + 8u) >> 4);
 }
 
+/* U/V are signed when APPLE_YUV_MODE is selected.  Interpolate around zero
+ * rather than treating the two's-complement bytes as unsigned values. */
+static inline int
+mach64_scaler_lerp4_signed(int first, int second, unsigned coefficient)
+{
+    int value;
+
+    coefficient &= 15u;
+    value = first * (int) (16u - coefficient) +
+            second * (int) coefficient;
+    if (value >= 0)
+        return (value + 8) / 16;
+    return -((-value + 8) / 16);
+}
+
 /*
  * Compatibility wrappers for the current scaler include.  Keep the old names
  * temporarily so this correctness fix does not require a mechanically large

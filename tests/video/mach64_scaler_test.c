@@ -4,8 +4,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../../src/video/vid_ati_mach64_3d.h"
+#include "../../src/video/vid_ati_mach64_3d_yuv_math.h"
 
 enum {
     VRAM_SIZE = 4 * 1024 * 1024,
@@ -151,6 +153,25 @@ pixel32(mach64_t *mach64, uint32_t address)
     return (uint32_t *) &mach64->svga.vram[address & mach64->vram_mask];
 }
 
+static void
+write_yuyv_pair(mach64_t *mach64, uint32_t address,
+                uint8_t y0, uint8_t u, uint8_t y1, uint8_t v)
+{
+    mach64->svga.vram[(address + 0) & mach64->vram_mask] = y0;
+    mach64->svga.vram[(address + 1) & mach64->vram_mask] = u;
+    mach64->svga.vram[(address + 2) & mach64->vram_mask] = y1;
+    mach64->svga.vram[(address + 3) & mach64->vram_mask] = v;
+}
+
+static uint32_t
+argb_from_centered_yuv(int y, int u, int v)
+{
+    mach64_yuv_rgb_t rgb = mach64_yuv_centered_to_rgb(y, u, v);
+
+    return 0xff000000u | ((uint32_t) rgb.r << 16) |
+           ((uint32_t) rgb.g << 8) | rgb.b;
+}
+
 static int
 write_scaler_register(mach64_t *mach64, uint32_t address, uint32_t value)
 {
@@ -161,17 +182,13 @@ write_scaler_register(mach64_t *mach64, uint32_t address, uint32_t value)
     return 0;
 }
 
-int
-main(void)
+static int
+run_rgb_scaler_test(mach64_t *mach64)
 {
     static const uint32_t colors[4] = {
         0x00ff0000u, 0x0000ff00u, 0x000000ffu, 0x00ffffffu
     };
-    mach64_t *mach64 = create_machine();
     int failures = 0;
-
-    if (!mach64)
-        return 1;
 
     for (int y = 0; y < SOURCE_SIZE; y++) {
         for (int x = 0; x < SOURCE_SIZE; x++) {
@@ -193,7 +210,6 @@ main(void)
     mach64->sc_left_right = 0x003f0000u;
     mach64->sc_top_bottom = 0x003f0000u;
 
-    mach64_3d_attach(mach64);
     failures += write_scaler_register(mach64, 0x1c0, SOURCE_OFFSET);
     failures += write_scaler_register(mach64, 0x1dc, SOURCE_SIZE);
     failures += write_scaler_register(mach64, 0x1e0, SOURCE_SIZE);
@@ -228,6 +244,103 @@ main(void)
             }
         }
     }
+    return failures;
+}
+
+static int
+run_yuyv_scaler_test(mach64_t *mach64)
+{
+    static const int expected_u[4] = { 0, 32, 64, 64 };
+    int failures = 0;
+
+    memset(mach64->svga.vram, 0, 64u * 4u);
+    write_yuyv_pair(mach64, SOURCE_OFFSET + 0, 100, 128, 100, 128);
+    write_yuyv_pair(mach64, SOURCE_OFFSET + 4, 100, 192, 100, 128);
+
+    mach64->dp_pix_width = 0xb0000606u; /* SCALE=YUYV, DST=ARGB8888 */
+    mach64->dst_y_x = 0;
+    mach64->sc_left_right = 0x00030000u;
+    mach64->sc_top_bottom = 0x00000000u;
+
+    failures += write_scaler_register(mach64, 0x1c0, SOURCE_OFFSET);
+    failures += write_scaler_register(mach64, 0x1dc, 4);
+    failures += write_scaler_register(mach64, 0x1e0, 1);
+    failures += write_scaler_register(mach64, 0x1ec, 4);
+    failures += write_scaler_register(mach64, 0x1f0, 0x00010000u);
+    failures += write_scaler_register(mach64, 0x1f4, 0x00010000u);
+    failures += write_scaler_register(mach64, 0x1f8, 0);
+    failures += write_scaler_register(mach64, 0x3c8, 0);
+    failures += write_scaler_register(mach64, 0x3d8, 0x00008000u);
+    failures += write_scaler_register(mach64, 0x3e0, 0);
+    failures += write_scaler_register(mach64, 0x1fc, 0x00000040u);
+
+    if (!mach64_3d_write(mach64, 0x118, 0x00040001u,
+                         FIFO_WRITE_DWORD)) {
+        fprintf(stderr, "YUYV scaler destination trigger was not claimed\n");
+        failures++;
+    }
+
+    for (int x = 0; x < 4; x++) {
+        uint32_t expected = argb_from_centered_yuv(100, expected_u[x], 0);
+        uint32_t actual = *pixel32(mach64, (uint32_t) x * 4u);
+
+        if (actual != expected) {
+            fprintf(stderr,
+                    "YUYV pixel %d: expected %08x, got %08x\n",
+                    x, expected, actual);
+            failures++;
+        }
+    }
+    return failures;
+}
+
+static int
+run_apple_yuv_test(mach64_t *mach64)
+{
+    int failures = 0;
+    const uint32_t expected = argb_from_centered_yuv(100, 0, 0);
+
+    memset(mach64->svga.vram, 0, 64u * 4u);
+    write_yuyv_pair(mach64, SOURCE_OFFSET + 0, 100, 0, 100, 0);
+    write_yuyv_pair(mach64, SOURCE_OFFSET + 4, 100, 0, 100, 0);
+
+    failures += write_scaler_register(mach64, 0x1f8, 0);
+    failures += write_scaler_register(mach64, 0x3c8, 0);
+    failures += write_scaler_register(mach64, 0x3e0, 0);
+    failures += write_scaler_register(mach64, 0x1fc, 0x00000440u);
+
+    if (!mach64_3d_write(mach64, 0x118, 0x00040001u,
+                         FIFO_WRITE_DWORD)) {
+        fprintf(stderr, "APPLE YUV scaler destination trigger was not claimed\n");
+        failures++;
+    }
+
+    for (int x = 0; x < 4; x++) {
+        uint32_t actual = *pixel32(mach64, (uint32_t) x * 4u);
+
+        if (actual != expected) {
+            fprintf(stderr,
+                    "APPLE YUV pixel %d: expected %08x, got %08x\n",
+                    x, expected, actual);
+            failures++;
+        }
+    }
+    return failures;
+}
+
+int
+main(void)
+{
+    mach64_t *mach64 = create_machine();
+    int failures = 0;
+
+    if (!mach64)
+        return 1;
+
+    mach64_3d_attach(mach64);
+    failures += run_rgb_scaler_test(mach64);
+    failures += run_yuyv_scaler_test(mach64);
+    failures += run_apple_yuv_test(mach64);
 
     destroy_machine(mach64);
     return failures ? 1 : 0;

@@ -2,6 +2,8 @@
 #include "vid_ati_mach64_3d_scaler_math.h"
 
 #define R3D_SCALE_PIX_REP (1u << 8)
+#define R3D_SCALE_XUV_INC 0x3d8u /* BLUE_X_INC, DWORD 0_F6 */
+#define R3D_SCALE_UV_HACC 0x3e0u /* BLUE_START, DWORD 0_F8 */
 #define R3D_SCALER_DEBUG_ENTRIES 64
 
 typedef struct r3d_scaler_debug_entry_t {
@@ -40,6 +42,11 @@ typedef struct r3d_scaler_debug_state_t {
     uint64_t seq;
     r3d_scaler_debug_entry_t entries[R3D_SCALER_DEBUG_ENTRIES];
 } r3d_scaler_debug_state_t;
+
+typedef struct r3d_scaler_uv_t {
+    int u;
+    int v;
+} r3d_scaler_uv_t;
 
 static r3d_scaler_debug_state_t r3d_scaler_debug_states[MACH64_3D_CONTEXTS];
 
@@ -198,13 +205,6 @@ r3d_scaler_read_source(mach64_3d_ctx_t *ctx, int format, uint32_t base,
     uint32_t address;
     uint32_t raw;
 
-    if (format == 11) {
-        address = base + ((uint32_t) y * pitch + ((uint32_t) x & ~1u)) * 2u;
-        raw = r3d_vram_read32(m, address);
-        return r3d_yuv_to_rgba((x & 1) ? ((raw >> 16) & 0xff) : (raw & 0xff),
-                               (raw >> 8) & 0xff, (raw >> 24) & 0xff, 255);
-    }
-
     address = base + ((uint32_t) y * pitch + (uint32_t) x) *
               (uint32_t) r3d_scaler_source_bpp(format);
     switch (r3d_scaler_source_bpp(format)) {
@@ -225,18 +225,107 @@ r3d_scaler_read_source(mach64_3d_ctx_t *ctx, int format, uint32_t base,
     return r3d_unpack(ctx, format, raw, 1);
 }
 
+static uint32_t
+r3d_scaler_yuyv_pair(mach64_t *m, uint32_t base, uint32_t pitch,
+                     int pair_x, int y)
+{
+    uint32_t address = base +
+        ((uint32_t) y * pitch + (uint32_t) pair_x * 2u) * 2u;
+
+    return r3d_vram_read32(m, address);
+}
+
+static uint8_t
+r3d_scaler_yuyv_luma(mach64_t *m, uint32_t base, uint32_t pitch,
+                     int x, int y)
+{
+    uint32_t raw = r3d_scaler_yuyv_pair(m, base, pitch, x >> 1, y);
+
+    return mach64_yuyv_y(raw, (unsigned) x);
+}
+
+static r3d_scaler_uv_t
+r3d_scaler_yuyv_chroma(mach64_t *m, uint32_t base, uint32_t pitch,
+                       int pair_x, int y, int signed_uv)
+{
+    uint32_t raw = r3d_scaler_yuyv_pair(m, base, pitch, pair_x, y);
+    r3d_scaler_uv_t uv;
+
+    uv.u = mach64_yuv_chroma(mach64_yuyv_u(raw), signed_uv);
+    uv.v = mach64_yuv_chroma(mach64_yuyv_v(raw), signed_uv);
+    return uv;
+}
+
+static int
+r3d_scaler_lerp_int(int first, int second, unsigned coefficient)
+{
+    return mach64_scaler_lerp4_signed(first, second, coefficient);
+}
+
+static rgba_t
+r3d_scaler_sample_yuyv(mach64_3d_ctx_t *ctx, uint32_t base, uint32_t pitch,
+                       int source_x, int source_x_next,
+                       int uv_x, int uv_x_next,
+                       int source_y, int source_y_next,
+                       unsigned h_fraction, unsigned uv_fraction,
+                       unsigned v_fraction, int replicate)
+{
+    mach64_t *m = ctx->mach64;
+    int signed_uv = !!(ctx->regs[R3D_SCALE_3D_CNTL >> 2] & R3D_APPLE_YUV_MODE);
+    int y_value;
+    int u_value;
+    int v_value;
+    r3d_scaler_uv_t uv00;
+
+    uv00 = r3d_scaler_yuyv_chroma(m, base, pitch, uv_x, source_y, signed_uv);
+    if (replicate) {
+        y_value = r3d_scaler_yuyv_luma(m, base, pitch, source_x, source_y);
+        u_value = uv00.u;
+        v_value = uv00.v;
+    } else {
+        int y00 = r3d_scaler_yuyv_luma(m, base, pitch, source_x, source_y);
+        int y01 = r3d_scaler_yuyv_luma(m, base, pitch, source_x_next, source_y);
+        int y10 = r3d_scaler_yuyv_luma(m, base, pitch, source_x, source_y_next);
+        int y11 = r3d_scaler_yuyv_luma(m, base, pitch, source_x_next, source_y_next);
+        int y_left = mach64_scaler_lerp4((uint8_t) y00, (uint8_t) y10,
+                                         v_fraction);
+        int y_right = mach64_scaler_lerp4((uint8_t) y01, (uint8_t) y11,
+                                          v_fraction);
+        r3d_scaler_uv_t uv01 =
+            r3d_scaler_yuyv_chroma(m, base, pitch, uv_x_next, source_y,
+                                    signed_uv);
+        r3d_scaler_uv_t uv10 =
+            r3d_scaler_yuyv_chroma(m, base, pitch, uv_x, source_y_next,
+                                    signed_uv);
+        r3d_scaler_uv_t uv11 =
+            r3d_scaler_yuyv_chroma(m, base, pitch, uv_x_next, source_y_next,
+                                    signed_uv);
+        int u_left = r3d_scaler_lerp_int(uv00.u, uv10.u, v_fraction);
+        int u_right = r3d_scaler_lerp_int(uv01.u, uv11.u, v_fraction);
+        int v_left = r3d_scaler_lerp_int(uv00.v, uv10.v, v_fraction);
+        int v_right = r3d_scaler_lerp_int(uv01.v, uv11.v, v_fraction);
+
+        y_value = mach64_scaler_lerp4((uint8_t) y_left, (uint8_t) y_right,
+                                      h_fraction);
+        u_value = r3d_scaler_lerp_int(u_left, u_right, uv_fraction);
+        v_value = r3d_scaler_lerp_int(v_left, v_right, uv_fraction);
+    }
+
+    return r3d_yuv_centered_to_rgba(y_value, u_value, v_value, 255);
+}
+
 static rgba_t
 r3d_scaler_lerp_rgba(rgba_t first, rgba_t second, unsigned coefficient)
 {
     rgba_t result;
 
-    result.r = mach64_scaler_lerp5((uint8_t) r3d_clamp8(first.r),
+    result.r = mach64_scaler_lerp4((uint8_t) r3d_clamp8(first.r),
                                    (uint8_t) r3d_clamp8(second.r), coefficient);
-    result.g = mach64_scaler_lerp5((uint8_t) r3d_clamp8(first.g),
+    result.g = mach64_scaler_lerp4((uint8_t) r3d_clamp8(first.g),
                                    (uint8_t) r3d_clamp8(second.g), coefficient);
-    result.b = mach64_scaler_lerp5((uint8_t) r3d_clamp8(first.b),
+    result.b = mach64_scaler_lerp4((uint8_t) r3d_clamp8(first.b),
                                    (uint8_t) r3d_clamp8(second.b), coefficient);
-    result.a = mach64_scaler_lerp5((uint8_t) r3d_clamp8(first.a),
+    result.a = mach64_scaler_lerp4((uint8_t) r3d_clamp8(first.a),
                                    (uint8_t) r3d_clamp8(second.a), coefficient);
     return result;
 }
@@ -403,8 +492,10 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
     uint32_t source_height = ctx->regs[R3D_SCALE_HEIGHT >> 2] & 0x1fffu;
     uint32_t source_pitch = ctx->regs[R3D_SCALE_Y_PITCH >> 2] & 0x1fffu;
     uint32_t x_increment = ctx->regs[R3D_SCALE_X_INC >> 2] & 0x001ffff0u;
+    uint32_t xuv_increment = ctx->regs[R3D_SCALE_XUV_INC >> 2] & 0x001ffff0u;
     uint32_t y_increment = ctx->regs[R3D_SCALE_Y_INC >> 2] & 0x001ffff0u;
     int32_t h_start = r3d_sign_extend(ctx->regs[R3D_SCALE_HACC >> 2], 21);
+    int32_t uv_start = r3d_sign_extend(ctx->regs[R3D_SCALE_UV_HACC >> 2], 21);
     int32_t v_start = r3d_sign_extend(ctx->regs[R3D_SCALE_VACC >> 2], 21);
     int source_format = r3d_tex_format(m);
     int destination_format = r3d_dst_format(m);
@@ -436,7 +527,7 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
         int32_t v_accumulator = v_start + (int32_t) ((uint32_t) dy * y_increment);
         int source_y = mach64_scaler_accum_pixel(v_accumulator);
         int source_y_next;
-        unsigned v_fraction = mach64_scaler_accum_fraction5(v_accumulator);
+        unsigned v_fraction = mach64_scaler_accum_fraction4(v_accumulator);
 
         if (source_y < 0)
             source_y = 0;
@@ -453,7 +544,7 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
             int source_x = mach64_scaler_accum_pixel(h_accumulator);
             int source_x_next;
             unsigned h_fraction =
-                mach64_scaler_accum_fraction5(h_accumulator);
+                mach64_scaler_accum_fraction4(h_accumulator);
             rgba_t source;
             int64_t destination_address;
 
@@ -474,27 +565,51 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
             if (source_x_next >= (int) source_width)
                 source_x_next = (int) source_width - 1;
 
-            source = r3d_scaler_read_source(ctx, source_format, source_base,
-                                            source_pitch, source_x, source_y);
-            if (!replicate) {
-                rgba_t bottom_left =
-                    r3d_scaler_read_source(ctx, source_format, source_base,
-                                           source_pitch, source_x,
-                                           source_y_next);
-                rgba_t top_right =
-                    r3d_scaler_read_source(ctx, source_format, source_base,
-                                           source_pitch, source_x_next,
-                                           source_y);
-                rgba_t bottom_right =
-                    r3d_scaler_read_source(ctx, source_format, source_base,
-                                           source_pitch, source_x_next,
-                                           source_y_next);
-                rgba_t vertical_left =
-                    r3d_scaler_lerp_rgba(source, bottom_left, v_fraction);
-                rgba_t vertical_right =
-                    r3d_scaler_lerp_rgba(top_right, bottom_right, v_fraction);
-                source = r3d_scaler_lerp_rgba(vertical_left, vertical_right,
-                                               h_fraction);
+            if (source_format == 11) {
+                int uv_width = ((int) source_width + 1) >> 1;
+                int32_t uv_accumulator = uv_start +
+                    (int32_t) ((uint32_t) dx * xuv_increment);
+                int uv_x = mach64_scaler_accum_pixel(uv_accumulator);
+                int uv_x_next;
+                unsigned uv_fraction =
+                    mach64_scaler_accum_fraction4(uv_accumulator);
+
+                if (uv_x < 0)
+                    uv_x = 0;
+                if (uv_x >= uv_width)
+                    uv_x = uv_width - 1;
+                uv_x_next = uv_x + 1;
+                if (uv_x_next >= uv_width)
+                    uv_x_next = uv_width - 1;
+
+                source = r3d_scaler_sample_yuyv(
+                    ctx, source_base, source_pitch,
+                    source_x, source_x_next, uv_x, uv_x_next,
+                    source_y, source_y_next, h_fraction, uv_fraction,
+                    v_fraction, replicate);
+            } else {
+                source = r3d_scaler_read_source(ctx, source_format, source_base,
+                                                source_pitch, source_x, source_y);
+                if (!replicate) {
+                    rgba_t bottom_left =
+                        r3d_scaler_read_source(ctx, source_format, source_base,
+                                               source_pitch, source_x,
+                                               source_y_next);
+                    rgba_t top_right =
+                        r3d_scaler_read_source(ctx, source_format, source_base,
+                                               source_pitch, source_x_next,
+                                               source_y);
+                    rgba_t bottom_right =
+                        r3d_scaler_read_source(ctx, source_format, source_base,
+                                               source_pitch, source_x_next,
+                                               source_y_next);
+                    rgba_t vertical_left =
+                        r3d_scaler_lerp_rgba(source, bottom_left, v_fraction);
+                    rgba_t vertical_right =
+                        r3d_scaler_lerp_rgba(top_right, bottom_right, v_fraction);
+                    source = r3d_scaler_lerp_rgba(vertical_left, vertical_right,
+                                                   h_fraction);
+                }
             }
 
             destination_address = (int64_t) destination_base +
