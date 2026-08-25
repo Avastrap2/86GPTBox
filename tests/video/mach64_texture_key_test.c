@@ -38,6 +38,27 @@ main(void)
                mach64_3d_texel_key_match(
                    0x02000000u, key, mask, 0xff, 0x00, 0xff), 0);
 
+    /* Pseudo-color texels are keyed on the low-order source index, not the
+     * palette-expanded RGB value. */
+    expect_int("CI8 indexed equality",
+               mach64_3d_texel_key_match_index(
+                   equality, 0x0000007cu, 0x000000ffu, 0x7c), 1);
+    expect_int("CI8 indexed mismatch",
+               mach64_3d_texel_key_match_index(
+                   equality, 0x0000007cu, 0x000000ffu, 0x3c), 0);
+    expect_int("CI8 masked key",
+               mach64_3d_texel_key_match_index(
+                   equality, 0xdead007cu, 0x000000ffu, 0x7c), 1);
+
+    /* NEAREST_TEX_VIS selects the nearest contributor instead of the OR of
+     * all contributors participating in a texture filter. */
+    expect_int("all contributors inhibit",
+               mach64_3d_texel_visibility_inhibits(0, 0, 1), 1);
+    expect_int("nearest contributor visible",
+               mach64_3d_texel_visibility_inhibits(1, 0, 1), 0);
+    expect_int("nearest contributor inhibits",
+               mach64_3d_texel_visibility_inhibits(1, 1, 1), 1);
+
     if (failures)
         return 1;
     puts("Mach64 texture color-key tests passed");
