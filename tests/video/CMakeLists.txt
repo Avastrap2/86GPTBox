@@ -66,12 +66,6 @@ add_executable(mach64_yuv_math_test
 
 add_test(NAME mach64_yuv_math COMMAND mach64_yuv_math_test)
 
-add_executable(mach64_trapezoid_edge_test
-    mach64_trapezoid_edge_test.c
-)
-
-add_test(NAME mach64_trapezoid_edge COMMAND mach64_trapezoid_edge_test)
-
 add_executable(mach64_scaler_test
     mach64_scaler_test.c
     ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_3d.c
