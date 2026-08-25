@@ -1,4 +1,5 @@
 #include "vid_ati_mach64_3d_tex_key.h"
+#include "vid_ati_mach64_3d_interp.h"
 
 #define R3D_GTB_DST_BRES_SIGN      (1u << 11)
 #define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
@@ -118,21 +119,20 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
             }
         }
 
-        /* Y_INC is defined for one step in DST_Y_DIR and X_INC for one step in
-         * DST_X_DIR.  Therefore signs are already encoded by the programmed
-         * directions: add Y once, then add X once for every Bresenham X step. */
+        /* ATI defines XY_INC2 as changing X_INC on a Y edge step.  It does
+         * not feed the mixed derivative back into Y_INC on an X edge step. */
         int lead_dx=r3d_edge_step_scanline(&lead,&le,li,ld,ldir,lead_zero_neg);
         r3d_edge_step_scanline(&trail,&te,ti,td,tdir,trail_zero_neg);
         int lead_steps=lead_dx<0?-lead_dx:lead_dx;
 
         RED0+=REDy;GREEN0+=GREENy;BLUE0+=BLUEy;ALPHA0+=ALPHAy;Z0+=Zy;
-        s0+=syi;syi+=sy2;sxi+=sxy2;
-        t0+=tyi;tyi+=ty2;txi+=txy2;
+        mach64_3d_tex_interp_step_y(&s0,&sxi,&syi,sy2,sxy2);
+        mach64_3d_tex_interp_step_y(&t0,&txi,&tyi,ty2,txy2);
 
         for(int edge_step=0;edge_step<lead_steps;edge_step++){
             RED0+=REDx;GREEN0+=GREENx;BLUE0+=BLUEx;ALPHA0+=ALPHAx;Z0+=Zx;
-            s0+=sxi;sxi+=sx2;syi+=sxy2;
-            t0+=txi;txi+=tx2;tyi+=txy2;
+            mach64_3d_tex_interp_step_x(&s0,&sxi,sx2);
+            mach64_3d_tex_interp_step_x(&t0,&txi,tx2);
         }
         y+=ydir;
     }
