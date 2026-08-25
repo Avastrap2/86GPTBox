@@ -328,6 +328,59 @@ run_apple_yuv_test(mach64_t *mach64)
     return failures;
 }
 
+static int
+run_scaler_color_compare_test(mach64_t *mach64)
+{
+    const uint32_t source = 0x00ff0000u;
+    const uint32_t destination = 0x0000ff00u;
+    int failures = 0;
+
+    *pixel32(mach64, SOURCE_OFFSET) = source;
+    *pixel32(mach64, 0) = destination;
+
+    mach64->dp_pix_width = 0x60000606u; /* SCALE=ARGB8888, DST=ARGB8888 */
+    mach64->dp_src = 0x00000500u;
+    mach64->dp_mix = 0x00070007u;
+    mach64->write_mask = 0xffffffffu;
+    mach64->dst_off_pitch = 0x02000000u; /* 64 pixels */
+    mach64->dst_y_x = 0;
+    mach64->dst_cntl = DST_X_DIR | DST_Y_DIR;
+    mach64->sc_left_right = 0;
+    mach64->sc_top_bottom = 0;
+
+    /* GT CLR_CMP_SRC=2 selects the scaler source.  Put ignored bits in the
+     * key to verify that the comparison mask applies to CLR_CMP_CLR too. */
+    mach64->clr_cmp_clr = 0xaaff0000u;
+    mach64->clr_cmp_mask = 0x00ffffffu;
+    mach64->clr_cmp_cntl = 0x02000005u;
+
+    failures += write_scaler_register(mach64, 0x1c0, SOURCE_OFFSET);
+    failures += write_scaler_register(mach64, 0x1dc, 1);
+    failures += write_scaler_register(mach64, 0x1e0, 1);
+    failures += write_scaler_register(mach64, 0x1ec, 1);
+    failures += write_scaler_register(mach64, 0x1f0, 0);
+    failures += write_scaler_register(mach64, 0x1f4, 0);
+    failures += write_scaler_register(mach64, 0x1f8, 0);
+    failures += write_scaler_register(mach64, 0x3c8, 0);
+    failures += write_scaler_register(mach64, 0x1fc, 0x00000140u);
+
+    if (!mach64_3d_write(mach64, 0x118, 0x00010001u,
+                         FIFO_WRITE_DWORD)) {
+        fprintf(stderr, "color-key scaler destination trigger was not claimed\n");
+        failures++;
+    }
+
+    if (*pixel32(mach64, 0) != destination) {
+        fprintf(stderr,
+                "CLR_CMP_SRC=2 failed: expected inhibited destination %08x, got %08x\n",
+                destination, *pixel32(mach64, 0));
+        failures++;
+    }
+
+    mach64->clr_cmp_cntl = 0;
+    return failures;
+}
+
 int
 main(void)
 {
@@ -341,6 +394,7 @@ main(void)
     failures += run_rgb_scaler_test(mach64);
     failures += run_yuyv_scaler_test(mach64);
     failures += run_apple_yuv_test(mach64);
+    failures += run_scaler_color_compare_test(mach64);
 
     destroy_machine(mach64);
     return failures ? 1 : 0;
