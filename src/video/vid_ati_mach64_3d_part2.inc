@@ -1,3 +1,4 @@
+#include "vid_ati_mach64_3d_control.h"
 #include "vid_ati_mach64_3d_expand.h"
 #include "vid_ati_mach64_3d_mipmap.h"
 #include "vid_ati_mach64_3d_tex_key.h"
@@ -10,6 +11,7 @@
 #define R3D_ROUND_EN           (1u << 4)
 #define R3D_NEAREST_TEX_VIS    (1u << 9)
 #define R3D_APPLE_YUV_MODE     (1u << 10)
+#define R3D_RED_DITHER_MAX     (1u << 14)
 
 typedef struct r3d_dither_state_t {
     int valid;
@@ -94,7 +96,7 @@ static uint32_t r3d_pack(mach64_3d_ctx_t *ctx,int f,rgba_t c,int x,int y){
         case 3:{int r=QCOMP(c.r,5,dstate->r_err),g=QCOMP(c.g,5,dstate->g_err),b=QCOMP(c.b,5,dstate->b_err);return(c.a>=128?0x8000u:0)|((uint32_t)r<<10)|((uint32_t)g<<5)|(uint32_t)b;}
         case 4:{int r=QCOMP(c.r,5,dstate->r_err),g=QCOMP(c.g,6,dstate->g_err),b=QCOMP(c.b,5,dstate->b_err);return((uint32_t)r<<11)|((uint32_t)g<<5)|(uint32_t)b;}
         case 6:return((uint32_t)c.a<<24)|((uint32_t)c.r<<16)|((uint32_t)c.g<<8)|c.b;
-        case 7:{int r=QCOMP(c.r,3,dstate->r_err),g=QCOMP(c.g,3,dstate->g_err),b=QCOMP(c.b,2,dstate->b_err);return((uint32_t)r<<5)|((uint32_t)g<<2)|(uint32_t)b;}
+        case 7:{int r=QCOMP(c.r,3,dstate->r_err),g=QCOMP(c.g,3,dstate->g_err),b=QCOMP(c.b,2,dstate->b_err);r=(int)mach64_3d_rgb8_red_code((unsigned)r,dither,!!(ctl&R3D_RED_DITHER_MAX));return((uint32_t)r<<5)|((uint32_t)g<<2)|(uint32_t)b;}
         case 8:return(c.r*77+c.g*150+c.b*29)>>8;
         case 15:{int r=QCOMP(c.r,4,dstate->r_err),g=QCOMP(c.g,4,dstate->g_err),b=QCOMP(c.b,4,dstate->b_err);return((uint32_t)(c.a>>4)<<12)|((uint32_t)r<<8)|((uint32_t)g<<4)|(uint32_t)b;}
         default:return 0;
@@ -218,6 +220,7 @@ static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state
     r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,0,&a);sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;
 }
 static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
+    if(mach64_3d_uses_lod_alpha((ctl>>R3D_ALPHA_FOG_SHIFT)&R3D_ALPHA_FOG_MASK,(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK))return 1;
     if(!(ctl&R3D_TEX_MAP_AEN)){tex->a=interp_alpha;return 1;}
     if(ctl&R3D_TEX_AMASK_AEN){int mask=tex->a&1;if(!(ctl&R3D_TEX_AMASK_MODE)){if(!mask)return 0;tex->a=interp_alpha;}else tex->a=mask?255:interp_alpha;}
     return 1;
