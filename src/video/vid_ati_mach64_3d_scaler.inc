@@ -1,7 +1,9 @@
 /* ATI 3D RAGE front-end scaler (SCALE_3D_FCN = 1). */
 #include "vid_ati_mach64_3d_scaler_math.h"
+#include "vid_ati_mach64_3d_tex_key.h"
 
-#define R3D_SCALE_PIX_REP (1u << 8)
+#define R3D_SCALE_PIX_REP    (1u << 8)
+#define R3D_NEAREST_TEX_VIS  (1u << 9)
 #define R3D_SCALE_XUV_INC 0x3d8u /* BLUE_X_INC, DWORD 0_F6 */
 #define R3D_SCALE_UV_HACC 0x3e0u /* BLUE_START, DWORD 0_F8 */
 #define R3D_SCALER_DEBUG_ENTRIES 64
@@ -314,6 +316,103 @@ r3d_scaler_sample_yuyv(mach64_3d_ctx_t *ctx, uint32_t base, uint32_t pitch,
     return r3d_yuv_centered_to_rgba(y_value, u_value, v_value, 255);
 }
 
+static int
+r3d_scaler_index_key_inhibits(mach64_t *m, uint8_t index)
+{
+    uint32_t selected;
+    uint32_t reference;
+
+    if (((m->clr_cmp_cntl >> 24) & 3u) != 2u)
+        return 0;
+
+    selected = (uint32_t) index & m->clr_cmp_mask;
+    reference = m->clr_cmp_clr & m->clr_cmp_mask;
+    switch (m->clr_cmp_cntl & 7u) {
+        case 1:
+            return 1;
+        case 4:
+            return selected != reference;
+        case 5:
+            return selected == reference;
+        default:
+            return 0;
+    }
+}
+
+static int
+r3d_scaler_source_key_inhibits(mach64_3d_ctx_t *ctx, int format,
+                               uint32_t base, uint32_t pitch, int x, int y)
+{
+    mach64_t *m = ctx->mach64;
+    rgba_t color;
+
+    if (((m->clr_cmp_cntl >> 24) & 3u) != 2u)
+        return 0;
+
+    if (format == 2) {
+        uint32_t address = base + ((uint32_t) y * pitch + (uint32_t) x);
+        uint8_t raw = r3d_vram_read8(m, address);
+        uint8_t index = mach64_3d_texture_palette_texel_index(m->dp_pix_width,
+                                                               raw);
+        return r3d_scaler_index_key_inhibits(m, index);
+    }
+
+    if (format == 11) {
+        uint32_t raw = r3d_scaler_yuyv_pair(m, base, pitch, x >> 1, y);
+        int signed_uv = !!(ctx->regs[R3D_SCALE_3D_CNTL >> 2] &
+                           R3D_APPLE_YUV_MODE);
+        color = r3d_yuv_centered_to_rgba(
+            mach64_yuyv_y(raw, (unsigned) x),
+            mach64_yuv_chroma(mach64_yuyv_u(raw), signed_uv),
+            mach64_yuv_chroma(mach64_yuyv_v(raw), signed_uv), 255);
+    } else {
+        color = r3d_scaler_read_source(ctx, format, base, pitch, x, y);
+    }
+
+    return mach64_3d_texel_key_match(m->clr_cmp_cntl, m->clr_cmp_clr,
+                                     m->clr_cmp_mask,
+                                     (uint8_t) r3d_clamp8(color.r),
+                                     (uint8_t) r3d_clamp8(color.g),
+                                     (uint8_t) r3d_clamp8(color.b));
+}
+
+static int
+r3d_scaler_source_visibility_inhibits(mach64_3d_ctx_t *ctx, int format,
+                                      uint32_t base, uint32_t pitch,
+                                      int source_x, int source_x_next,
+                                      int source_y, int source_y_next,
+                                      unsigned h_fraction,
+                                      unsigned v_fraction, int replicate)
+{
+    int p00;
+    int p10;
+    int p01;
+    int p11;
+
+    if (((ctx->mach64->clr_cmp_cntl >> 24) & 3u) != 2u)
+        return 0;
+
+    p00 = r3d_scaler_source_key_inhibits(ctx, format, base, pitch,
+                                         source_x, source_y);
+    if (replicate)
+        return p00;
+
+    p10 = r3d_scaler_source_key_inhibits(ctx, format, base, pitch,
+                                         source_x_next, source_y);
+    p01 = r3d_scaler_source_key_inhibits(ctx, format, base, pitch,
+                                         source_x, source_y_next);
+    p11 = r3d_scaler_source_key_inhibits(ctx, format, base, pitch,
+                                         source_x_next, source_y_next);
+
+    if (ctx->regs[R3D_SCALE_3D_CNTL >> 2] & R3D_NEAREST_TEX_VIS) {
+        if (v_fraction >= 8u)
+            return h_fraction >= 8u ? p11 : p01;
+        return h_fraction >= 8u ? p10 : p00;
+    }
+
+    return p00 || p10 || p01 || p11;
+}
+
 static rgba_t
 r3d_scaler_lerp_rgba(rgba_t first, rgba_t second, unsigned coefficient)
 {
@@ -359,7 +458,7 @@ r3d_scaler_pack_destination(mach64_3d_ctx_t *ctx, int format, rgba_t color,
 
 static int
 r3d_scaler_compare_inhibits(mach64_t *m, uint32_t source,
-                            uint32_t destination)
+                            uint32_t destination, int scaler_source_inhibits)
 {
     uint32_t selected;
     uint32_t reference;
@@ -375,8 +474,7 @@ r3d_scaler_compare_inhibits(mach64_t *m, uint32_t source,
             selected = source;
             break;
         case 2:
-            selected = source;
-            break;
+            return scaler_source_inhibits;
         default:
             /* CLR_CMP_SRC=3 is reserved on GT/GTB. */
             return 0;
@@ -399,7 +497,8 @@ r3d_scaler_compare_inhibits(mach64_t *m, uint32_t source,
 
 static int
 r3d_scaler_write_pixel(mach64_3d_ctx_t *ctx, uint32_t address, int format,
-                       int x, int y, rgba_t source)
+                       int x, int y, rgba_t source,
+                       int scaler_source_inhibits)
 {
     mach64_t *m = ctx->mach64;
     int bpp = r3d_bytes_per_pixel(format);
@@ -417,7 +516,8 @@ r3d_scaler_write_pixel(mach64_3d_ctx_t *ctx, uint32_t address, int format,
 
     packed_source = r3d_scaler_pack_destination(ctx, format, source, x, y) &
                     pixel_mask;
-    if (r3d_scaler_compare_inhibits(m, packed_source, destination))
+    if (r3d_scaler_compare_inhibits(m, packed_source, destination,
+                                    scaler_source_inhibits))
         return 0;
 
     result = mach64_scaler_mix(packed_source, destination,
@@ -567,6 +667,7 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
             unsigned h_fraction =
                 mach64_scaler_accum_fraction4(h_accumulator);
             rgba_t source;
+            int scaler_source_inhibits;
             int64_t destination_address;
 
             if (x < 0 || y < 0 || x < scissor_left || x > scissor_right ||
@@ -585,6 +686,11 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
             source_x_next = source_x + 1;
             if (source_x_next >= (int) source_width)
                 source_x_next = (int) source_width - 1;
+
+            scaler_source_inhibits = r3d_scaler_source_visibility_inhibits(
+                ctx, source_format, source_base, source_pitch,
+                source_x, source_x_next, source_y, source_y_next,
+                h_fraction, v_fraction, replicate);
 
             if (source_format == 11) {
                 int uv_width = ((int) source_width + 1) >> 1;
@@ -646,8 +752,8 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
                 continue;
             }
             if (r3d_scaler_write_pixel(ctx, (uint32_t) destination_address,
-                                       destination_format, x, y, source) &&
-                debug)
+                                       destination_format, x, y, source,
+                                       scaler_source_inhibits) && debug)
                 debug->drawn++;
         }
     }
