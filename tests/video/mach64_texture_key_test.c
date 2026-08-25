@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "../../src/video/vid_ati_mach64_3d_control.h"
 #include "../../src/video/vid_ati_mach64_3d_expand.h"
 #include "../../src/video/vid_ati_mach64_3d_tex_key.h"
 
@@ -81,8 +82,26 @@ main(void)
     expect_int("ARGB4444 dynamic pattern",
                mach64_3d_expand_component(10, 4, 1), 0xaa);
 
+    /* RED_DITHER_MAX reserves the top 32 RGB8 palette entries only when
+     * dithering is active. */
+    expect_int("RGB8 red unrestricted",
+               mach64_3d_rgb8_red_code(7, 1, 0), 7);
+    expect_int("RGB8 red dither max",
+               mach64_3d_rgb8_red_code(7, 1, 1), 6);
+    expect_int("RGB8 red max ignored without dither",
+               mach64_3d_rgb8_red_code(7, 0, 1), 7);
+
+    /* TEX_BLEND_FCN=3 supplies mip-distance alpha specifically for the
+     * alpha-blending pipeline. */
+    expect_int("multipass LOD alpha",
+               mach64_3d_uses_lod_alpha(1, 3), 1);
+    expect_int("no LOD alpha without blending",
+               mach64_3d_uses_lod_alpha(0, 3), 0);
+    expect_int("no LOD alpha for nearest-map mode",
+               mach64_3d_uses_lod_alpha(1, 2), 0);
+
     if (failures)
         return 1;
-    puts("Mach64 texture color-key and source-expansion tests passed");
+    puts("Mach64 texture/control tests passed");
     return 0;
 }
