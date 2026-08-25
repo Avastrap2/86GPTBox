@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "../../src/video/vid_ati_mach64_3d_expand.h"
 #include "../../src/video/vid_ati_mach64_3d_tex_key.h"
 
 static int failures;
@@ -59,8 +60,29 @@ main(void)
     expect_int("nearest contributor inhibits",
                mach64_3d_texel_visibility_inhibits(1, 1, 1), 1);
 
+    /* SCALE_PIX_EXPAND=0 zero-extends source components.  Dynamic correction
+     * repeats source bits into the low positions used by the 24-bit pipeline. */
+    expect_int("RGB555 zero max",
+               mach64_3d_expand_component(31, 5, 0), 0xf8);
+    expect_int("RGB555 dynamic max",
+               mach64_3d_expand_component(31, 5, 1), 0xff);
+    expect_int("RGB555 dynamic pattern",
+               mach64_3d_expand_component(3, 5, 1), 0x18);
+    expect_int("RGB565 green zero max",
+               mach64_3d_expand_component(63, 6, 0), 0xfc);
+    expect_int("RGB565 green dynamic max",
+               mach64_3d_expand_component(63, 6, 1), 0xff);
+    expect_int("RGB332 red dynamic pattern",
+               mach64_3d_expand_component(2, 3, 1), 0x49);
+    expect_int("RGB332 blue zero max",
+               mach64_3d_expand_component(3, 2, 0), 0xc0);
+    expect_int("RGB332 blue dynamic max",
+               mach64_3d_expand_component(3, 2, 1), 0xff);
+    expect_int("ARGB4444 dynamic pattern",
+               mach64_3d_expand_component(10, 4, 1), 0xaa);
+
     if (failures)
         return 1;
-    puts("Mach64 texture color-key tests passed");
+    puts("Mach64 texture color-key and source-expansion tests passed");
     return 0;
 }
