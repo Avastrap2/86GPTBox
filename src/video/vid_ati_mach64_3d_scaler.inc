@@ -361,16 +361,37 @@ static int
 r3d_scaler_compare_inhibits(mach64_t *m, uint32_t source,
                             uint32_t destination)
 {
-    uint32_t selected = (m->clr_cmp_cntl & 0x01000000u) ?
-                        source : destination;
+    uint32_t selected;
+    uint32_t reference;
+    unsigned source_select = (m->clr_cmp_cntl >> 24) & 3u;
+
+    switch (source_select) {
+        case 0:
+            selected = destination;
+            break;
+        case 1:
+            /* Preserve the legacy source-key behavior until the independent
+             * 2D source value is exposed to the front-end scaler wrapper. */
+            selected = source;
+            break;
+        case 2:
+            selected = source;
+            break;
+        default:
+            /* CLR_CMP_SRC=3 is reserved on GT/GTB. */
+            return 0;
+    }
+
+    selected &= m->clr_cmp_mask;
+    reference = m->clr_cmp_clr & m->clr_cmp_mask;
 
     switch (m->clr_cmp_cntl & 7u) {
         case 1:
             return 1;
         case 4:
-            return (selected & m->clr_cmp_mask) != m->clr_cmp_clr;
+            return selected != reference;
         case 5:
-            return (selected & m->clr_cmp_mask) == m->clr_cmp_clr;
+            return selected == reference;
         default:
             return 0;
     }
