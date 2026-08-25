@@ -1,10 +1,139 @@
 #include "vid_ati_mach64_3d_tex_key.h"
+#include "vid_ati_mach64_3d_reg_fields.h"
 
 #define R3D_GTB_DST_BRES_SIGN      (1u << 11)
 #define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
 #define R3D_GTB_TRAIL_X_DIR         (1u << 13)
 #define R3D_GTB_TRAP_FILL_DIR       (1u << 14)
 #define R3D_GTB_TRAIL_BRES_SIGN     (1u << 15)
+
+#define R3D_TEX_INT_S_XINC (1u << 0)
+#define R3D_TEX_INT_S_YINC (1u << 1)
+#define R3D_TEX_INT_S_START (1u << 2)
+#define R3D_TEX_INT_T_XINC (1u << 3)
+#define R3D_TEX_INT_T_YINC (1u << 4)
+#define R3D_TEX_INT_T_START (1u << 5)
+#define R3D_TEX_INT_ALL 0x3fu
+
+/*
+ * S/T START exposes only 11 fractional bits, while its first derivatives use
+ * 16.  The trajectory therefore has five hidden fractional accumulator bits
+ * after the first scanline.  The ATI HAL relies on that live state when it
+ * launches the second trapezoid of a triangle without rewriting S/T.  Track
+ * which shadows contain that internal value so a new guest write can return a
+ * register to its documented physical-field interpretation independently.
+ */
+static uint8_t r3d_tex_internal_mask[MACH64_3D_CONTEXTS];
+
+static unsigned
+r3d_tex_ctx_slot(mach64_3d_ctx_t *ctx)
+{
+    unsigned slot = (unsigned) (ctx - mach64_3d_ctx);
+    return slot < MACH64_3D_CONTEXTS ? slot : 0;
+}
+
+static uint8_t
+r3d_tex_internal_bit(uint32_t b)
+{
+    switch (b) {
+        case R3D_S_XINC_START: return R3D_TEX_INT_S_XINC;
+        case R3D_S_Y_INC:      return R3D_TEX_INT_S_YINC;
+        case R3D_S_START:      return R3D_TEX_INT_S_START;
+        case R3D_T_XINC_START: return R3D_TEX_INT_T_XINC;
+        case R3D_T_Y_INC:      return R3D_TEX_INT_T_YINC;
+        case R3D_T_START:      return R3D_TEX_INT_T_START;
+        default:               return 0;
+    }
+}
+
+static int
+r3d_tex_reg_is_internal(mach64_3d_ctx_t *ctx, uint32_t b)
+{
+    uint8_t bit = r3d_tex_internal_bit(b);
+    return bit && (r3d_tex_internal_mask[r3d_tex_ctx_slot(ctx)] & bit);
+}
+
+static void
+r3d_tex_note_guest_write(mach64_3d_ctx_t *ctx, uint32_t b)
+{
+    uint8_t bit = r3d_tex_internal_bit(b);
+    if (bit)
+        r3d_tex_internal_mask[r3d_tex_ctx_slot(ctx)] &= (uint8_t) ~bit;
+}
+
+static void
+r3d_tex_mark_internal(mach64_3d_ctx_t *ctx)
+{
+    r3d_tex_internal_mask[r3d_tex_ctx_slot(ctx)] |= R3D_TEX_INT_ALL;
+}
+
+/* Return the guest-visible physical register image, never hidden trajectory
+ * precision or reserved bits.  part4 uses this for readback and partial writes. */
+static uint32_t
+r3d_gtb_visible_3d_reg(uint32_t b, uint32_t raw)
+{
+    switch (b) {
+        case R3D_S_X_INC2:
+        case R3D_S_Y_INC2:
+        case R3D_S_XY_INC2:
+        case R3D_T_X_INC2:
+        case R3D_T_Y_INC2:
+        case R3D_T_XY_INC2:
+            return mach64_3d_s10_16_encode((int32_t) raw);
+
+        case R3D_S_XINC_START:
+        case R3D_S_Y_INC:
+        case R3D_T_XINC_START:
+        case R3D_T_Y_INC:
+            return mach64_3d_s11_16_encode((int32_t) raw);
+
+        case R3D_S_START:
+        case R3D_T_START:
+            return mach64_3d_u10_11_encode((uint32_t) raw);
+
+        case R3D_RED_X_INC:
+        case R3D_RED_Y_INC:
+        case R3D_RED_START:
+        case R3D_GREEN_X_INC:
+        case R3D_GREEN_Y_INC:
+        case R3D_GREEN_START:
+        case R3D_BLUE_X_INC:
+        case R3D_BLUE_Y_INC:
+        case R3D_BLUE_START:
+        case R3D_ALPHA_X_INC:
+        case R3D_ALPHA_Y_INC:
+        case R3D_ALPHA_START:
+            return mach64_3d_s8_12_encode((int32_t) raw);
+
+        case R3D_Z_X_INC:
+        case R3D_Z_Y_INC:
+        case R3D_Z_START:
+            return mach64_3d_s16_12_encode((int32_t) raw);
+
+        default:
+            return raw;
+    }
+}
+
+static int64_t
+r3d_tex_dynamic_decode(mach64_3d_ctx_t *ctx, uint32_t b, uint32_t raw)
+{
+    if (r3d_tex_reg_is_internal(ctx, b))
+        return (int32_t) raw;
+
+    switch (b) {
+        case R3D_S_XINC_START:
+        case R3D_S_Y_INC:
+        case R3D_T_XINC_START:
+        case R3D_T_Y_INC:
+            return mach64_3d_s11_16_decode(raw);
+        case R3D_S_START:
+        case R3D_T_START:
+            return mach64_3d_u10_11_decode(raw);
+        default:
+            return (int32_t) raw;
+    }
+}
 
 static int64_t r3d_quad_at(int64_t start,int64_t inc,int64_t inc2,int n){
     return start+(int64_t)n*inc+((int64_t)n*(n-1)/2)*inc2;
@@ -59,18 +188,18 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     if(right<left)return;
     {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}if(bottom<top)return;}
     uint32_t zc=ctx->regs[R3D_Z_CNTL>>2],zo=ctx->regs[R3D_Z_OFF_PITCH>>2],zb=(zo&0xfffff)<<3;int zp=((zo>>22)&0x3ff)<<3;
-#define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
-    RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
+#define RG(name) int64_t name##x=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_X_INC>>2]),name##y=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_Y_INC>>2]),name##0=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_START>>2])
+    RG(RED);RG(GREEN);RG(BLUE);RG(ALPHA);
 #undef RG
+    int64_t Zx=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_X_INC>>2]),Zy=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_Y_INC>>2]),Z0=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_START>>2]);
     /*
-     * Keep S/T in the native GT accumulator scale throughout the draw.  ATI's
-     * texture setup programs START and derivatives in a TEX_SIZE-dependent
-     * address domain (one texel = 1 << (25 - TEX_SIZE)); converting START to a
-     * fixed 16.16 domain here makes it inconsistent with the derivative
-     * registers and multiplies the effective texture stride.
+     * Decode guest-programmed S/T using the physical GT field widths.  Once a
+     * trapezoid advances the trajectory, START/XINC/YINC shadows retain the
+     * hidden 16-fractional-bit accumulator state until that individual register
+     * is written again by the guest.
      */
-    int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
-    int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
+    int64_t s0=r3d_tex_dynamic_decode(ctx,R3D_S_START,ctx->regs[R3D_S_START>>2]),sxi=r3d_tex_dynamic_decode(ctx,R3D_S_XINC_START,ctx->regs[R3D_S_XINC_START>>2]),syi=r3d_tex_dynamic_decode(ctx,R3D_S_Y_INC,ctx->regs[R3D_S_Y_INC>>2]),sx2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_X_INC2>>2]),sy2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_Y_INC2>>2]),sxy2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_XY_INC2>>2]);
+    int64_t t0=r3d_tex_dynamic_decode(ctx,R3D_T_START,ctx->regs[R3D_T_START>>2]),txi=r3d_tex_dynamic_decode(ctx,R3D_T_XINC_START,ctx->regs[R3D_T_XINC_START>>2]),tyi=r3d_tex_dynamic_decode(ctx,R3D_T_Y_INC,ctx->regs[R3D_T_Y_INC>>2]),tx2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_X_INC2>>2]),ty2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_Y_INC2>>2]),txy2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_XY_INC2>>2]);
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
@@ -151,7 +280,8 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
      */
     m->dst_y_x=((uint32_t)(lead&0x1fff)<<16)|((uint32_t)y&0x7fff);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
-    ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
+    ctx->regs[R3D_RED_START>>2]=mach64_3d_s8_12_encode(RED0);ctx->regs[R3D_GREEN_START>>2]=mach64_3d_s8_12_encode(GREEN0);ctx->regs[R3D_BLUE_START>>2]=mach64_3d_s8_12_encode(BLUE0);ctx->regs[R3D_ALPHA_START>>2]=mach64_3d_s8_12_encode(ALPHA0);ctx->regs[R3D_Z_START>>2]=mach64_3d_s16_12_encode(Z0);
     ctx->regs[R3D_S_START>>2]=(uint32_t)s0;ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
     ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
+    r3d_tex_mark_internal(ctx);
 }
