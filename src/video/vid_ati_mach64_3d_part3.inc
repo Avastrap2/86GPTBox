@@ -59,28 +59,18 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     if(right<left)return;
     {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}if(bottom<top)return;}
     uint32_t zc=ctx->regs[R3D_Z_CNTL>>2],zo=ctx->regs[R3D_Z_OFF_PITCH>>2],zb=(zo&0xfffff)<<3;int zp=((zo>>22)&0x3ff)<<3;
-#define RG(name) int64_t name##x=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_X_INC>>2]),name##y=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_Y_INC>>2]),name##0=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_START>>2])
-    RG(RED);RG(GREEN);RG(BLUE);RG(ALPHA);
+#define RG(name) int64_t name##x=(int32_t)ctx->regs[R3D_##name##_X_INC>>2],name##y=(int32_t)ctx->regs[R3D_##name##_Y_INC>>2],name##0=(int32_t)ctx->regs[R3D_##name##_START>>2]
+    RG(RED);RG(GREEN);RG(BLUE);RG(Z);RG(ALPHA);
 #undef RG
-    int64_t Zx=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_X_INC>>2]),Zy=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_Y_INC>>2]),Z0=mach64_3d_s16_12_decode(ctx->regs[R3D_Z_START>>2]);
     /*
-     * Texture START has only an unsigned 10.11 guest-visible field in bits
-     * 25:5, while the quadratic increments have 16 fractional bits.  ATI's
-     * own GT/GTB setup code writes full 32-bit conversion results and relies on
-     * the register field masks.  On the first draw after a guest S/T write,
-     * decode those physical fields exactly.  Continuation trapezoids, however,
-     * must retain the hidden five fractional accumulator bits produced by the
-     * first trapezoid; the Windows drivers deliberately do not rewrite S/T for
-     * the second half of a triangle.
+     * Keep S/T in the native GT accumulator scale throughout the draw.  ATI's
+     * texture setup programs START and derivatives in a TEX_SIZE-dependent
+     * address domain (one texel = 1 << (25 - TEX_SIZE)); converting START to a
+     * fixed 16.16 domain here makes it inconsistent with the derivative
+     * registers and multiplies the effective texture stride.
      */
-    int64_t s0,sxi,syi,sx2,sy2,sxy2,t0,txi,tyi,tx2,ty2,txy2;
-    if(ctx->tex_interp_internal){
-        s0=(int32_t)ctx->regs[R3D_S_START>>2];sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2];syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2];sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2];sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2];sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
-        t0=(int32_t)ctx->regs[R3D_T_START>>2];txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2];tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2];tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2];ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2];txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
-    }else{
-        s0=mach64_3d_u10_11_decode(ctx->regs[R3D_S_START>>2]);sxi=mach64_3d_s11_16_decode(ctx->regs[R3D_S_XINC_START>>2]);syi=mach64_3d_s11_16_decode(ctx->regs[R3D_S_Y_INC>>2]);sx2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_X_INC2>>2]);sy2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_Y_INC2>>2]);sxy2=mach64_3d_s10_16_decode(ctx->regs[R3D_S_XY_INC2>>2]);
-        t0=mach64_3d_u10_11_decode(ctx->regs[R3D_T_START>>2]);txi=mach64_3d_s11_16_decode(ctx->regs[R3D_T_XINC_START>>2]);tyi=mach64_3d_s11_16_decode(ctx->regs[R3D_T_Y_INC>>2]);tx2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_X_INC2>>2]);ty2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_Y_INC2>>2]);txy2=mach64_3d_s10_16_decode(ctx->regs[R3D_T_XY_INC2>>2]);
-    }
+    int64_t s0=(int32_t)ctx->regs[R3D_S_START>>2],sxi=(int32_t)ctx->regs[R3D_S_XINC_START>>2],syi=(int32_t)ctx->regs[R3D_S_Y_INC>>2],sx2=(int32_t)ctx->regs[R3D_S_X_INC2>>2],sy2=(int32_t)ctx->regs[R3D_S_Y_INC2>>2],sxy2=(int32_t)ctx->regs[R3D_S_XY_INC2>>2];
+    int64_t t0=(int32_t)ctx->regs[R3D_T_START>>2],txi=(int32_t)ctx->regs[R3D_T_XINC_START>>2],tyi=(int32_t)ctx->regs[R3D_T_Y_INC>>2],tx2=(int32_t)ctx->regs[R3D_T_X_INC2>>2],ty2=(int32_t)ctx->regs[R3D_T_Y_INC2>>2],txy2=(int32_t)ctx->regs[R3D_T_XY_INC2>>2];
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
     r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
@@ -107,7 +97,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                     dbg.candidate_pixels++;
                     if(tex){int texture_samples=0,texture_draw=1,texture_key_inhibit=0;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_samples,&texture_draw,&texture_key_inhibit);dbg.texture_samples+=texture_samples;if(!texture_draw){draw=0;}else if(texture_key_inhibit){draw=0;dbg.texel_key_rejects++;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
-                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>16);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
+                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
                     if(draw){
                         uint32_t source_rgb;
                         if(af==1)src=r3d_blend(ctl,src,r3d_read_dst(ctx,da,df));
@@ -161,9 +151,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
      */
     m->dst_y_x=((uint32_t)(lead&0x1fff)<<16)|((uint32_t)y&0x7fff);
     ctx->trail_x=trail;m->dst_bres_err=le;ctx->regs[R3D_TRAIL_BRES_ERR>>2]=te;
-    ctx->regs[R3D_RED_START>>2]=mach64_3d_s8_12_encode(RED0);ctx->regs[R3D_GREEN_START>>2]=mach64_3d_s8_12_encode(GREEN0);ctx->regs[R3D_BLUE_START>>2]=mach64_3d_s8_12_encode(BLUE0);ctx->regs[R3D_ALPHA_START>>2]=mach64_3d_s8_12_encode(ALPHA0);ctx->regs[R3D_Z_START>>2]=mach64_3d_s16_12_encode(Z0);
-    /* Keep the full 16-fractional-bit texture accumulator internally.  Guest
-     * reads/writes are normalized in part4 to the physical register fields. */
+    ctx->regs[R3D_RED_START>>2]=RED0;ctx->regs[R3D_GREEN_START>>2]=GREEN0;ctx->regs[R3D_BLUE_START>>2]=BLUE0;ctx->regs[R3D_ALPHA_START>>2]=ALPHA0;ctx->regs[R3D_Z_START>>2]=Z0;
     ctx->regs[R3D_S_START>>2]=(uint32_t)s0;ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
-    ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;ctx->tex_interp_internal=1;
+    ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
 }
