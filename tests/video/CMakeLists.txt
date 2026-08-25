@@ -60,6 +60,12 @@ add_executable(mach64_mipmap_lod_test
 
 add_test(NAME mach64_mipmap_lod COMMAND mach64_mipmap_lod_test)
 
+add_executable(mach64_3d_reg_fields_test
+    mach64_3d_reg_fields_test.c
+)
+
+add_test(NAME mach64_3d_reg_fields COMMAND mach64_3d_reg_fields_test)
+
 add_executable(mach64_yuv_math_test
     mach64_yuv_math_test.c
 )
