@@ -95,7 +95,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
                     dbg.candidate_pixels++;
-                    if(tex){int texture_samples=0,texture_draw=1;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_samples,&texture_draw);dbg.texture_samples+=texture_samples;if(!texture_draw){draw=0;}else if(tf!=2&&mach64_3d_texel_key_match(m->clr_cmp_cntl,m->clr_cmp_clr,m->clr_cmp_mask,(uint8_t)texel.r,(uint8_t)texel.g,(uint8_t)texel.b)){draw=0;dbg.texel_key_rejects++;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
+                    if(tex){int texture_samples=0,texture_draw=1,texture_key_inhibit=0;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_samples,&texture_draw,&texture_key_inhibit);dbg.texture_samples+=texture_samples;if(!texture_draw){draw=0;}else if(texture_key_inhibit){draw=0;dbg.texel_key_rejects++;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
                     if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
                     if(draw){
