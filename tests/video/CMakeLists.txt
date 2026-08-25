@@ -66,6 +66,12 @@ add_executable(mach64_yuv_math_test
 
 add_test(NAME mach64_yuv_math COMMAND mach64_yuv_math_test)
 
+add_executable(mach64_texture_interp_test
+    mach64_texture_interp_test.c
+)
+
+add_test(NAME mach64_texture_interp COMMAND mach64_texture_interp_test)
+
 add_executable(mach64_scaler_test
     mach64_scaler_test.c
     ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_3d.c
