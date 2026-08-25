@@ -15,6 +15,13 @@ check_lod(int64_t dsdx, int64_t dtdx, int64_t dsdy, int64_t dtdy,
            lod.fraction >= 0 && lod.fraction <= 255;
 }
 
+static int
+check_filter(int minifying, unsigned blend, int bilinear,
+             mach64_3d_texture_filter_t expected)
+{
+    return mach64_3d_texture_filter(minifying, blend, bilinear) == expected;
+}
+
 int
 main(void)
 {
@@ -31,6 +38,23 @@ main(void)
     CHECK_LOD(0, 0, -(texel * 8), 0, 1, 3, 3);
     CHECK_LOD(texel * 128, 0, 0, 0, 1, 6, 6);
 #undef CHECK_LOD
+
+#define CHECK_FILTER(...) do { if (!check_filter(__VA_ARGS__)) return 1; } while (0)
+    /* Magnification follows BILINEAR_TEX_EN, except ATI's documented
+     * multipass suppression for the two 2x2 minification modes. */
+    CHECK_FILTER(0, 0, 0, MACH64_3D_TEXTURE_FILTER_NEAREST);
+    CHECK_FILTER(0, 0, 1, MACH64_3D_TEXTURE_FILTER_BILINEAR);
+    CHECK_FILTER(0, 2, 0, MACH64_3D_TEXTURE_FILTER_NONE);
+    CHECK_FILTER(0, 3, 0, MACH64_3D_TEXTURE_FILTER_NONE);
+    CHECK_FILTER(0, 2, 1, MACH64_3D_TEXTURE_FILTER_BILINEAR);
+
+    /* Minification ignores BILINEAR_TEX_EN: TEX_BLEND_FCN selects whether
+     * the chosen map is sampled nearest or with a 2x2 blend. */
+    CHECK_FILTER(1, 0, 1, MACH64_3D_TEXTURE_FILTER_NEAREST);
+    CHECK_FILTER(1, 1, 1, MACH64_3D_TEXTURE_FILTER_NEAREST);
+    CHECK_FILTER(1, 2, 0, MACH64_3D_TEXTURE_FILTER_BILINEAR);
+    CHECK_FILTER(1, 3, 0, MACH64_3D_TEXTURE_FILTER_BILINEAR);
+#undef CHECK_FILTER
 
     return 0;
 }
