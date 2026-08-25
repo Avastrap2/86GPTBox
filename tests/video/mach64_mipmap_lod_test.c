@@ -16,6 +16,19 @@ check_lod(int64_t dsdx, int64_t dtdx, int64_t dsdy, int64_t dtdy,
 }
 
 static int
+check_lod_fraction(int64_t rho, int expected_floor, int expected_nearest,
+                   int expected_fraction)
+{
+    mach64_3d_mip_lod_t lod =
+        mach64_3d_mip_lod(rho, 0, 0, 0, 20, 6);
+
+    return lod.minifying == 1 &&
+           lod.floor_lod == expected_floor &&
+           lod.nearest_lod == expected_nearest &&
+           lod.fraction == expected_fraction;
+}
+
+static int
 check_filter(int minifying, unsigned blend, int bilinear,
              mach64_3d_texture_filter_t expected)
 {
@@ -39,7 +52,20 @@ main(void)
     CHECK_LOD(texel * 128, 0, 0, 0, 1, 6, 6);
 #undef CHECK_LOD
 
-#define CHECK_FILTER(...) do { if (!check_filter(__VA_ARGS__)) return 1; } while (0)
+#define CHECK_FRACTION(...) do { if (!check_lod_fraction(__VA_ARGS__)) return 2; } while (0)
+    /* LOD fractions are log2 distances within a power-of-two interval. */
+    CHECK_FRACTION(texel + texel / 4, 0, 0, 82);
+    CHECK_FRACTION(texel + texel / 2, 0, 1, 149);
+    CHECK_FRACTION(texel + (texel * 3) / 4, 0, 1, 206);
+    CHECK_FRACTION(texel * 2 + texel / 2, 1, 1, 82);
+    CHECK_FRACTION(texel * 3, 1, 2, 149);
+
+    /* Around sqrt(2), nearest-map selection flips at half a mip level. */
+    CHECK_FRACTION((texel * 181) / 128, 0, 0, 127);
+    CHECK_FRACTION((texel * 182) / 128, 0, 1, 129);
+#undef CHECK_FRACTION
+
+#define CHECK_FILTER(...) do { if (!check_filter(__VA_ARGS__)) return 3; } while (0)
     /* Magnification follows BILINEAR_TEX_EN, except ATI's documented
      * multipass suppression for the two 2x2 minification modes. */
     CHECK_FILTER(0, 0, 0, MACH64_3D_TEXTURE_FILTER_NEAREST);
