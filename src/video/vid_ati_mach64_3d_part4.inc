@@ -450,7 +450,7 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     if (b == R3D_LEAD_BRES_LNTH_ALIAS)
         *v = ctx->regs[R3D_LEAD_BRES_LNTH >> 2];
     else
-        *v = ctx->regs[b >> 2];
+        *v = r3d_gtb_visible_3d_reg(b, ctx->regs[b >> 2]);
 
     r3d_trace_record(m, 'V', 4, b, *v, 1);
     r3d_debug_access(ctx, 'V', 4, b, *v, 1);
@@ -580,9 +580,19 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
     r3d_sync_legacy_fifo(ctx);
     uint32_t i = b >> 2;
     uint32_t alias = r3d_scaler_alias(b);
-    ctx->regs[i] = r3d_merge_write(ctx->regs[i], a, v, type);
-    if (alias)
+    uint32_t merged = r3d_merge_write(ctx->regs[i], a, v, type);
+
+    /*
+     * GT/GTB interpolation registers expose only their documented fields.
+     * Reserved bits are ignored by the silicon.  Normalize after every partial
+     * write so later byte/word writes cannot inherit hidden trajectory bits.
+     */
+    ctx->regs[i] = r3d_gtb_visible_3d_reg(b, merged);
+    r3d_tex_note_guest_write(ctx, b);
+    if (alias) {
         ctx->regs[alias >> 2] = ctx->regs[i];
+        r3d_tex_note_guest_write(ctx, alias);
+    }
     r3d_trace_record(m, 'C', width, b, ctx->regs[i], 1);
     r3d_debug_access(ctx, 'C', width, b, ctx->regs[i], 1);
     return 1;
