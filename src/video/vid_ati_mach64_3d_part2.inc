@@ -184,14 +184,29 @@ static rgba_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t
     rgba_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
     return r3d_lerp(r3d_lerp(c00,c10,fu),r3d_lerp(c01,c11,fu),fv);
 }
-static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples){
+static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples,int *draw){
     mach64_3d_mip_lod_t lod;
+    mach64_3d_texture_filter_t filter;
     r3d_tex_state_t a,b;
+    rgba_t empty={0,0,0,0};
     int blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
     if(samples)*samples=1;
-    if(ctl&R3D_MIP_MAP_DISABLE){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    if(draw)*draw=1;
     lod=mach64_3d_mip_lod(dsdx,dtdx,dsdy,dtdy,largest->coord_shift,largest->sl);
-    if(!lod.minifying){if(samples)*samples=largest->bilinear?4:1;return r3d_sample_texel_cached(ctx,largest,s,t);}
+    filter=mach64_3d_texture_filter(lod.minifying,(unsigned)blend,!!(ctl&R3D_BILINEAR_TEX_EN));
+    if(filter==MACH64_3D_TEXTURE_FILTER_NONE){if(samples)*samples=0;if(draw)*draw=0;return empty;}
+    if(!lod.minifying){
+        a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;
+        if(samples)*samples=a.bilinear?4:1;
+        return r3d_sample_texel_cached(ctx,&a,s,t);
+    }
+    if(ctl&R3D_MIP_MAP_DISABLE){
+        /* With one map present, modes 0/1 use nearest sampling and the two
+         * documented 2x2 modes use that same map bilinearly. */
+        a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;
+        if(samples)*samples=a.bilinear?4:1;
+        return r3d_sample_texel_cached(ctx,&a,s,t);
+    }
     if(blend==1&&lod.floor_lod<largest->sl){
         rgba_t ca,cb;
         r3d_tex_state_select_lod(ctx,largest,lod.floor_lod,0,&a);
