@@ -4,9 +4,10 @@
 #include <stdint.h>
 
 /*
- * 3D RAGE GT/GTB interpolation registers do not consume all 32 bits of the
- * MMIO DWORD.  Keep values in the raw accumulator scale used by the renderer,
- * but discard reserved bits and sign-extend from the documented field sign bit.
+ * 3D RAGE GT/GTB trajectory/interpolation registers do not always consume all
+ * 32 bits of the MMIO DWORD.  Keep values in the raw accumulator scale used by
+ * the renderer, but discard reserved bits and sign-extend from the documented
+ * physical field sign bit.
  */
 static inline int32_t
 mach64_3d_signed_field_decode(uint32_t raw, unsigned lsb, unsigned width)
@@ -23,6 +24,16 @@ static inline uint32_t
 mach64_3d_field_encode(int64_t value, uint32_t mask)
 {
     return (uint32_t) value & mask;
+}
+
+/* Leading/trailing Bresenham ERR/INC/DEC: signed 18-bit in bits 17:0. */
+static inline int32_t mach64_3d_s18_decode(uint32_t raw)
+{
+    return mach64_3d_signed_field_decode(raw, 0, 18);
+}
+static inline uint32_t mach64_3d_s18_encode(int64_t value)
+{
+    return mach64_3d_field_encode(value, UINT32_C(0x0003ffff));
 }
 
 /* S/T second derivatives: signed S.10.16 in bits 26:0. */
