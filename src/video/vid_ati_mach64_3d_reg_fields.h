@@ -25,24 +25,24 @@ mach64_3d_field_encode(int64_t value, uint32_t mask)
     return (uint32_t) value & mask;
 }
 
-/* S/T second derivatives: signed S.10.16 in bits 25:0. */
+/* S/T second derivatives: signed S.10.16 in bits 26:0. */
 static inline int32_t mach64_3d_s10_16_decode(uint32_t raw)
-{
-    return mach64_3d_signed_field_decode(raw, 0, 26);
-}
-static inline uint32_t mach64_3d_s10_16_encode(int64_t value)
-{
-    return mach64_3d_field_encode(value, UINT32_C(0x03ffffff));
-}
-
-/* S/T first derivatives: signed S.11.16 in bits 26:0. */
-static inline int32_t mach64_3d_s11_16_decode(uint32_t raw)
 {
     return mach64_3d_signed_field_decode(raw, 0, 27);
 }
-static inline uint32_t mach64_3d_s11_16_encode(int64_t value)
+static inline uint32_t mach64_3d_s10_16_encode(int64_t value)
 {
     return mach64_3d_field_encode(value, UINT32_C(0x07ffffff));
+}
+
+/* S/T first derivatives: signed S.11.16 in bits 27:0. */
+static inline int32_t mach64_3d_s11_16_decode(uint32_t raw)
+{
+    return mach64_3d_signed_field_decode(raw, 0, 28);
+}
+static inline uint32_t mach64_3d_s11_16_encode(int64_t value)
+{
+    return mach64_3d_field_encode(value, UINT32_C(0x0fffffff));
 }
 
 /* S/T START: unsigned 10.11 in bits 25:5, kept in the raw 16-fractional scale. */
