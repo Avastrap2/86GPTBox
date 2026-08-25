@@ -30,6 +30,12 @@ main(void)
     CHECK(mach64_3d_s11_16_decode(UINT32_C(0x08000000)) ==
           -(INT32_C(1) << 27));
 
+    /* Lead/trail Bresenham terms are signed 18-bit physical fields. */
+    CHECK(mach64_3d_s18_decode(UINT32_C(0xffffffff)) == -1);
+    CHECK(mach64_3d_s18_decode(UINT32_C(0x0001ffff)) == 131071);
+    CHECK(mach64_3d_s18_decode(UINT32_C(0x00020000)) == -131072);
+    CHECK(mach64_3d_s18_encode(-332) == UINT32_C(0x0003feb4));
+
     /* S.8.12 lives at bits 24:4: high reserved and low four bits vanish. */
     CHECK(mach64_3d_s8_12_decode(UINT32_C(0x00ff000f)) ==
           (int32_t) UINT32_C(0x00ff0000));
