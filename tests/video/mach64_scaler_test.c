@@ -381,6 +381,78 @@ run_scaler_color_compare_test(mach64_t *mach64)
     return failures;
 }
 
+static int
+run_scaler_visibility_test(mach64_t *mach64)
+{
+    const uint32_t key = 0x00ff0000u;
+    const uint32_t other = 0x0000ff00u;
+    const uint32_t destination = 0x000000ffu;
+    int failures = 0;
+
+    /* The top-left contributor is keyed red.  With 12/16 horizontal and
+     * vertical fractions the nearest contributor is bottom-right green. */
+    *pixel32(mach64, SOURCE_OFFSET + 0u) = key;
+    *pixel32(mach64, SOURCE_OFFSET + 4u) = other;
+    *pixel32(mach64, SOURCE_OFFSET + 8u) = other;
+    *pixel32(mach64, SOURCE_OFFSET + 12u) = other;
+
+    mach64->dp_pix_width = 0x60000606u; /* SCALE=ARGB8888, DST=ARGB8888 */
+    mach64->dp_src = 0x00000500u;
+    mach64->dp_mix = 0x00070007u;
+    mach64->write_mask = 0xffffffffu;
+    mach64->dst_off_pitch = 0x02000000u;
+    mach64->dst_y_x = 0;
+    mach64->dst_cntl = DST_X_DIR | DST_Y_DIR;
+    mach64->sc_left_right = 0;
+    mach64->sc_top_bottom = 0;
+    mach64->clr_cmp_clr = key;
+    mach64->clr_cmp_mask = 0x00ffffffu;
+    mach64->clr_cmp_cntl = 0x02000005u;
+
+    failures += write_scaler_register(mach64, 0x1c0, SOURCE_OFFSET);
+    failures += write_scaler_register(mach64, 0x1dc, 2);
+    failures += write_scaler_register(mach64, 0x1e0, 2);
+    failures += write_scaler_register(mach64, 0x1ec, 2);
+    failures += write_scaler_register(mach64, 0x1f0, 0);
+    failures += write_scaler_register(mach64, 0x1f4, 0);
+    failures += write_scaler_register(mach64, 0x1f8, 0x0000c000u);
+    failures += write_scaler_register(mach64, 0x3c8, 0x0000c000u);
+
+    /* bit 9 clear: all four source pixels take part in chroma-key visibility. */
+    *pixel32(mach64, 0) = destination;
+    failures += write_scaler_register(mach64, 0x1fc, 0x00000040u);
+    if (!mach64_3d_write(mach64, 0x118, 0x00010001u,
+                         FIFO_WRITE_DWORD)) {
+        fprintf(stderr, "all-source visibility trigger was not claimed\n");
+        failures++;
+    }
+    if (*pixel32(mach64, 0) != destination) {
+        fprintf(stderr,
+                "NEAREST_TEX_VIS=0 failed: expected inhibited %08x, got %08x\n",
+                destination, *pixel32(mach64, 0));
+        failures++;
+    }
+
+    /* bit 9 set: only bottom-right, the nearest source pixel, is tested. */
+    *pixel32(mach64, 0) = destination;
+    failures += write_scaler_register(mach64, 0x1f8, 0x0000c000u);
+    failures += write_scaler_register(mach64, 0x3c8, 0x0000c000u);
+    failures += write_scaler_register(mach64, 0x1fc, 0x00000240u);
+    if (!mach64_3d_write(mach64, 0x118, 0x00010001u,
+                         FIFO_WRITE_DWORD)) {
+        fprintf(stderr, "nearest-source visibility trigger was not claimed\n");
+        failures++;
+    }
+    if (*pixel32(mach64, 0) == destination) {
+        fprintf(stderr,
+                "NEAREST_TEX_VIS=1 failed: nearest unkeyed source was inhibited\n");
+        failures++;
+    }
+
+    mach64->clr_cmp_cntl = 0;
+    return failures;
+}
+
 int
 main(void)
 {
@@ -395,6 +467,7 @@ main(void)
     failures += run_yuyv_scaler_test(mach64);
     failures += run_apple_yuv_test(mach64);
     failures += run_scaler_color_compare_test(mach64);
+    failures += run_scaler_visibility_test(mach64);
 
     destroy_machine(mach64);
     return failures ? 1 : 0;
