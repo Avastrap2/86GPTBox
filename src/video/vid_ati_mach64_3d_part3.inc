@@ -1,7 +1,7 @@
 #include "vid_ati_mach64_3d_tex_key.h"
-#include "vid_ati_mach64_3d_trapezoid.h"
 
 #define R3D_GTB_DST_BRES_SIGN      (1u << 11)
+#define R3D_GTB_POLYGON_RTEDGE_DIS (1u << 12)
 #define R3D_GTB_TRAIL_X_DIR         (1u << 13)
 #define R3D_GTB_TRAP_FILL_DIR       (1u << 14)
 #define R3D_GTB_TRAIL_BRES_SIGN     (1u << 15)
@@ -44,11 +44,9 @@ r3d_edge_step_scanline(int *x, int *e, int inc, int dec, int dir,
 static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     mach64_t*m=ctx->mach64;uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];int fcn=(ctl>>R3D_FCN_SHIFT)&3,df=r3d_dst_format(m),dbpp=r3d_bytes_per_pixel(df),tf=r3d_tex_format(m),tbpp=r3d_bytes_per_pixel(tf),len=cmd&0x7fff;if(!len||!dbpp||!fcn)return;if(fcn==2&&!tbpp)return;
     int lead=r3d_sign_extend(m->dst_y_x>>16,13),y=r3d_sign_extend(m->dst_y_x,15),ydir=(m->dst_cntl&DST_Y_DIR)?1:-1,ldir=(m->dst_cntl&DST_X_DIR)?1:-1,tdir=(m->dst_cntl&R3D_GTB_TRAIL_X_DIR)?1:-1;
-    /* GT/GTB places the trapezoid controls in DST_CNTL[13:15].  Bits 11 and
-     * 15 select the zero-error side of the lead/trail Bresenham walkers.
-     * DST_CNTL[12] is the legacy polygon-fill right-edge control and does not
-     * change 3D trapezoid span ownership. */
-    int fill_lr=!!(m->dst_cntl&R3D_GTB_TRAP_FILL_DIR),lead_zero_neg=!!(m->dst_cntl&R3D_GTB_DST_BRES_SIGN),trail_zero_neg=!!(m->dst_cntl&R3D_GTB_TRAIL_BRES_SIGN);
+    /* GT/GTB places the polygon controls in DST_CNTL[12:15].  Bits 11 and 15
+     * also select the zero-error side of the lead/trail Bresenham walkers. */
+    int fill_lr=!!(m->dst_cntl&R3D_GTB_TRAP_FILL_DIR),rtedge_dis=!!(m->dst_cntl&R3D_GTB_POLYGON_RTEDGE_DIS),lead_zero_neg=!!(m->dst_cntl&R3D_GTB_DST_BRES_SIGN),trail_zero_neg=!!(m->dst_cntl&R3D_GTB_TRAIL_BRES_SIGN);
     if((cmd&0x80000000u)||!ctx->trail_valid){ctx->trail_x=r3d_sign_extend(cmd>>16,13);ctx->trail_valid=1;}int trail=ctx->trail_x,le=(int32_t)m->dst_bres_err,li=(int32_t)m->dst_bres_inc,ld=(int32_t)m->dst_bres_dec,te=(int32_t)ctx->regs[R3D_TRAIL_BRES_ERR>>2],ti=(int32_t)ctx->regs[R3D_TRAIL_BRES_INC>>2],td=(int32_t)ctx->regs[R3D_TRAIL_BRES_DEC>>2];
     int left=m->sc_left_right&0x1fff,right=(m->sc_left_right>>16)&0x1fff,top=m->sc_top_bottom&0x7fff,bottom=(m->sc_top_bottom>>16)&0x7fff;if(right<left){left=0;right=0x1fff;}if(bottom<top){top=0;bottom=0x7fff;}
     uint32_t db=(m->dst_off_pitch&0xfffff)<<3;int dp=((m->dst_off_pitch>>22)&0x3ff)<<3;if(!dp)return;
@@ -80,9 +78,12 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         /* TRAP_FILL_DIR defines which programmed edge is the left/right side.
          * Do not sort crossed edges into a mirrored continuation. */
         int lo=fill_lr?lead:trail,hi=fill_lr?trail:lead;
-        if(y>=top&&y<=bottom){
-            int dl,dh;
-            if(mach64_3d_trapezoid_clip_span(lo,hi,left,right,&dl,&dh)){
+        int span_valid=lo<=hi;
+        if(span_valid&&y>=top&&y<=bottom){
+            int dl=lo<left?left:lo;
+            int right_limit=rtedge_dis?hi:(hi+1);
+            int dh=right_limit>right+1?right+1:right_limit;
+            if(dl<dh){
                 /* X interpolation registers are defined for steps in the
                  * programmed DST_X_DIR direction, not absolute screen +X. */
                 int n=(dl-lead)*ldir;
