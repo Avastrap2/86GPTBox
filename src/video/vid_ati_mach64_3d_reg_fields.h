@@ -26,7 +26,7 @@ mach64_3d_field_encode(int64_t value, uint32_t mask)
     return (uint32_t) value & mask;
 }
 
-/* Leading/trailing Bresenham ERR/INC/DEC: signed 18-bit in bits 17:0. */
+/* RRG-G02700 pp. 4-43..4-45 and 4-59: signed 18-bit ERR/INC/DEC. */
 static inline int32_t mach64_3d_s18_decode(uint32_t raw)
 {
     return mach64_3d_signed_field_decode(raw, 0, 18);
@@ -36,7 +36,7 @@ static inline uint32_t mach64_3d_s18_encode(int64_t value)
     return mach64_3d_field_encode(value, UINT32_C(0x0003ffff));
 }
 
-/* S/T second derivatives: signed S.10.16 in bits 26:0. */
+/* RRG-G02700 ch. 6: S.10.16 is sign + 10 integer + 16 fractional bits. */
 static inline int32_t mach64_3d_s10_16_decode(uint32_t raw)
 {
     return mach64_3d_signed_field_decode(raw, 0, 27);
@@ -46,7 +46,7 @@ static inline uint32_t mach64_3d_s10_16_encode(int64_t value)
     return mach64_3d_field_encode(value, UINT32_C(0x07ffffff));
 }
 
-/* S/T first derivatives: signed S.11.16 in bits 27:0. */
+/* RRG-G02700 ch. 6: S.11.16 is sign + 11 integer + 16 fractional bits. */
 static inline int32_t mach64_3d_s11_16_decode(uint32_t raw)
 {
     return mach64_3d_signed_field_decode(raw, 0, 28);
