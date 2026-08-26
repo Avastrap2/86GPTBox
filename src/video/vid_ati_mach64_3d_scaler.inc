@@ -114,7 +114,7 @@ r3d_scaler_debug_begin(mach64_3d_ctx_t *ctx, uint32_t trigger_addr)
     return entry;
 }
 
-static void
+static void R3D_UNUSED_DUMP
 r3d_scaler_debug_dump(mach64_t *m)
 {
     mach64_3d_ctx_t *ctx = r3d_find(m);

@@ -195,7 +195,7 @@ mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
     r3d_trace_record(mach64, op, width, addr, value, claimed);
 }
 
-static void
+static void R3D_UNUSED_DUMP
 r3d_trace_dump(mach64_t *m)
 {
     FILE *fp;

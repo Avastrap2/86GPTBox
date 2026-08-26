@@ -245,7 +245,7 @@ r3d_debug_access(mach64_3d_ctx_t *ctx, char op, unsigned width,
                                 addr, value, claimed, 0);
 }
 
-static void
+static void R3D_UNUSED_DUMP
 r3d_debug_dump(mach64_t *m)
 {
     r3d_debug_state_t *general = r3d_debug_find(m, 0);

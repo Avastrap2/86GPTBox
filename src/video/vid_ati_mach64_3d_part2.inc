@@ -215,7 +215,9 @@ static int r3d_texture_visibility(uint32_t ctl,r3d_texel_sample_t sample){
 }
 static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples,int *draw,int *key_inhibit){
     mach64_3d_mip_lod_t lod;mach64_3d_texture_filter_t filter;r3d_tex_state_t a,b;r3d_texel_sample_t sample;rgba_t empty={0,0,0,0};int blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
-    if(samples)*samples=1;if(draw)*draw=1;if(key_inhibit)*key_inhibit=0;
+    if(samples)*samples=1;
+    if(draw)*draw=1;
+    if(key_inhibit)*key_inhibit=0;
     lod=mach64_3d_mip_lod(dsdx,dtdx,dsdy,dtdy,largest->coord_shift,largest->sl);
     filter=mach64_3d_texture_filter(lod.minifying,(unsigned)blend,!!(ctl&R3D_BILINEAR_TEX_EN));
     if(filter==MACH64_3D_TEXTURE_FILTER_NONE){if(samples)*samples=0;if(draw)*draw=0;return empty;}

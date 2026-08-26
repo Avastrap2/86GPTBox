@@ -1,6 +1,12 @@
 /* ATI 3D RAGE / Rage II+ software renderer. */
 #include "vid_ati_mach64_3d.h"
 
+#if defined(__GNUC__) || defined(__clang__)
+#    define R3D_UNUSED_DUMP __attribute__((unused))
+#else
+#    define R3D_UNUSED_DUMP
+#endif
+
 /* Keep the original attach/detach bodies from part1, then wrap them below so
  * the diagnostic state can be reset and dumped without changing the renderer's
  * public ABI. */
@@ -161,7 +167,7 @@ r3d_line_debug_end(mach64_3d_ctx_t *ctx, r3d_line_debug_entry_t *e,
     e->claimed = claimed;
 }
 
-static void
+static void R3D_UNUSED_DUMP
 r3d_line_debug_dump(mach64_t *m)
 {
     r3d_line_debug_state_t *s = r3d_line_debug_find(m, 0);
@@ -232,6 +238,7 @@ r3d_line_debug_dump(mach64_t *m)
 #undef mach64_3d_write
 
 #include "vid_ati_mach64_3d_scaler.inc"
+#undef R3D_UNUSED_DUMP
 
 int
 mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
