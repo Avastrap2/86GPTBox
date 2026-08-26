@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#include "vid_ati_mach64_3d_data_path.h"
+
 /* GT CLR_CMP_SRC=2 selects the texel/scaler source.  A true compare result
  * inhibits the destination write.  Non-indexed texels are compared after
  * expansion to 24-bit RGB; pseudo-color sources compare their index in the
@@ -11,28 +13,13 @@ static inline int
 mach64_3d_texel_key_compare(uint32_t cntl, uint32_t key, uint32_t mask,
                             uint32_t selected)
 {
-    uint32_t reference;
-    unsigned fn;
     unsigned source;
 
     source = (cntl >> 24) & 3u;
     if (source != 2u)
         return 0;
 
-    selected &= mask;
-    reference = key & mask;
-    fn = cntl & 7u;
-
-    switch (fn) {
-        case 1:
-            return 1;
-        case 4:
-            return selected != reference;
-        case 5:
-            return selected == reference;
-        default:
-            return 0;
-    }
+    return mach64_3d_color_compare_inhibits(cntl, key, mask, selected);
 }
 
 static inline int

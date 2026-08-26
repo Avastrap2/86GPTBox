@@ -103,8 +103,20 @@ static uint32_t r3d_pack(mach64_3d_ctx_t *ctx,int f,rgba_t c,int x,int y){
     }
 #undef QCOMP
 }
+static uint32_t r3d_read_dst_raw(mach64_3d_ctx_t *ctx,uint32_t a,int f){
+    switch(r3d_bytes_per_pixel(f)){case 1:return r3d_vram_read8(ctx->mach64,a);case 2:return r3d_vram_read16(ctx->mach64,a);case 4:return r3d_vram_read32(ctx->mach64,a);default:return 0;}
+}
 static rgba_t r3d_read_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f){
-    switch(r3d_bytes_per_pixel(f)){case 1:return r3d_unpack(ctx,f,r3d_vram_read8(ctx->mach64,a),0);case 2:return r3d_unpack(ctx,f,r3d_vram_read16(ctx->mach64,a),0);case 4:return r3d_unpack(ctx,f,r3d_vram_read32(ctx->mach64,a),0);default:{rgba_t z={0,0,0,255};return z;}}
+    if(r3d_bytes_per_pixel(f))return r3d_unpack(ctx,f,r3d_read_dst_raw(ctx,a,f),0);
+    {rgba_t z={0,0,0,255};return z;}
+}
+static void r3d_write_dst_raw(mach64_3d_ctx_t *ctx,uint32_t a,int f,uint32_t raw){
+    mach64_t*m=ctx->mach64;int bpp=r3d_bytes_per_pixel(f);uint32_t old,mask=m->write_mask;
+    switch(bpp){
+        case 1:{uint32_t pm=mask&0xffu;if(pm!=0xffu){old=r3d_vram_read8(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write8(m,a,(uint8_t)raw);break;}
+        case 2:{uint32_t pm=mask&0xffffu;if(pm!=0xffffu){old=r3d_vram_read16(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write16(m,a,(uint16_t)raw);break;}
+        case 4:if(mask!=0xffffffffu){old=r3d_vram_read32(m,a);raw=(old&~mask)|(raw&mask);}r3d_vram_write32(m,a,raw);break;
+    }
 }
 /* Avoid a destination read when WRITE_MASK enables the complete pixel.  The
  * Windows HAL normally leaves it at all ones, so the former read/modify/write
@@ -114,12 +126,7 @@ static void r3d_write_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f,rgba_t c){
     uint32_t base=(m->dst_off_pitch&0xfffff)<<3;int pitch=((m->dst_off_pitch>>22)&0x3ff)<<3;
     if(bpp&&pitch&&a>=base){uint32_t p=(a-base)/(uint32_t)bpp;x=(int)(p%(uint32_t)pitch);y=(int)(p/(uint32_t)pitch);}
     if(f==2){uint8_t p=((r3d_clamp8(c.r)>>5)<<5)|((r3d_clamp8(c.g)>>5)<<2)|(r3d_clamp8(c.b)>>6);r3d_vram_write8(m,a,p);return;}
-    uint32_t raw=r3d_pack(ctx,f,c,x,y),old,mask=m->write_mask;
-    switch(bpp){
-        case 1:{uint32_t pm=mask&0xffu;if(pm!=0xffu){old=r3d_vram_read8(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write8(m,a,(uint8_t)raw);break;}
-        case 2:{uint32_t pm=mask&0xffffu;if(pm!=0xffffu){old=r3d_vram_read16(m,a);raw=(old&~pm)|(raw&pm);}r3d_vram_write16(m,a,(uint16_t)raw);break;}
-        case 4:if(mask!=0xffffffffu){old=r3d_vram_read32(m,a);raw=(old&~mask)|(raw&mask);}r3d_vram_write32(m,a,raw);break;
-    }
+    r3d_write_dst_raw(ctx,a,f,r3d_pack(ctx,f,c,x,y));
 }
 static rgba_t r3d_lerp(rgba_t a,rgba_t b,int t){rgba_t r;t=r3d_clamp8(t);r.r=(a.r*(255-t)+b.r*t+127)/255;r.g=(a.g*(255-t)+b.g*t+127)/255;r.b=(a.b*(255-t)+b.b*t+127)/255;r.a=(a.a*(255-t)+b.a*t+127)/255;return r;}
 static int r3d_component(rgba_t c,int ch){return ch==0?c.r:(ch==1?c.g:(ch==2?c.b:c.a));}
