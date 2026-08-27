@@ -16,6 +16,30 @@ typedef enum mach64_3d_texture_filter_t {
     MACH64_3D_TEXTURE_FILTER_BILINEAR
 } mach64_3d_texture_filter_t;
 
+/* ATI drivers duplicate the byte pointer of the smallest populated map into
+ * lower TEX_n_OFFSET registers.  Follow the distinct offset chain downward
+ * from the largest map and stop at the first duplicate.  Selecting a nominally
+ * smaller level with the duplicated pointer would reinterpret the populated
+ * map with a smaller row stride and sample unrelated texels. */
+static inline int
+mach64_3d_mip_lowest_populated_level(const uint32_t offsets[11],
+                                     int largest_level)
+{
+    int level;
+
+    if (!offsets)
+        return 0;
+    if (largest_level < 0)
+        largest_level = 0;
+    if (largest_level > 10)
+        largest_level = 10;
+
+    level = largest_level;
+    while (level > 0 && offsets[level - 1] != offsets[level])
+        level--;
+    return level;
+}
+
 static inline uint64_t
 mach64_3d_mip_abs64(int64_t value)
 {
@@ -52,6 +76,8 @@ mach64_3d_texture_filter(int minifying, unsigned tex_blend_fcn,
  * the raw normalized-coordinate shift for one texel in the largest map.
  * fraction is the linear position between adjacent power-of-two footprints;
  * nearest_lod uses the log-space sqrt(2) boundary (106/256 of that interval).
+ * max_lod is the number of distinct map transitions, not necessarily the log2
+ * size of the largest map when the driver duplicates its smallest map offset.
  */
 static inline mach64_3d_mip_lod_t
 mach64_3d_mip_lod(int64_t dsdx, int64_t dtdx,
