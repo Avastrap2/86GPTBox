@@ -195,12 +195,13 @@ static const SOUND_CARD sound_cards[] = {
     { &gus_ace_device               },
     { &gus_extreme_device           },
     { &azt2320_device               },
-    { &mirosound_pcm10_device       },
-    { &opti_82c930_device           },
-    { &opti_82c931_device           },
     { &pasplus_device               },
     { &pas16_device                 },
     { &pas16d_device                },
+    { &jazz16_device                },
+    { &mirosound_pcm10_device       },
+    { &opti_82c930_device           },
+    { &opti_82c931_device           },
     { &sb_16_device                 },
     { &sb_16_pnp_device             },
     { &sb_16_pnp_ide_device         },
@@ -976,6 +977,8 @@ void
 sound_cd_thread_reset(void)
 {
     int available_cdrom_drives = 0;
+
+    timer_disable(&cd_poll_timer);
 
     for (uint8_t i = 0; i < CDROM_NUM; i++) {
         cdrom_stop(&(cdrom[i]));
