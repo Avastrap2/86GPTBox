@@ -20,8 +20,6 @@
 
 extern void ics2595_setclock(void *priv, double clock);
 extern void mach64_pci_write_legacy(int func, int addr, int len, uint8_t val, void *priv);
-extern void mach64_3d_trace_external(mach64_t *mach64, char op, unsigned width,
-                                     uint32_t addr, uint32_t value, int claimed);
 
 typedef struct mach64_gtb_state_t {
     int used;
@@ -215,24 +213,6 @@ mach64_gtb_callback_leave(const mach64_gtb_io_hook_t *hook, mach64_t *mach64,
 {
     if (mach64_gtb_is_card(mach64) && hook && !hook->block)
         mach64->io_base = old;
-}
-
-static void
-mach64_gtb_trace_io(const mach64_gtb_io_hook_t *hook, mach64_t *mach64,
-                    char op, unsigned width, uint16_t port, uint32_t value)
-{
-    uint16_t offset;
-    uint32_t addr;
-
-    if (!mach64_gtb_is_card(mach64) || !hook)
-        return;
-
-    if (mach64_gtb_block_offset(hook, port, &offset))
-        addr = 0x2000u | offset;
-    else
-        addr = 0x10000u | port;
-
-    mach64_3d_trace_external(mach64, op, width, addr, value, 1);
 }
 
 /* Return CLOCK_CNTL byte lane (0..3), or -1 for unrelated ports. */
@@ -527,13 +507,7 @@ mach64_gtb_hook_inb_raw(uint16_t port, void *priv)
 static uint8_t
 mach64_gtb_hook_inb(uint16_t port, void *priv)
 {
-    mach64_gtb_io_hook_t *hook = (mach64_gtb_io_hook_t *) priv;
-    mach64_t *mach64 = hook ? (mach64_t *) hook->priv : NULL;
-    uint8_t ret = mach64_gtb_hook_inb_raw(port, priv);
-
-    /* Lower-case 'i' is guest I/O read; upper-case 'I' is guest I/O write. */
-    mach64_gtb_trace_io(hook, mach64, 'i', 1, port, ret);
-    return ret;
+    return mach64_gtb_hook_inb_raw(port, priv);
 }
 
 static uint16_t
@@ -557,7 +531,6 @@ mach64_gtb_hook_inw(uint16_t port, void *priv)
         mach64_gtb_callback_leave(hook, mach64, old_io_base);
     }
 
-    mach64_gtb_trace_io(hook, mach64, 'i', 2, port, ret);
     return ret;
 }
 
@@ -592,7 +565,6 @@ mach64_gtb_hook_inl(uint16_t port, void *priv)
         mach64_gtb_callback_leave(hook, mach64, old_io_base);
     }
 
-    mach64_gtb_trace_io(hook, mach64, 'i', 4, port, ret);
     return ret;
 }
 
@@ -606,7 +578,6 @@ mach64_gtb_hook_outb(uint16_t port, uint8_t val, void *priv)
     uint32_t old_io_base;
     int lane = mach64_gtb_clock_lane(hook, port);
 
-    mach64_gtb_trace_io(hook, mach64, 'I', 1, port, val);
 
     if (mach64_gtb_is_card(mach64) && mach64_gtb_sparse_gp_io_offset(hook, port, &offset)) {
         mach64_gtb_gp_io_writeb(mach64, offset, val);
@@ -653,7 +624,6 @@ mach64_gtb_hook_outw(uint16_t port, uint16_t val, void *priv)
     uint16_t callback_port;
     uint32_t old_io_base;
 
-    mach64_gtb_trace_io(hook, mach64, 'I', 2, port, val);
 
     if (mach64_gtb_hook_special(hook, port) || mach64_gtb_hook_special(hook, port + 1)) {
         mach64_gtb_hook_outb(port, val & 0xff, priv);
@@ -677,7 +647,6 @@ mach64_gtb_hook_outl(uint16_t port, uint32_t val, void *priv)
     uint16_t callback_port;
     uint32_t old_io_base;
 
-    mach64_gtb_trace_io(hook, mach64, 'I', 4, port, val);
 
     for (unsigned i = 0; i < 4; i++) {
         if (mach64_gtb_hook_special(hook, port + i)) {
@@ -978,7 +947,6 @@ mach64_gtb_pci_ioconfig_write(void *priv, uint8_t val)
     mach64_t *mach64 = (mach64_t *) priv;
     mach64_gtb_state_t *state = mach64_gtb_get_state(mach64, 1);
 
-    mach64_3d_trace_external(mach64, 'Q', 1, 0x1040u, val, 1);
     if (state)
         state->pci_ioconfig = val & 0x0f;
 }

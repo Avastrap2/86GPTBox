@@ -204,7 +204,6 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     unsigned dp_mono_source=(m->dp_src>>16)&3u,dp_frgd_source=(m->dp_src>>8)&7u;int dp_constant_source=dp_mono_source==MONO_SRC_1&&(dp_frgd_source==MACH64_3D_DP_SRC_BKGD_CLR||dp_frgd_source==MACH64_3D_DP_SRC_FRGD_CLR),destination_compare=mach64_3d_destination_compare_enabled(m->clr_cmp_cntl);uint32_t compare_pixel_mask=dbpp==1?0xffu:(dbpp==2?0xffffu:0xffffffffu);
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
-    r3d_debug_draw_t dbg;r3d_debug_draw_begin(ctx,&dbg,cmd,lead,trail,y,left,right,top,bottom,dp,len,df,dbpp,tf,tbpp);
     for(int row=0;row<len;row++){
         /* TRAP_FILL_DIR defines which programmed edge is the left/right side.
          * Do not sort crossed edges into a mirrored continuation. */
@@ -221,10 +220,9 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
                     rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
-                    dbg.candidate_pixels++;
-                    if(tex){int texture_samples=0,texture_draw=1,texture_key_inhibit=0;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_samples,&texture_draw,&texture_key_inhibit);dbg.texture_samples+=texture_samples;if(!texture_draw){draw=0;}else if(texture_key_inhibit){draw=0;dbg.texel_key_rejects++;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;dbg.alpha_rejects++;}else src=r3d_texture_light(ctl,texel,shade);}
+                    if(tex){int texture_draw=1,texture_key_inhibit=0;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_draw,&texture_key_inhibit);if(!texture_draw){draw=0;}else if(texture_key_inhibit){draw=0;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
-                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7)){draw=0;dbg.z_rejects++;}}
+                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;}
                     if(draw){
                         uint32_t selected_raw=0;
                         int raw_source=0;
@@ -232,15 +230,7 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                         if(dp_constant_source){uint32_t scale_raw=r3d_pack(ctx,df,src,x,y);selected_raw=mach64_3d_dp_select_source(m->dp_src,m->dp_bkgd_clr,m->dp_frgd_clr,scale_raw);src=r3d_unpack(ctx,df,selected_raw,0);raw_source=1;}
                         if(destination_compare&&mach64_3d_destination_compare_inhibits(m->clr_cmp_cntl,m->clr_cmp_clr,m->clr_cmp_mask,r3d_read_dst_raw(ctx,da,df),compare_pixel_mask))draw=0;
                         if(draw){
-                            uint32_t source_rgb=((uint32_t)r3d_clamp8(src.r)<<16)|
-                                                ((uint32_t)r3d_clamp8(src.g)<<8)|
-                                                (uint32_t)r3d_clamp8(src.b);
-                            dbg.source_rgb_or|=source_rgb;
-                            if(source_rgb)dbg.nonzero_source_pixels++;
-                            if(src.r>dbg.source_r_max)dbg.source_r_max=(uint8_t)r3d_clamp8(src.r);
-                            if(src.g>dbg.source_g_max)dbg.source_g_max=(uint8_t)r3d_clamp8(src.g);
-                            if(src.b>dbg.source_b_max)dbg.source_b_max=(uint8_t)r3d_clamp8(src.b);
-                            if(raw_source)r3d_write_dst_raw(ctx,da,df,selected_raw);else r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);dbg.drawn_pixels++;
+                            if(raw_source)r3d_write_dst_raw(ctx,da,df,selected_raw);else r3d_write_dst(ctx,da,df,src);if(z_write)r3d_vram_write16(m,za,nz);
                         }
                     }
                     da+=dbpp;if(z_enabled)za+=2;
@@ -268,8 +258,6 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         }
         y+=ydir;
     }
-    r3d_debug_draw_end(ctx,&dbg,lead,trail,y);
-
     /*
      * A GT trapezoid is driven by two Bresenham line engines.  Like an ordinary
      * line trajectory, the destination pointer is a live trajectory register,

@@ -19,18 +19,6 @@ int       monitor_index_global;
 static mach64_t *test_machine;
 static int       worker_waits;
 
-void
-mach64_3d_rect_debug_begin(mach64_t *mach64)
-{
-    (void) mach64;
-}
-
-void
-mach64_3d_rect_debug_end(mach64_t *mach64)
-{
-    (void) mach64;
-}
-
 enum {
     VRAM_SIZE        = 4 * 1024 * 1024,
     SRC_BYTE_OFFSET  = 0x12f200,

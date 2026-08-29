@@ -6,173 +6,11 @@
 #define R3D_NEAREST_TEX_VIS  (1u << 9)
 #define R3D_SCALE_XUV_INC 0x3d8u /* BLUE_X_INC, DWORD 0_F6 */
 #define R3D_SCALE_UV_HACC 0x3e0u /* BLUE_START, DWORD 0_F8 */
-#define R3D_SCALER_DEBUG_ENTRIES 64
-
-typedef struct r3d_scaler_debug_entry_t {
-    uint64_t seq;
-    uint64_t ticks;
-    uint64_t drawn;
-    uint64_t clipped;
-    uint64_t scissor_clipped;
-    uint64_t vram_clipped;
-    uint32_t trigger_addr;
-    uint32_t scale_3d_cntl;
-    uint32_t dp_pix_width;
-    uint32_t dp_src;
-    uint32_t dp_mix;
-    uint32_t source_offset;
-    uint32_t source_width;
-    uint32_t source_height;
-    uint32_t source_pitch;
-    uint32_t x_increment;
-    uint32_t y_increment;
-    uint32_t h_accumulator;
-    uint32_t v_accumulator_begin;
-    uint32_t v_accumulator_end;
-    uint32_t dst_off_pitch;
-    uint32_t dst_y_x;
-    uint32_t dst_height_width;
-    uint32_t dst_cntl;
-    uint32_t sc_left_right;
-    uint32_t sc_top_bottom;
-    int source_format;
-    int destination_format;
-    int replicate;
-} r3d_scaler_debug_entry_t;
-
-typedef struct r3d_scaler_debug_state_t {
-    uint64_t seq;
-    r3d_scaler_debug_entry_t entries[R3D_SCALER_DEBUG_ENTRIES];
-} r3d_scaler_debug_state_t;
 
 typedef struct r3d_scaler_uv_t {
     int u;
     int v;
 } r3d_scaler_uv_t;
-
-static r3d_scaler_debug_state_t r3d_scaler_debug_states[MACH64_3D_CONTEXTS];
-
-static int
-r3d_scaler_context_slot(mach64_3d_ctx_t *ctx)
-{
-    int slot;
-
-    if (!ctx)
-        return -1;
-    slot = (int) (ctx - mach64_3d_ctx);
-    return (slot >= 0 && slot < MACH64_3D_CONTEXTS) ? slot : -1;
-}
-
-static void
-r3d_scaler_debug_reset(mach64_t *m)
-{
-    mach64_3d_ctx_t *ctx = r3d_find(m);
-    int slot = r3d_scaler_context_slot(ctx);
-
-    if (slot >= 0)
-        memset(&r3d_scaler_debug_states[slot], 0,
-               sizeof(r3d_scaler_debug_states[slot]));
-}
-
-static r3d_scaler_debug_entry_t *
-r3d_scaler_debug_begin(mach64_3d_ctx_t *ctx, uint32_t trigger_addr)
-{
-    mach64_t *m;
-    r3d_scaler_debug_state_t *state;
-    r3d_scaler_debug_entry_t *entry;
-    int slot = r3d_scaler_context_slot(ctx);
-
-    if (slot < 0 || !(m = ctx->mach64))
-        return NULL;
-
-    state = &r3d_scaler_debug_states[slot];
-    entry = &state->entries[state->seq % R3D_SCALER_DEBUG_ENTRIES];
-    memset(entry, 0, sizeof(*entry));
-    entry->seq = ++state->seq;
-    entry->trigger_addr = trigger_addr;
-    entry->scale_3d_cntl = ctx->regs[R3D_SCALE_3D_CNTL >> 2];
-    entry->dp_pix_width = m->dp_pix_width;
-    entry->dp_src = m->dp_src;
-    entry->dp_mix = m->dp_mix;
-    entry->source_offset = ctx->regs[R3D_SCALE_Y_OFF >> 2];
-    entry->source_width = ctx->regs[R3D_SCALE_WIDTH >> 2];
-    entry->source_height = ctx->regs[R3D_SCALE_HEIGHT >> 2];
-    entry->source_pitch = ctx->regs[R3D_SCALE_Y_PITCH >> 2];
-    entry->x_increment = ctx->regs[R3D_SCALE_X_INC >> 2];
-    entry->y_increment = ctx->regs[R3D_SCALE_Y_INC >> 2];
-    entry->h_accumulator = ctx->regs[R3D_SCALE_HACC >> 2];
-    entry->v_accumulator_begin = ctx->regs[R3D_SCALE_VACC >> 2];
-    entry->dst_off_pitch = m->dst_off_pitch;
-    entry->dst_y_x = m->dst_y_x;
-    entry->dst_height_width = m->dst_height_width;
-    entry->dst_cntl = m->dst_cntl;
-    entry->sc_left_right = m->sc_left_right;
-    entry->sc_top_bottom = m->sc_top_bottom;
-    entry->source_format = r3d_tex_format(m);
-    entry->destination_format = r3d_dst_format(m);
-    entry->replicate = !!(entry->scale_3d_cntl & R3D_SCALE_PIX_REP);
-    return entry;
-}
-
-static void R3D_UNUSED_DUMP
-r3d_scaler_debug_dump(mach64_t *m)
-{
-    mach64_3d_ctx_t *ctx = r3d_find(m);
-    r3d_scaler_debug_state_t *state;
-    FILE *fp;
-    uint64_t count;
-    uint64_t first;
-    int slot = r3d_scaler_context_slot(ctx);
-
-    if (slot < 0)
-        return;
-    state = &r3d_scaler_debug_states[slot];
-
-    fp = fopen("rage2p_scaler_debug.log", "w");
-    if (!fp) {
-        pclog("ATI Rage II+: unable to create rage2p_scaler_debug.log\n");
-        return;
-    }
-
-    count = state->seq < R3D_SCALER_DEBUG_ENTRIES ?
-            state->seq : R3D_SCALER_DEBUG_ENTRIES;
-    first = state->seq - count + 1;
-    fprintf(fp, "# Rage II+ front-end scaler diagnostic v2\n");
-    fprintf(fp, "# total=%llu retained=%llu\n",
-            (unsigned long long) state->seq, (unsigned long long) count);
-    fprintf(fp,
-            "# seq ticks drawn clipped sc_clip vram_clip trigger ctl dp_pix dp_src dp_mix "
-            "src_off src_w src_h src_pitch x_inc y_inc hacc vacc0 vacc1 "
-            "dst_off dst_y_x dst_hw dst_cntl sc_lr sc_tb sf df replicate\n");
-    for (uint64_t seq = first; seq <= state->seq; seq++) {
-        const r3d_scaler_debug_entry_t *entry =
-            &state->entries[(seq - 1) % R3D_SCALER_DEBUG_ENTRIES];
-        fprintf(fp,
-                "%010llu %llu %llu %llu %llu %llu %04X %08X %08X %08X %08X "
-                "%08X %u %u %u %08X %08X %08X %08X %08X "
-                "%08X %08X %08X %08X %08X %08X %d %d %d\n",
-                (unsigned long long) entry->seq,
-                (unsigned long long) entry->ticks,
-                (unsigned long long) entry->drawn,
-                (unsigned long long) entry->clipped,
-                (unsigned long long) entry->scissor_clipped,
-                (unsigned long long) entry->vram_clipped,
-                entry->trigger_addr, entry->scale_3d_cntl,
-                entry->dp_pix_width, entry->dp_src, entry->dp_mix,
-                entry->source_offset, entry->source_width,
-                entry->source_height, entry->source_pitch,
-                entry->x_increment, entry->y_increment,
-                entry->h_accumulator, entry->v_accumulator_begin,
-                entry->v_accumulator_end, entry->dst_off_pitch,
-                entry->dst_y_x, entry->dst_height_width, entry->dst_cntl,
-                entry->sc_left_right, entry->sc_top_bottom,
-                entry->source_format, entry->destination_format,
-                entry->replicate);
-    }
-    fclose(fp);
-    pclog("ATI Rage II+: wrote rage2p_scaler_debug.log (%llu commands)\n",
-          (unsigned long long) count);
-}
 
 static int
 r3d_scaler_source_bpp(int format)
@@ -603,8 +441,7 @@ r3d_scaler_active(mach64_3d_ctx_t *ctx)
 }
 
 static void
-r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
-                          r3d_scaler_debug_entry_t *debug)
+r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx)
 {
     mach64_t *m = ctx->mach64;
     uint32_t control = ctx->regs[R3D_SCALE_3D_CNTL >> 2];
@@ -635,8 +472,6 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
     int scissor_bottom = (m->sc_top_bottom >> 16) & 0x7fff;
     int replicate = !!(control & R3D_SCALE_PIX_REP);
     uint64_t vram_bytes = (uint64_t) m->vram_mask + 1u;
-    uint64_t start_tick = plat_timer_read();
-
     if (!source_width || !source_height || !source_pitch ||
         !destination_width || !destination_height ||
         !r3d_scaler_source_bpp(source_format) || !destination_bpp ||
@@ -672,10 +507,6 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
 
             if (x < 0 || y < 0 || x < scissor_left || x > scissor_right ||
                 y < scissor_top || y > scissor_bottom) {
-                if (debug)
-                    debug->clipped++;
-                if (debug)
-                    debug->scissor_clipped++;
                 continue;
             }
 
@@ -745,16 +576,11 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx,
             if (destination_address < 0 ||
                 (uint64_t) destination_address +
                     (uint64_t) destination_bpp > vram_bytes) {
-                if (debug)
-                    debug->clipped++;
-                if (debug)
-                    debug->vram_clipped++;
                 continue;
             }
-            if (r3d_scaler_write_pixel(ctx, (uint32_t) destination_address,
-                                       destination_format, x, y, source,
-                                       scaler_source_inhibits) && debug)
-                debug->drawn++;
+            r3d_scaler_write_pixel(ctx, (uint32_t) destination_address,
+                                   destination_format, x, y, source,
+                                   scaler_source_inhibits);
         }
     }
 
@@ -766,10 +592,6 @@ complete:
 
         ctx->regs[R3D_SCALE_VACC >> 2] =
             (old_vacc & ~0x001ffff0u) | (advanced & 0x001ffff0u);
-    }
-    if (debug) {
-        debug->v_accumulator_end = ctx->regs[R3D_SCALE_VACC >> 2];
-        debug->ticks = plat_timer_read() - start_tick;
     }
 }
 
@@ -783,9 +605,6 @@ r3d_try_scaler_destination_write(mach64_3d_ctx_t *ctx, uint32_t address,
                                  uint32_t value, uint32_t type)
 {
     mach64_t *m;
-    uint32_t base;
-    unsigned width;
-    r3d_scaler_debug_entry_t *debug;
 
     if (!ctx || !(m = ctx->mach64) ||
         !r3d_scaler_trigger_write(address, value, type))
@@ -802,18 +621,7 @@ r3d_try_scaler_destination_write(mach64_3d_ctx_t *ctx, uint32_t address,
         return 0;
 
     address &= 0x3ffu;
-    base = address & ~3u;
-    width = r3d_fifo_width(type);
-    r3d_trace_record(m, 'W', width, address, value, 0);
-    r3d_debug_access(ctx, 'W', width, address, value, 0);
-
     r3d_scaler_apply_destination_write(m, address, value, type);
-    r3d_trace_record(m, 'C', width, base, m->dst_height_width, 1);
-    r3d_debug_access(ctx, 'C', width, base, m->dst_height_width, 1);
-    r3d_trace_record(m, 'S', width, base, m->dst_height_width, 1);
-    r3d_debug_access(ctx, 'S', width, base, m->dst_height_width, 1);
-
-    debug = r3d_scaler_debug_begin(ctx, base);
-    r3d_draw_scaler_rectangle(ctx, debug);
+    r3d_draw_scaler_rectangle(ctx);
     return 1;
 }

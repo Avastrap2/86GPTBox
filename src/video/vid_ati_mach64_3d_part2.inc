@@ -214,19 +214,18 @@ static r3d_texel_sample_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d
 static int r3d_texture_visibility(uint32_t ctl,r3d_texel_sample_t sample){
     return mach64_3d_texel_visibility_inhibits(!!(ctl&R3D_NEAREST_TEX_VIS),sample.nearest_inhibits,sample.any_inhibits);
 }
-static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *samples,int *draw,int *key_inhibit){
+static rgba_t r3d_sample_texture_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *largest,uint32_t ctl,int64_t s,int64_t t,int64_t dsdx,int64_t dtdx,int64_t dsdy,int64_t dtdy,int *draw,int *key_inhibit){
     mach64_3d_mip_lod_t lod;mach64_3d_texture_filter_t filter;r3d_tex_state_t a,b;r3d_texel_sample_t sample;rgba_t empty={0,0,0,0};int blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
-    if(samples)*samples=1;
     if(draw)*draw=1;
     if(key_inhibit)*key_inhibit=0;
     lod=mach64_3d_mip_lod(dsdx,dtdx,dsdy,dtdy,largest->coord_shift,largest->max_lod);
     filter=mach64_3d_texture_filter(lod.minifying,(unsigned)blend,!!(ctl&R3D_BILINEAR_TEX_EN));
-    if(filter==MACH64_3D_TEXTURE_FILTER_NONE){if(samples)*samples=0;if(draw)*draw=0;return empty;}
-    if(!lod.minifying){a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;if(samples)*samples=a.bilinear?4:1;sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
-    if(ctl&R3D_MIP_MAP_DISABLE){/* With one map present, modes 0/1 use nearest sampling and the two documented 2x2 modes use that same map bilinearly. */a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;if(samples)*samples=a.bilinear?4:1;sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
-    if(blend==1&&lod.floor_lod<largest->max_lod){r3d_texel_sample_t ca,cb,combined;r3d_tex_state_select_lod(ctx,largest,lod.floor_lod,0,&a);r3d_tex_state_select_lod(ctx,largest,lod.floor_lod+1,0,&b);ca=r3d_sample_texel_cached(ctx,&a,s,t);cb=r3d_sample_texel_cached(ctx,&b,s,t);combined.color=r3d_lerp(ca.color,cb.color,lod.fraction);combined.any_inhibits=ca.any_inhibits||cb.any_inhibits;combined.nearest_inhibits=(lod.nearest_lod==lod.floor_lod)?ca.nearest_inhibits:cb.nearest_inhibits;if(samples)*samples=2;if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,combined);return combined.color;}
-    if(blend==2){r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,1,&a);if(samples)*samples=4;sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
-    if(blend==3){int next=lod.nearest_lod==lod.floor_lod?lod.floor_lod+1:lod.floor_lod;if(next>largest->max_lod)next=largest->max_lod;r3d_tex_state_select_lod(ctx,largest,next,1,&a);sample=r3d_sample_texel_cached(ctx,&a,s,t);sample.color.a=lod.nearest_lod==lod.floor_lod?lod.fraction:255-lod.fraction;if(samples)*samples=4;if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
+    if(filter==MACH64_3D_TEXTURE_FILTER_NONE){if(draw)*draw=0;return empty;}
+    if(!lod.minifying){a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
+    if(ctl&R3D_MIP_MAP_DISABLE){/* With one map present, modes 0/1 use nearest sampling and the two documented 2x2 modes use that same map bilinearly. */a=*largest;a.bilinear=filter==MACH64_3D_TEXTURE_FILTER_BILINEAR;sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
+    if(blend==1&&lod.floor_lod<largest->max_lod){r3d_texel_sample_t ca,cb,combined;r3d_tex_state_select_lod(ctx,largest,lod.floor_lod,0,&a);r3d_tex_state_select_lod(ctx,largest,lod.floor_lod+1,0,&b);ca=r3d_sample_texel_cached(ctx,&a,s,t);cb=r3d_sample_texel_cached(ctx,&b,s,t);combined.color=r3d_lerp(ca.color,cb.color,lod.fraction);combined.any_inhibits=ca.any_inhibits||cb.any_inhibits;combined.nearest_inhibits=(lod.nearest_lod==lod.floor_lod)?ca.nearest_inhibits:cb.nearest_inhibits;if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,combined);return combined.color;}
+    if(blend==2){r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,1,&a);sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
+    if(blend==3){int next=lod.nearest_lod==lod.floor_lod?lod.floor_lod+1:lod.floor_lod;if(next>largest->max_lod)next=largest->max_lod;r3d_tex_state_select_lod(ctx,largest,next,1,&a);sample=r3d_sample_texel_cached(ctx,&a,s,t);sample.color.a=lod.nearest_lod==lod.floor_lod?lod.fraction:255-lod.fraction;if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;}
     r3d_tex_state_select_lod(ctx,largest,lod.nearest_lod,0,&a);sample=r3d_sample_texel_cached(ctx,&a,s,t);if(key_inhibit)*key_inhibit=r3d_texture_visibility(ctl,sample);return sample.color;
 }
 static int r3d_apply_tex_alpha(uint32_t ctl,rgba_t *tex,int interp_alpha){
