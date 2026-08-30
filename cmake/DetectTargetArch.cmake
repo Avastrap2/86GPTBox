@@ -6,7 +6,22 @@ string(REGEX MATCH "ARCH ([a-zA-Z0-9_]+)" ARCH "${ARCH}")
 string(REPLACE "ARCH " "" ARCH "${ARCH}")
 
 if(NOT ARCH)
-    set(ARCH unknown)
+    # CMake 4.4 may omit compiler diagnostics from the old try_compile()
+    # signature's OUTPUT_VARIABLE. Fall back to the compiler target tuple.
+    execute_process(
+        COMMAND "${CMAKE_C_COMPILER}" -dumpmachine
+        OUTPUT_VARIABLE COMPILER_TARGET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+
+    if(COMPILER_TARGET MATCHES "^(x86_64|amd64)")
+        set(ARCH x86_64)
+    elseif(COMPILER_TARGET MATCHES "^(aarch64|arm64)")
+        set(ARCH arm64)
+    else()
+        set(ARCH unknown)
+    endif()
 endif()
 
 if (ARCH STREQUAL "x86_64")
