@@ -472,6 +472,33 @@ pc87306_close(void *priv)
     free(dev);
 }
 
+static void
+pc87306_seed_ibm_pc700_nvr(pc87306_t *dev)
+{
+    uint16_t checksum = 0;
+
+    if ((machines[machine].init != machine_at_ibm_pc700_init) || !dev->nvr->is_new)
+        return;
+
+    dev->nvr->regs[0x0e] &= ~0x60;
+    dev->nvr->regs[0x2d] = 0x80;
+    for (uint8_t i = 0x10; i <= 0x2d; i++)
+        checksum += dev->nvr->regs[i];
+    dev->nvr->regs[0x2e] = checksum >> 8;
+    dev->nvr->regs[0x2f] = checksum & 0xff;
+
+    checksum = 0;
+    for (uint8_t i = 0x35; i <= 0x3d; i++)
+        checksum += dev->nvr->regs[i];
+    dev->nvr->regs[0x3e] = checksum >> 8;
+    dev->nvr->regs[0x3f] = checksum & 0xff;
+
+    /* Empty IBM variable-length CMOS record and its CRC-16. */
+    dev->nvr->regs[0x40] = 0xe1;
+    dev->nvr->regs[0x41] = 0xf0;
+    dev->nvr->regs[0x42] = 0x00;
+}
+
 static void *
 pc87306_init(UNUSED(const device_t *info))
 {
@@ -488,6 +515,7 @@ pc87306_init(UNUSED(const device_t *info))
     lpt_set_cnfga_readout(dev->lpt, 0x10);
 
     dev->nvr = device_add_params(&nvr_at_device, (void *) (uintptr_t) NVR_AT_MB);
+    pc87306_seed_ibm_pc700_nvr(dev);
 
     switch (dev->kbc_type) {
         case PCX730X_AMI:

@@ -5030,7 +5030,7 @@ s3_trio64v_recalctimings(svga_t *svga)
 
     if (is_vga_mode) {
         svga->hoverride = 0;
-        if (enhanced_8bpp_modes)
+        if (enhanced_8bpp_modes || ((svga->hblankstart + 1) == svga->hdisp_time))
             svga->hoverride = 1;
     } else
         svga->hoverride = 1;
