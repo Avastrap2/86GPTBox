@@ -137,6 +137,8 @@ option(QT           "Use the Qt-based user interface"                           
 option(SDL2         "Use SDL2 instead of SDL3"                                   OFF)
 option(BUILD_TESTING "Build the unit test suite"                                  OFF)
 option(BUILD_BENCHMARKS "Build performance benchmarks"                            OFF)
+option(MACH64_ACCEL_TESTS "Build Mach64 accelerator regression tests"            OFF)
+option(RAGE2P_KEYED_BLT_DIAGNOSTICS "Enable Rage II+ keyed-BLT K-record probes"  OFF)
 
 if(BUILD_TESTING)
     enable_testing()
@@ -281,3 +283,12 @@ endif()
 set(CMAKE_TOP_LEVEL_PROCESSED TRUE)
 
 add_subdirectory(src)
+
+if(RAGE2P_KEYED_BLT_DIAGNOSTICS)
+    target_compile_definitions(vid PRIVATE RAGE2P_KEYED_BLT_DIAGNOSTICS)
+endif()
+
+if(MACH64_ACCEL_TESTS)
+    enable_testing()
+    add_subdirectory(tests/video)
+endif()
