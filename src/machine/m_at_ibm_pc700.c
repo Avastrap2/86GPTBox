@@ -116,12 +116,25 @@ ibm_pc700_flash_select(ibm_pc700_t *dev, uint8_t bank)
 static uint8_t
 ibm_pc700_cpu_straps(void)
 {
-    if (cpu_dmulti <= 1.5)
-        return 0x01;
-    if (cpu_dmulti <= 2.0)
-        return 0x02;
+    uint8_t ret;
 
-    return 0x00;
+    /* SW1/4 and SW1/3 select the bus clock; an open switch reads as one. */
+    if (cpu_busspeed <= 50000000)
+        ret = 0x00;
+    else if (cpu_busspeed <= 60000000)
+        ret = 0x02;
+    else
+        ret = 0x01;
+
+    /* SW1/2 and SW1/1 select the multiplier. */
+    if (cpu_dmulti <= 1.5)
+        ret |= 0x0c;
+    else if (cpu_dmulti <= 2.0)
+        ret |= 0x08;
+    else if (cpu_dmulti > 2.5)
+        ret |= 0x04;
+
+    return ret;
 }
 
 uint32_t
@@ -145,8 +158,8 @@ machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val)
         ibm_pc700_flash_select(dev, !!(dev->gpio[0] & 0x10));
     }
 
-    /* GPIO 78 bits 1:0 are CPU multiplier straps. */
-    const uint8_t gpio_78 = (dev->gpio[0] & 0xfc) | ibm_pc700_cpu_straps();
+    /* GPIO 78 bits 3:0 are SW1/2, SW1/1, SW1/4 and SW1/3. */
+    const uint8_t gpio_78 = (dev->gpio[0] & 0xf0) | ibm_pc700_cpu_straps();
 
     /* GPIO 79 bits 7, 1 and 0 are inputs; the remaining bits are outputs. */
     uint8_t gpio_79 = (dev->gpio[1] & 0x7c) | 0x81;
