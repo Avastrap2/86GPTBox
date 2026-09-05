@@ -32,6 +32,7 @@
 #include <86box/rom.h>
 #include <86box/sio.h>
 #include <86box/timer.h>
+#include <86box/nvr.h>
 #include <86box/video.h>
 
 #include "cpu.h"
@@ -315,6 +316,33 @@ ibm_pc700_board_write(uint16_t port, uint8_t val, void *priv)
 }
 
 static void
+ibm_pc700_seed_nvr(nvr_t *nvr)
+{
+    uint16_t checksum = 0;
+
+    if (!nvr->is_new)
+        return;
+
+    nvr->regs[0x0e] &= ~0x60;
+    nvr->regs[0x2d] = 0x80;
+    for (uint8_t i = 0x10; i <= 0x2d; i++)
+        checksum += nvr->regs[i];
+    nvr->regs[0x2e] = checksum >> 8;
+    nvr->regs[0x2f] = checksum & 0xff;
+
+    checksum = 0;
+    for (uint8_t i = 0x35; i <= 0x3d; i++)
+        checksum += nvr->regs[i];
+    nvr->regs[0x3e] = checksum >> 8;
+    nvr->regs[0x3f] = checksum & 0xff;
+
+    /* Empty IBM variable-length CMOS record and its CRC-16. */
+    nvr->regs[0x40] = 0xe1;
+    nvr->regs[0x41] = 0xf0;
+    nvr->regs[0x42] = 0x00;
+}
+
+static void
 ibm_pc700_seed_riser_nvr(ibm_pc700_t *dev)
 {
     if (!ps2_nvr_is_new(dev->riser_nvr))
@@ -464,6 +492,7 @@ machine_at_ibm_pc700_init(const machine_t *model)
     /* The photographed planar uses an SZ997 82371FB (PIIX A1, PCI revision 02h). */
     device_add(&piix_rev02_device);
     device_add_params(&pc87306_device, (void *) PCX730X_AMI);
+    ibm_pc700_seed_nvr(device_get_priv(&nvr_at_device));
 
     return ret;
 }
