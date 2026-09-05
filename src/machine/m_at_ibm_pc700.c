@@ -36,13 +36,12 @@
 #include <86box/video.h>
 
 #include "cpu.h"
-#include "x86.h"
 
 #define IBM_PC700_FLASH_BANK_SIZE 0x20000
 
 typedef struct ibm_pc700_t {
     nmc93cxx_eeprom_t *eeprom;
-    void              *riser_nvr;
+    void             *riser_nvr;
 
     uint8_t flash_bank;
     uint8_t gpio[2];
@@ -51,8 +50,6 @@ typedef struct ibm_pc700_t {
     uint8_t rapid_status_phase;
     uint8_t rapid_command;
     uint8_t rapid_command_phase;
-
-    pc_timer_t restart_timer;
 
     uint8_t board_7c;
     uint8_t board_7d;
@@ -108,12 +105,6 @@ ibm_pc700_flash_map(ibm_pc700_t *dev, uint8_t bank, bool force)
     pclog("IBM PC 700: Flash bank %u selected\n", bank);
 }
 
-static void
-ibm_pc700_flash_select(ibm_pc700_t *dev, uint8_t bank)
-{
-    ibm_pc700_flash_map(dev, bank, false);
-}
-
 static uint8_t
 ibm_pc700_cpu_straps(void)
 {
@@ -151,12 +142,12 @@ machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val)
         dev->gpio[1] = (val >> 8) & 0xff;
 
         nmc93cxx_eeprom_write(dev->eeprom,
-                              !!(dev->gpio[1] & 0x04),
-                              !!(dev->gpio[1] & 0x08),
-                              !!(dev->gpio[1] & 0x10));
+                             !!(dev->gpio[1] & 0x04),
+                             !!(dev->gpio[1] & 0x08),
+                             !!(dev->gpio[1] & 0x10));
 
         /* GPIO 78 bit 4 selects Flash A17; GPIO 79 bit 2 is EEPROM CS. */
-        ibm_pc700_flash_select(dev, !!(dev->gpio[0] & 0x10));
+        ibm_pc700_flash_map(dev, !!(dev->gpio[0] & 0x10), false);
     }
 
     /* GPIO 78 bits 3:0 are SW1/2, SW1/1, SW1/4 and SW1/3. */
@@ -214,31 +205,6 @@ ibm_pc700_rapid_write(uint16_t port, uint8_t val, void *priv)
     } else {
         dev->rapid_status_phase = 0;
         dev->rapid_command_phase = 0;
-    }
-}
-
-static void
-ibm_pc700_restart_reset(void *priv)
-{
-    ibm_pc700_t *dev = (ibm_pc700_t *) priv;
-
-    timer_disable(&dev->restart_timer);
-    hardresetx86();
-}
-
-static void
-ibm_pc700_post_write(UNUSED(uint16_t port), uint8_t val, void *priv)
-{
-    ibm_pc700_t *dev = (ibm_pc700_t *) priv;
-
-    if ((val == 0x80) && (CS == 0xf000) && (cpu_state.pc == 0x0305) && !(cr0 & 0x40000000)) {
-        /*
-         * The IBM reset stub expects the CPU reset state, including CR0.CD.
-         * Setup and Windows 95 can jump directly to the reset vector without
-         * asserting reset, so defer a platform reset until after this I/O.
-         */
-        timer_set_delay_u64(&dev->restart_timer, 1);
-        cpu_end_block_after_ins = 1;
     }
 }
 
@@ -370,7 +336,6 @@ ibm_pc700_reset(void *priv)
     dev->rapid_status_phase = 0;
     dev->rapid_command = 0x00;
     dev->rapid_command_phase = 0;
-    timer_disable(&dev->restart_timer);
     dev->board_7c = 0x0b; /* 256 KiB L2 cache, no tamper. */
     dev->board_7d = 0x00;
     dev->board_7e = 0x00;
@@ -417,7 +382,6 @@ ibm_pc700_init(UNUSED(const device_t *info))
     ibm_pc700_seed_riser_nvr(dev);
 
     ibm_pc700 = dev;
-    timer_add(&dev->restart_timer, ibm_pc700_restart_reset, dev, 0);
 
     mem_mapping_set_addr(&bios_high_mapping, 0xfffe0000, IBM_PC700_FLASH_BANK_SIZE);
     mem_mapping_set_handler(&bios_mapping,
@@ -435,8 +399,6 @@ ibm_pc700_init(UNUSED(const device_t *info))
                   ibm_pc700_board_read, NULL, NULL, ibm_pc700_board_write, NULL, NULL, dev);
     io_sethandler(0x007c, 4,
                   ibm_pc700_board_read, NULL, NULL, ibm_pc700_board_write, NULL, NULL, dev);
-    io_sethandler(0x0080, 1,
-                  NULL, NULL, NULL, ibm_pc700_post_write, NULL, NULL, dev);
     io_sethandler(0x0094, 1,
                   ibm_pc700_board_read, NULL, NULL, ibm_pc700_board_write, NULL, NULL, dev);
     io_sethandler(0x0102, 4,
