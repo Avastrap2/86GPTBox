@@ -20,18 +20,6 @@ static mach64_t *test_machine;
 static int       worker_waits;
 
 void
-mach64_3d_rect_debug_begin(mach64_t *mach64)
-{
-    (void) mach64;
-}
-
-void
-mach64_3d_rect_debug_end(mach64_t *mach64)
-{
-    (void) mach64;
-}
-
-void
 thread_set_event(event_t *event)
 {
     (void) event;

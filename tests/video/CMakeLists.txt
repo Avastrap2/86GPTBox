@@ -54,11 +54,29 @@ add_executable(mach64_texture_key_test
 
 add_test(NAME mach64_texture_key COMMAND mach64_texture_key_test)
 
+add_executable(mach64_3d_data_path_test
+    mach64_3d_data_path_test.c
+)
+
+add_test(NAME mach64_3d_data_path COMMAND mach64_3d_data_path_test)
+
+add_executable(mach64_3d_trapezoid_test
+    mach64_3d_trapezoid_test.c
+)
+
+add_test(NAME mach64_3d_trapezoid COMMAND mach64_3d_trapezoid_test)
+
 add_executable(mach64_mipmap_lod_test
     mach64_mipmap_lod_test.c
 )
 
 add_test(NAME mach64_mipmap_lod COMMAND mach64_mipmap_lod_test)
+
+add_executable(mach64_3d_reg_fields_test
+    mach64_3d_reg_fields_test.c
+)
+
+add_test(NAME mach64_3d_reg_fields COMMAND mach64_3d_reg_fields_test)
 
 add_executable(mach64_yuv_math_test
     mach64_yuv_math_test.c

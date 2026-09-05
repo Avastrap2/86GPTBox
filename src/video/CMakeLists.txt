@@ -169,10 +169,10 @@ set_source_files_properties(vid_ati_mach64.c PROPERTIES
 # changes only the low-byte core type to MACH64_GTB.  This keeps GTB out of the
 # VT/VT2 CONFIG_CNTL aperture-encoding special case without enabling VT3-only
 # overlay/DDC behavior.  PCI writes still pass through the GTB legacy dispatcher
-# for IOCONFIG/BAR remapping.  Ordinary MMIO reads are routed through trace-only
-# wrappers so a hidden FIFO/GUI status polling loop is visible in rage2p_trace.
+# for IOCONFIG/BAR remapping.  Ordinary MMIO reads are routed through GTB
+# dispatch wrappers that then call the mature legacy register readers.
 set_source_files_properties(vid_ati_mach64_rage2p.c PROPERTIES
-    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device;mach64_ext_readb=mach64_ext_readb_gtb_trace;mach64_ext_readw=mach64_ext_readw_gtb_trace;mach64_ext_readl=mach64_ext_readl_gtb_trace")
+    COMPILE_DEFINITIONS "mach64_pci_write_legacy=mach64_pci_write_gtb_legacy_dispatch;mach64vt2_device=mach64gtb_core_device;mach64_ext_readb=mach64_ext_readb_gtb_dispatch;mach64_ext_readw=mach64_ext_readw_gtb_dispatch;mach64_ext_readl=mach64_ext_readl_gtb_dispatch")
 
 if(MSVC)
     set_property(SOURCE vid_ati_mach64.c vid_ati_mach64_rage2p.c APPEND PROPERTY

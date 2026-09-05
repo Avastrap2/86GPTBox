@@ -10,6 +10,36 @@ typedef struct mach64_3d_mip_lod_t {
     int fraction;
 } mach64_3d_mip_lod_t;
 
+typedef enum mach64_3d_texture_filter_t {
+    MACH64_3D_TEXTURE_FILTER_NONE = 0,
+    MACH64_3D_TEXTURE_FILTER_NEAREST,
+    MACH64_3D_TEXTURE_FILTER_BILINEAR
+} mach64_3d_texture_filter_t;
+
+/* ATI drivers duplicate the byte pointer of the smallest populated map into
+ * lower TEX_n_OFFSET registers.  Follow the distinct offset chain downward
+ * from the largest map and stop at the first duplicate.  Selecting a nominally
+ * smaller level with the duplicated pointer would reinterpret the populated
+ * map with a smaller row stride and sample unrelated texels. */
+static inline int
+mach64_3d_mip_lowest_populated_level(const uint32_t offsets[11],
+                                     int largest_level)
+{
+    int level;
+
+    if (!offsets)
+        return 0;
+    if (largest_level < 0)
+        largest_level = 0;
+    if (largest_level > 10)
+        largest_level = 10;
+
+    level = largest_level;
+    while (level > 0 && offsets[level - 1] != offsets[level])
+        level--;
+    return level;
+}
+
 static inline uint64_t
 mach64_3d_mip_abs64(int64_t value)
 {
@@ -17,10 +47,37 @@ mach64_3d_mip_abs64(int64_t value)
 }
 
 /*
+ * GT BILINEAR_TEX_EN controls magnification only; TEX_BLEND_FCN controls
+ * filtering during minification.  ATI also documents the multipass case where
+ * minification mode 2 or 3 combined with BILINEAR_TEX_EN=0 suppresses pixels
+ * while magnifying instead of silently falling back to pick-nearest.
+ */
+static inline mach64_3d_texture_filter_t
+mach64_3d_texture_filter(int minifying, unsigned tex_blend_fcn,
+                         int bilinear_tex_en)
+{
+    tex_blend_fcn &= 3u;
+
+    if (!minifying) {
+        if (!bilinear_tex_en &&
+            (tex_blend_fcn == 2u || tex_blend_fcn == 3u))
+            return MACH64_3D_TEXTURE_FILTER_NONE;
+        return bilinear_tex_en ? MACH64_3D_TEXTURE_FILTER_BILINEAR :
+                                 MACH64_3D_TEXTURE_FILTER_NEAREST;
+    }
+
+    return (tex_blend_fcn == 2u || tex_blend_fcn == 3u) ?
+           MACH64_3D_TEXTURE_FILTER_BILINEAR :
+           MACH64_3D_TEXTURE_FILTER_NEAREST;
+}
+
+/*
  * GT/GTB selects a mip map from the S/T address derivatives.  coord_shift is
  * the raw normalized-coordinate shift for one texel in the largest map.
  * fraction is the linear position between adjacent power-of-two footprints;
  * nearest_lod uses the log-space sqrt(2) boundary (106/256 of that interval).
+ * max_lod is the number of distinct map transitions, not necessarily the log2
+ * size of the largest map when the driver duplicates its smallest map offset.
  */
 static inline mach64_3d_mip_lod_t
 mach64_3d_mip_lod(int64_t dsdx, int64_t dtdx,
