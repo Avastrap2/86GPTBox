@@ -41,7 +41,7 @@
 
 typedef struct ibm_pc700_t {
     nmc93cxx_eeprom_t *eeprom;
-    void             *riser_nvr;
+    void            *riser_nvr;
 
     uint8_t flash_bank;
     uint8_t gpio[2];
@@ -330,16 +330,16 @@ ibm_pc700_reset(void *priv)
 {
     ibm_pc700_t *dev = (ibm_pc700_t *) priv;
 
-    dev->gpio[0] = 0xff;
-    dev->gpio[1] = 0xff;
-    dev->rapid_data = 0x00;
-    dev->rapid_status_phase = 0;
-    dev->rapid_command = 0x00;
+    dev->gpio[0]             = 0xff;
+    dev->gpio[1]             = 0xff;
+    dev->rapid_data          = 0x00;
+    dev->rapid_status_phase  = 0;
+    dev->rapid_command       = 0x00;
     dev->rapid_command_phase = 0;
-    dev->board_7c = 0x0b; /* 256 KiB L2 cache, no tamper. */
-    dev->board_7d = 0x00;
-    dev->board_7e = 0x00;
-    dev->board_7f = 0x00;
+    dev->board_7c            = 0x0b; /* 256 KiB L2 cache, no tamper. */
+    dev->board_7d            = 0x00;
+    dev->board_7e            = 0x00;
+    dev->board_7f            = 0x00;
 
     dev->pos_94 = 0xff;
     memset(dev->pos, 0x00, sizeof(dev->pos));
@@ -364,7 +364,7 @@ ibm_pc700_close(void *priv)
 static void *
 ibm_pc700_init(UNUSED(const device_t *info))
 {
-    ibm_pc700_t *dev = (ibm_pc700_t *) calloc(1, sizeof(ibm_pc700_t));
+    ibm_pc700_t             *dev = (ibm_pc700_t *) calloc(1, sizeof(ibm_pc700_t));
     nmc93cxx_eeprom_params_t params;
 
     memset(dev->eeprom_default, 0xff, sizeof(dev->eeprom_default));
@@ -373,11 +373,11 @@ ibm_pc700_init(UNUSED(const device_t *info))
     /* BIOS-generated default security token and CRC for words 08h-28h. */
     dev->eeprom_default[0x07] = 0x3cd1;
     dev->eeprom_default[0x24] = 0x870c;
-    params.type = NMC_93C46_x16_64;
-    params.filename = "ibm_pc700_93c46.nvr";
+    params.type            = NMC_93C46_x16_64;
+    params.filename        = "ibm_pc700_93c46.nvr";
     params.default_content = dev->eeprom_default;
 
-    dev->eeprom = device_add_params(&nmc93cxx_device, &params);
+    dev->eeprom    = device_add_params(&nmc93cxx_device, &params);
     dev->riser_nvr = device_add(&ps2_nvr_device);
     ibm_pc700_seed_riser_nvr(dev);
 
