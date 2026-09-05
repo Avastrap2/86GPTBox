@@ -404,8 +404,7 @@ keyboard_all_up(void)
         }
     }
 
-    if (kbd_in_reset)
-        shift = 0;
+    shift = 0;
 }
 
 void
