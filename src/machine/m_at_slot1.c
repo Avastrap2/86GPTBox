@@ -1031,6 +1031,96 @@ machine_at_in440exd_init(const machine_t *model)
     return ret;
 }
 
+static const device_config_t optiplexe1_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "optiplexe1",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Phoenix ROM BIOS PLUS 1.10 - Revision A03",
+                .internal_name = "optiplexe1_a03",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/optiplexe1/A03.ROM", "" }
+            },
+            {
+                .name          = "Phoenix ROM BIOS PLUS 1.10 - Revision A04",
+                .internal_name = "optiplexe1",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/optiplexe1/DELL.ROM", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t optiplexe1_device = {
+    .name          = "Dell OptiPlex E1",
+    .internal_name = "optiplexe1",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = optiplexe1_config
+};
+
+int
+machine_at_optiplexe1_init(const machine_t *model)
+{
+    int         ret = 0;
+    const char *fn;
+
+    /* No ROMs available */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000c0000, 262144, 0);
+    device_context_restore();
+
+    machine_at_common_init(model);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 1, 2, 3, 4);
+    pci_register_slot(0x01, PCI_CARD_AGPBRIDGE,   1, 2, 3, 4);
+    pci_register_slot(0x11, PCI_CARD_NETWORK,     4, 0, 0, 0); /* not yet emulated */
+    pci_register_slot(0x0E, PCI_CARD_NORMAL,      3, 4, 2, 1);
+    pci_register_slot(0x0D, PCI_CARD_NORMAL,      2, 1, 3, 4);
+    pci_register_slot(0x0F, PCI_CARD_BRIDGE,      0, 0, 0, 0);
+
+    if (sound_card_current[0] == SOUND_INTERNAL)
+        device_add(machine_get_snd_device(machine));
+
+    device_add(&i440ex_device);
+    device_add(&piix4e_device);
+    machine_at_optiplex_21152_init();
+    device_add_params(&pc87309_device, (void *) (PCX730X_PHOENIX_42 | PC87309_PC87309));
+    device_add(&intel_flash_bxt_device);
+    spd_register(SPD_TYPE_SDRAM, 0x7, 256);
+
+    return ret;
+}
+
 int
 machine_at_brio83xx_init(const machine_t *model)
 {
@@ -1681,6 +1771,96 @@ machine_at_ax6bc_init(const machine_t *model)
     device_add(&sst_flash_29ee020_device);
     spd_register(SPD_TYPE_SDRAM, 0x7, 256);
     device_add(&gl518sm_2d_device); /* fans: System, CPU; temperature: CPU; no reporting in BIOS */
+
+    return ret;
+}
+
+static const device_config_t optiplexgx1_config[] = {
+    // clang-format off
+    {
+        .name           = "bios",
+        .description    = "BIOS Version",
+        .type           = CONFIG_BIOS,
+        .default_string = "optiplexgx1",
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = {
+            {
+                .name          = "Phoenix ROM BIOS PLUS 1.10 - Revision A09",
+                .internal_name = "optiplexgx1_a09",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/optiplexgx1/A09.ROM", "" }
+            },
+            {
+                .name          = "Phoenix ROM BIOS PLUS 1.10 - Revision A10",
+                .internal_name = "optiplexgx1",
+                .bios_type     = BIOS_NORMAL,
+                .files_no      = 1,
+                .local         = 0,
+                .size          = 262144,
+                .files         = { "roms/machines/optiplexgx1/DELL.ROM", "" }
+            },
+            { .files_no = 0 }
+        }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+    // clang-format on
+};
+
+const device_t optiplexgx1_device = {
+    .name          = "Dell OptiPlex GX1",
+    .internal_name = "optiplexgx1",
+    .flags         = 0,
+    .local         = 0,
+    .init          = NULL,
+    .close         = NULL,
+    .reset         = NULL,
+    .available     = NULL,
+    .speed_changed = NULL,
+    .force_redraw  = NULL,
+    .config        = optiplexgx1_config
+};
+
+int
+machine_at_optiplexgx1_init(const machine_t *model)
+{
+    int         ret = 0;
+    const char *fn;
+
+    /* No ROMs available */
+    if (!device_available(model->device))
+        return ret;
+
+    device_context(model->device);
+    fn  = device_get_bios_file(machine_get_device(machine), device_get_config_bios("bios"), 0);
+    ret = bios_load_linear(fn, 0x000c0000, 262144, 0);
+    device_context_restore();
+
+    machine_at_common_init(model);
+
+    pci_init(PCI_CONFIG_TYPE_1);
+    pci_register_slot(0x07, PCI_CARD_SOUTHBRIDGE, 0, 0, 0, 4);
+    pci_register_slot(0x00, PCI_CARD_NORTHBRIDGE, 1, 2, 3, 4);
+    pci_register_slot(0x01, PCI_CARD_AGPBRIDGE,   1, 2, 3, 4);
+    pci_register_slot(0x11, PCI_CARD_NETWORK,     4, 0, 0, 0); /* not yet emulated */
+    pci_register_slot(0x0E, PCI_CARD_NORMAL,      3, 4, 2, 1);
+    pci_register_slot(0x0D, PCI_CARD_NORMAL,      2, 1, 3, 4);
+    pci_register_slot(0x0F, PCI_CARD_BRIDGE,      0, 0, 0, 0);
+
+    if (sound_card_current[0] == SOUND_INTERNAL)
+        device_add(machine_get_snd_device(machine));
+
+    device_add(&i440bx_device);
+    device_add(&piix4e_device);
+    machine_at_optiplex_21152_init();
+    device_add_params(&pc87309_device, (void *) (PCX730X_PHOENIX_42 | PC87309_PC87309));
+    device_add(&intel_flash_bxt_device);
+    spd_register(SPD_TYPE_SDRAM, 0x7, 256);
 
     return ret;
 }
