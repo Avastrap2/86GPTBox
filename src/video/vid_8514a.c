@@ -48,7 +48,7 @@
 #    undef CLAMP
 #endif
 
-#define BIOS_MACH8_ROM_PATH  "roms/video/mach8/11301113140_4k.BIN"
+#define BIOS_MACH8_ROM_PATH  "roms/video/mach8/11301113140_ROM.BIN"
 
 /* Subsystem Status Register (42E8h) MONITORID field (bits 4-6) */
 #define MONITORID_8507 1 /* 001: IBM 8507 (1024x768) Monochrome */
@@ -2190,14 +2190,14 @@ ibm8514_accel_start(int count, int cpu_input, uint32_t mix_dat, uint32_t cpu_dat
 
             if (dev->accel.cmd & 0x08) { /*Vectored Rectangle*/
                 if (cpu_input) {
-                    if (ibm8514_cpu_src(svga)) {
-                        while (count-- && (dev->accel.sy >= 0)) {
-                            if ((dev->accel.cx >= clip_l) &&
-                                (dev->accel.cx <= clip_r) &&
-                                (dev->accel.cy >= clip_t) &&
-                                (dev->accel.cy <= clip_b)) {
-                                dev->subsys_stat |= INT_GE_BSY;
-                                ibm8514_log(dev->log,"RectRadial: MIXDATA=%08x, mask=%04x, frgdcol=%02x, bkgdcol=%02x, cpudat=%08x.\n", mix_dat, mix_mask, frgd_color, bkgd_color, cpu_dat);
+                    while (count-- && (dev->accel.sy >= 0)) {
+                        if ((dev->accel.cx >= clip_l) &&
+                            (dev->accel.cx <= clip_r) &&
+                            (dev->accel.cy >= clip_t) &&
+                            (dev->accel.cy <= clip_b)) {
+                            dev->subsys_stat |= INT_GE_BSY;
+                            ibm8514_log(dev->log,"RectRadial: MIXDATA=%08x, mask=%04x, frgdcol=%02x, bkgdcol=%02x, cpudat=%08x.\n", mix_dat, mix_mask, frgd_color, bkgd_color, cpu_dat);
+                            if (ibm8514_cpu_src(svga)) {
                                 switch ((mix_dat & ((dev->accel.cmd & 0x02) ? 0x01 : mix_mask)) ? frgd_mix : bkgd_mix) {
                                     case 0:
                                         src_dat = bkgd_color;
@@ -2228,104 +2228,121 @@ ibm8514_accel_start(int count, int cpu_input, uint32_t mix_dat, uint32_t cpu_dat
                                     old_dest_dat = dest_dat;
                                     MIX(mix_dat & ((dev->accel.cmd & 0x02) ? 0x01 : mix_mask), dest_dat, src_dat);
                                     dest_dat = (dest_dat & wrt_mask) | (old_dest_dat & ~wrt_mask);
-                                    if (dev->accel.x_count >= and3) {
+                                    if (dev->accel.cmd & 0x02) {
+                                        if (dev->accel.cmd & 0x1000) {
+                                            if ((dev->accel.cmd & 0x04) && dev->accel.sx) {
+                                                WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
+                                            } else if (!(dev->accel.cmd & 0x04)) {
+                                                WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
+                                            }
+                                        } else {
+                                            if (dev->accel.x_count >= and3) {
+                                                if ((dev->accel.cmd & 0x04) && dev->accel.sx) {
+                                                    WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
+                                                } else if (!(dev->accel.cmd & 0x04)) {
+                                                    WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
+                                                }
+                                            }
+                                        }
+                                    } else {
                                         if ((dev->accel.cmd & 0x04) && dev->accel.sx) {
                                             WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
                                         } else if (!(dev->accel.cmd & 0x04)) {
                                             WRITE(dev->accel.dest + dev->accel.cx, dest_dat);
-                                            ibm8514_log(dev->log,"RectFill Radial CX=%d, CY=%d, dstdat=%02x, olddst=%02x, srcdat=%02x.\n", dev->accel.cx, dev->accel.cy, dest_dat, old_dest_dat, src_dat);
                                         }
                                     }
                                 }
                             }
+                        }
+
+                        switch (dev->accel.cmd & 0xe0) {
+                            case 0x00:
+                                dev->accel.cx++;
+                                break;
+                            case 0x20:
+                                dev->accel.cx++;
+                                break;
+                            case 0x60:
+                                dev->accel.cx--;
+                                break;
+                            case 0x80:
+                                dev->accel.cx--;
+                                break;
+                            case 0xa0:
+                                dev->accel.cx--;
+                                break;
+                            case 0xe0:
+                                dev->accel.cx++;
+                                break;
+
+                            default:
+                                break;
+                        }
+
+                        if (dev->bpp)
+                            cpu_dat >>= 16;
+                        else
+                            cpu_dat >>= 8;
+
+                        if (dev->accel.cmd & 0x02)
+                            mix_dat >>= 1;
+                        else {
+                            mix_dat <<= 1;
+                            mix_dat |= 1;
+                        }
+                        dev->accel.sx--;
+                        if (ibm8514_cpu_src(svga)) {
+                            if ((dev->accel.cmd & 0x02) && !(dev->accel.cmd & 0x1000))
+                                dev->accel.x_count++;
+                        }
+                        if (dev->accel.sx < 0) {
+                            dev->accel.sx = dev->accel.maj_axis_pcnt & 0x7ff;
+                            dev->accel.x_count = 0;
+                            if (dev->accel.output2)
+                                dev->accel.sx += and3;
+
+                            if (dev->accel.cmd & 0x20)
+                                dev->accel.cx -= (dev->accel.sx + 1);
+                            else
+                                dev->accel.cx += (dev->accel.sx + 1);
 
                             switch (dev->accel.cmd & 0xe0) {
-                                case 0x00:
-                                    dev->accel.cx++;
-                                    break;
                                 case 0x20:
-                                    dev->accel.cx++;
+                                    dev->accel.cy--;
+                                    break;
+                                case 0x40:
+                                    dev->accel.cy--;
                                     break;
                                 case 0x60:
-                                    dev->accel.cx--;
-                                    break;
-                                case 0x80:
-                                    dev->accel.cx--;
+                                    dev->accel.cy--;
                                     break;
                                 case 0xa0:
-                                    dev->accel.cx--;
+                                    dev->accel.cy++;
+                                    break;
+                                case 0xc0:
+                                    dev->accel.cy++;
                                     break;
                                 case 0xe0:
-                                    dev->accel.cx++;
+                                    dev->accel.cy++;
                                     break;
 
                                 default:
                                     break;
                             }
 
-                            if (dev->bpp)
-                                cpu_dat >>= 16;
-                            else
-                                cpu_dat >>= 8;
+                            dev->accel.dest = dev->accel.ge_offset + (dev->accel.cy * dev->pitch);
 
-                            if (dev->accel.cmd & 0x02)
-                                mix_dat >>= 1;
-                            else {
-                                mix_dat <<= 1;
-                                mix_dat |= 1;
+                            dev->accel.sy--;
+
+                            if (dev->accel.sy < 0) {
+                                dev->force_busy = 0;
+                                dev->force_busy2 = 0;
+                                dev->fifo_idx = 0;
+                                dev->accel.cmd_back = 1;
                             }
-                            dev->accel.sx--;
-                            dev->accel.x_count++;
-                            if (dev->accel.sx < 0) {
-                                dev->accel.sx = dev->accel.maj_axis_pcnt & 0x7ff;
-                                dev->accel.x_count = 0;
-                                if (dev->accel.output2)
-                                    dev->accel.sx += and3;
-
-                                if (dev->accel.cmd & 0x20)
-                                    dev->accel.cx -= (dev->accel.sx + 1);
-                                else
-                                    dev->accel.cx += (dev->accel.sx + 1);
-
-                                switch (dev->accel.cmd & 0xe0) {
-                                    case 0x20:
-                                        dev->accel.cy--;
-                                        break;
-                                    case 0x40:
-                                        dev->accel.cy--;
-                                        break;
-                                    case 0x60:
-                                        dev->accel.cy--;
-                                        break;
-                                    case 0xa0:
-                                        dev->accel.cy++;
-                                        break;
-                                    case 0xc0:
-                                        dev->accel.cy++;
-                                        break;
-                                    case 0xe0:
-                                        dev->accel.cy++;
-                                        break;
-
-                                    default:
-                                        break;
-                                }
-
-                                dev->accel.dest = dev->accel.ge_offset + (dev->accel.cy * dev->pitch);
-
-                                dev->accel.sy--;
-
-                                if (dev->accel.sy < 0) {
-                                    dev->force_busy = 0;
-                                    dev->force_busy2 = 0;
-                                    dev->fifo_idx = 0;
-                                    dev->accel.cmd_back = 1;
-                                }
-                                return;
-                            }
+                            return;
                         }
-                    } else
-                        ibm8514_log(dev->log,"Vectored Rectangle with destination reads (TODO).\n");
+                    }
                 } else
                     ibm8514_log(dev->log,"Vectored Rectangle with normal processing (TODO).\n");
             } else { /*Normal Rectangle*/
@@ -4574,9 +4591,13 @@ ibm8514_mca_reset(void *priv)
 
     ibm8514_log(dev->log,"MCA reset.\n");
     dev->on = 0;
-    if (dev->extensions == ATI)
+    if (dev->extensions == ATI) {
+        /* ROM_PAGE_SEL is cleared by a reset, so the window has to go back to
+           page 0 with it. */
+        dev->rom_page = 0;
+        ati8514_bios_rom_recalc(dev);
         ati8514_mca_write(0x102, 0, svga);
-    else
+    } else
         ibm8514_mca_write(0x102, 0, svga);
 
     svga_set_poll(svga);
@@ -4596,7 +4617,6 @@ ibm8514_init(const device_t *info)
 {
     FILE *fp = NULL;
     uint16_t bios_rom_eeprom = 0x0000;
-    uint32_t bios_addr;
 
     if (svga_get_pri() == NULL)
         return NULL;
@@ -4634,23 +4654,29 @@ ibm8514_init(const device_t *info)
             if (rom_present(BIOS_MACH8_ROM_PATH)) {
                 mach_t * mach = (mach_t *) calloc(1, sizeof(mach_t));
                 svga->ext8514 = mach;
-                bios_addr = dev->bios_addr & 0x0800;
-
-                dev->bios_rom.rom = (uint8_t *)calloc(1, 0x2000);
+                dev->rom_image = (uint8_t *) calloc(1, 0x2000);
 
                 fp = rom_fopen(BIOS_MACH8_ROM_PATH, "rb");
 
-                if (fseek(fp, 0x0800, SEEK_SET) == -1)
-                    fatal("ibm8514_init(): Error seeking to the beginning of the file\n");
-                if (fread(dev->bios_rom.rom + bios_addr, 1, 0x2000, fp) > 0x2000)
+                if (fread(dev->rom_image, 1, 0x2000, fp) > 0x2000)
                     fatal("ibm8514_init(): Error reading data\n");
 
                 (void) fclose(fp);
 
+                /* The BIOS window is 4 KB: the fixed POST page, then one 2 KB
+                   page selected by ROM_PAGE_SEL (46E8h). Memory mappings are
+                   4 KB granular and both the exec pointer and the read
+                   handlers are indexed from the 4 KB page the window starts
+                   in, so the window is assembled in a two page buffer at the
+                   offset the (2 KB aligned) base address requires. Everything
+                   outside the window reads as 0xff. */
+                dev->bios_rom.rom = (uint8_t *) malloc(0x2000);
+                memset(dev->bios_rom.rom, 0xff, 0x2000);
                 dev->bios_rom.sz = 0x2000;
                 dev->bios_rom.mask = 0x1fff;
+                ati8514_bios_rom_recalc(dev);
 
-                mem_mapping_add(&dev->bios_rom.mapping, dev->bios_addr, dev->bios_rom.sz,
+                mem_mapping_add(&dev->bios_rom.mapping, dev->bios_addr, (dev->bios_addr & 0x0800) ? 0x1800 : 0x1000,
                                 ati8514_bios_rom_readb, ati8514_bios_rom_readw, ati8514_bios_rom_readl,
                                 NULL, NULL, NULL,
                                 dev->bios_rom.rom, MEM_MAPPING_EXTERNAL | MEM_MAPPING_ROM_WS, dev);
@@ -4717,6 +4743,8 @@ ibm8514_close(void *priv)
 
         free(dev->vram);
         free(dev->changedvram);
+        free(dev->rom_image);
+        free(dev->bios_rom.rom);
 
         free(dev);
     }

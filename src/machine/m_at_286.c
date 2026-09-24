@@ -59,7 +59,7 @@ static const device_config_t ibmat_config[] = {
         .selection      = { { 0 } },
         .bios           = {
             {
-                .name          = "62X082x (11/15/85)",
+                .name          = "IBM BIOS - Revision 62X082x (11/15/85)",
                 .internal_name = "ibm5170_111585",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 2,
@@ -68,7 +68,7 @@ static const device_config_t ibmat_config[] = {
                 .files         = { "roms/machines/ibmat/BIOS_5170_15NOV85_U27.BIN", "roms/machines/ibmat/BIOS_5170_15NOV85_U47.BIN", "" }
             },
             {
-                .name          = "61X9266 (11/15/85) (Alt)",
+                .name          = "IBM BIOS - Revision 61X9266 (11/15/85, alternate)",
                 .internal_name = "ibm5170_111585_alt",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 2,
@@ -77,7 +77,7 @@ static const device_config_t ibmat_config[] = {
                 .files         = { "roms/machines/ibmat/BIOS_5170_15NOV85_U27_61X9266.BIN", "roms/machines/ibmat/BIOS_5170_15NOV85_U47_61X9265.BIN", "" }
             },
             {
-                .name          = "648009x (06/10/85)",
+                .name          = "IBM BIOS - Revision 648009x (06/10/85)",
                 .internal_name = "ibm5170_061085",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 2,
@@ -86,7 +86,7 @@ static const device_config_t ibmat_config[] = {
                 .files         = { "roms/machines/ibmat/BIOS_5170_10JUN85_U27.BIN", "roms/machines/ibmat/BIOS_5170_10JUN85_U47.BIN", "" }
             },
             {
-                .name          = "618102x (01/10/84)",
+                .name          = "IBM BIOS - Revision 618102x (01/10/84)",
                 .internal_name = "ibm5170_011084",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 2,
@@ -368,7 +368,7 @@ static const device_config_t pc900_config[] = {
         .spinner        = { 0 },
         .bios           = {
             {
-                .name           = "BIOS V2.07A",
+                .name           = "AwardBIOS - Revision V2.07A (Commodore)",
                 .internal_name  = "pc900",
                 .bios_type      = BIOS_NORMAL,
                 .files_no       = 1,
@@ -377,7 +377,7 @@ static const device_config_t pc900_config[] = {
                 .files          = { "roms/machines/pc900/mpf_pc900_v207a.bin", "" }
             },
             {
-                .name           = "BIOS V2.07A.XC",
+                .name           = "AwardBIOS - Revision V2.07A.XC (Commodore)",
                 .internal_name  = "pc900_v207a_xc",
                 .bios_type      = BIOS_NORMAL,
                 .files_no       = 1,
@@ -386,7 +386,7 @@ static const device_config_t pc900_config[] = {
                 .files          = { "roms/machines/pc900/cbm_pc40_v207a_xc.bin", "" }
             },
             {
-                .name           = "BIOS V2.07B",
+                .name           = "AwardBIOS - Revision V2.07B",
                 .internal_name  = "pc900_v207b",
                 .bios_type      = BIOS_NORMAL,
                 .files_no       = 1,
@@ -395,7 +395,7 @@ static const device_config_t pc900_config[] = {
                 .files          = { "roms/machines/pc900/mpf_pc900_v207b.bin", "" }
             },
             {
-                .name           = "BIOS V3.01B",
+                .name           = "AwardBIOS - Revision V3.01B",
                 .internal_name  = "pc900_v301b",
                 .bios_type      = BIOS_NORMAL,
                 .files_no       = 1,

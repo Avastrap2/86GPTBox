@@ -71,6 +71,7 @@ typedef enum video_font_format_e
     FONT_FORMAT_PC1512_T1000 = 8,
     FONT_FORMAT_IM1024 = 9,
     FONT_FORMAT_PRAVETZ = 10,
+    FONT_FORMAT_IM1024_8X12 = 11,
 } video_font_format;
 
 #define VIDEO_FLAG_TYPE_CGA     0
@@ -136,6 +137,8 @@ typedef struct monitor_t {
     int                      mon_efscrnsz_y;
     int                      mon_unscaled_size_x;
     int                      mon_unscaled_size_y;
+    int                      mon_device_aspect_x;
+    int                      mon_device_aspect_y;
     double                   mon_res_x;
     double                   mon_res_y;
     int                      mon_bpp;
@@ -232,7 +235,8 @@ extern uint8_t      fontdat[2048][8];      /* IBM CGA font */
 extern uint8_t      fontdatm[2048][16];    /* IBM MDA font */
 extern uint8_t      fontdatw[512][32];     /* Wyse700 font */
 extern uint8_t      fontdat8x12[256][16];  /* MDSI Genius font */
-extern uint8_t      fontdat12x18[256][36]; /* IM1024 font */
+extern uint8_t      fontdat12x18[256][36]; /* IM1024 12x18 font */
+extern uint8_t      fontdat8x12im1024[256][12]; /* IM1024 8x12 font */
 extern dbcs_font_t *fontdatksc5601;        /* Korean KSC-5601 font */
 extern dbcs_font_t *fontdatksc5601_user;   /* Korean KSC-5601 user defined font */
 extern uint32_t    *video_6to8;
@@ -242,6 +246,7 @@ extern uint32_t    *video_15to32;
 extern uint32_t    *video_16to32;
 extern int          enable_overscan;
 extern int          force_43;
+extern int          force_device_aspect;
 extern int          vid_resize;
 extern int          herc_blend;
 extern int          vid_cga_contrast;
@@ -348,10 +353,10 @@ extern void     video_clamp_vram_2(uint64_t bios_flags, int *vram);
 #endif
 
 #ifdef EMU_DEVICE_H
-/* IBM XGA */
+/* IBM XGA and XGA-2 */
 extern void xga_device_add(void);
 
-/* IBM 8514/A and clones*/
+/* IBM 8514/A and clones */
 extern void ibm8514_device_add(void);
 extern const device_t mach8_vga_isa_device;
 extern const device_t mach32_isa_device;
@@ -360,8 +365,11 @@ extern const device_t mach32_mca_device;
 extern const device_t mach32_pci_device;
 extern const device_t mach32_onboard_pci_device;
 
-/* IBM Display Adapter (PS/55) */
+/* IBM PS/55 Display Adapter */
 extern void da2_device_add(void);
+
+/* IBM PS/2 Plasma Display Adapter */
+extern const device_t ibm_plasma_vga_device;
 
 /* ATi Mach64 */
 extern const device_t mach64gx_isa_device;

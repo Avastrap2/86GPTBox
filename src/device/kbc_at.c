@@ -37,6 +37,7 @@
 #include <86box/fdd.h>
 #include <86box/fdc.h>
 #include <86box/pci.h>
+#include <86box/sio.h>
 #include <86box/keyboard.h>
 
 #define STAT_PARITY        0x80
@@ -152,6 +153,9 @@ typedef struct atkbc_t {
 
     uint8_t (*write_cmd_data_ven)(void *priv, uint8_t val);
     uint8_t (*write_cmd_ven)(void *priv, uint8_t val);
+
+    void (*p2_write_hook)(void *priv, uint8_t old_p2, uint8_t new_p2);
+    void *p2_priv;
 } atkbc_t;
 
 /* Keyboard controller ports. */
@@ -247,7 +251,8 @@ kbc_translate(atkbc_t *dev, uint8_t val)
 {
     int      xt_mode   = (dev->mem[0x20] & 0x20) && !(dev->misc_flags & FLAG_PS2);
     /* The IBM AT keyboard controller firmware does not apply translation in XT mode. */
-    int      translate = !xt_mode && ((dev->mem[0x20] & 0x40) || (dev->is_type2));
+    /* PS/2 (type 2) keyboard controllers never translate, the XLAT bit is ignored. */
+    int      translate = !xt_mode && !(dev->is_type2) && (dev->mem[0x20] & 0x40);
     uint8_t  kbc_ven   = dev->flags & KBC_VEN_MASK;
     int      ret       = - 1;
 
@@ -357,11 +362,15 @@ kbc_do_irq(atkbc_t *dev)
             picint_common(1 << dev->irq[1], 0, 0, NULL);
 
         if (dev->channel >= 2) {
-            if (dev->irq[1] != 0xffff)
+            if (dev->irq[1] != 0xffff) {
                 picint_common(1 << dev->irq[1], 0, 1, NULL);
+                fdc37mx0x_watchdog_reset_ext(2);
+            }
         } else {
-            if (dev->irq[0] != 0xffff)
+            if (dev->irq[0] != 0xffff) {
                 picint_common(1 << dev->irq[0], 0, 1, NULL);
+                fdc37mx0x_watchdog_reset_ext(1);
+            }
         }
 
         dev->do_irq = 0;
@@ -399,10 +408,13 @@ kbc_send_to_ob(atkbc_t *dev, uint8_t val, uint8_t channel, uint8_t stat_hi)
                 kbc_set_do_irq(dev, channel);
         } else if (dev->mem[0x20] & 0x01)
             kbc_set_do_irq(dev, channel);
-    } else if (dev->mem[0x20] & 0x01)
+    } else if (dev->mem[0x20] & 0x01) {
         /* AT KBC: IRQ 1 is level-triggered because it is tied to OBF. */
-        if (dev->irq[0] != 0xffff)
+        if (dev->irq[0] != 0xffff) {
             picintlevel(1 << dev->irq[0], &dev->irq_state);
+            fdc37mx0x_watchdog_reset_ext(1);
+        }
+    }
 
     kbc_do_irq(dev);
 
@@ -460,6 +472,17 @@ kbc_ibf_process(atkbc_t *dev)
         } else
             kbc_delay_to_ob(dev, 0xfe, 1, 0x40);
     }
+}
+
+static void
+kbc_param_take(atkbc_t *dev)
+{
+    /* Command written, abort current command. */
+    if (dev->status & STAT_CD)
+        dev->state = STATE_MAIN_IBF;
+
+    dev->status &= ~STAT_IFULL;
+    kbc_at_process_cmd(dev);
 }
 
 static void
@@ -559,14 +582,8 @@ at_main_ibf:
             break;
         case STATE_KBC_PARAM:
             /* Keyboard controller command wants data, wait for said data. */
-            if (dev->status & STAT_IFULL) {
-                /* Command written, abort current command. */
-                if (dev->status & STAT_CD)
-                    dev->state = STATE_MAIN_IBF;
-
-                dev->status &= ~STAT_IFULL;
-                kbc_at_process_cmd(dev);
-            }
+            if (dev->status & STAT_IFULL)
+                kbc_param_take(dev);
             break;
         case STATE_SEND_KBD:
             if (!dev->ports[0]->wantcmd)
@@ -711,14 +728,8 @@ kbc_at_poll_ps2(atkbc_t *dev)
             break;
         case STATE_KBC_PARAM:
             /* Keyboard controller command wants data, wait for said data. */
-            if (dev->status & STAT_IFULL) {
-                /* Command written, abort current command. */
-                if (dev->status & STAT_CD)
-                    dev->state = STATE_MAIN_IBF;
-
-                dev->status &= ~STAT_IFULL;
-                kbc_at_process_cmd(dev);
-            }
+            if (dev->status & STAT_IFULL)
+                kbc_param_take(dev);
             break;
         case STATE_SEND_KBD:
             if (!dev->ports[0]->wantcmd)
@@ -806,6 +817,8 @@ write_p2(atkbc_t *dev, uint8_t val)
     }
 
     /* Do this here to avoid an infinite reset loop. */
+    if (dev->p2_write_hook != NULL)
+        dev->p2_write_hook(dev->p2_priv, dev->p2, val);
     dev->p2 = val;
 
     if (!fast_reset && cpu_cpurst_on_sr && ((old ^ val) & 0x01)) { /*Reset*/
@@ -864,6 +877,8 @@ write_p2_fast_a20(atkbc_t *dev, uint8_t val)
     }
 
     /* Do this here to avoid an infinite reset loop. */
+    if (dev->p2_write_hook != NULL)
+        dev->p2_write_hook(dev->p2_priv, dev->p2, val);
     dev->p2 = val;
 }
 
@@ -2535,6 +2550,10 @@ kbc_at_process_cmd(void *priv)
 
             case 0xf0 ... 0xff: /* pulse P2 */
                 kbc_at_log("ATkbc: pulse %01X\n", dev->ib & 0x0f);
+                /* The 8042 sets the system flag when it receives the 0xFE command,
+                   which pulses the CPU reset line. */
+                if (dev->ib == 0xfe)
+                    dev->status |= STAT_SYSFLAG;
                 pulse_output(dev, dev->ib & 0x0f);
                 break;
         }
@@ -2651,6 +2670,11 @@ kbc_at_port_1_write(uint16_t port, uint8_t val, void *priv)
 
     kbc_at_log("ATkbc: [%04X:%08X] write(%04X) = %02X\n", CS, cpu_state.pc, port, val);
 
+    /* The host may write the next byte before the pending parameter was consumed; take it
+       first instead of silently overwriting it, fix BIOS not waiting for IBF to clear. */
+    if ((dev->status & STAT_IFULL) && dev->wantdata && (dev->state == STATE_KBC_PARAM))
+        kbc_param_take(dev);
+
     dev->status &= ~STAT_CD;
 
     if (fast_a20 && dev->wantdata && (dev->command == 0xd1)) {
@@ -2682,6 +2706,11 @@ kbc_at_port_2_write(uint16_t port, uint8_t val, void *priv)
     uint8_t fast_a20 = (kbc_ven != KBC_VEN_SIEMENS);
 
     kbc_at_log("ATkbc: [%04X:%08X] write(%04X) = %02X\n", CS, cpu_state.pc, port, val);
+
+    /* The host may write the next byte before the pending parameter was consumed; take it
+       first instead of silently overwriting it, fix BIOS not waiting for IBF to clear. */
+    if ((dev->status & STAT_IFULL) && dev->wantdata && (dev->state == STATE_KBC_PARAM))
+        kbc_param_take(dev);
 
     dev->status |= STAT_CD;
 
@@ -2802,6 +2831,15 @@ kbc_at_reset(void *priv)
 
     kbc_at_queue_reset(dev);
 
+    /* Discard whatever the attached devices had queued before the reset: those
+       keystrokes would otherwise be delivered to the guest afterwards. The devices
+       themselves are left alone, so that their scan enable state and self test are
+       not disturbed. */
+    for (uint8_t i = 0; i < 2; i++) {
+        if ((dev->ports[i] != NULL) && (dev->ports[i]->priv != NULL))
+            kbc_at_dev_discard((atkbc_dev_t *) dev->ports[i]->priv);
+    }
+
     dev->sc_or = 0;
 
     dev->ami_flags = (machine_has_flags_ex(MACHINE_PS2_KBC)) ? 0x01 : 0x00;
@@ -2897,6 +2935,18 @@ kbc_at_set_irq(int num, uint16_t irq, void *priv)
     }
 
     dev->irq[num] = irq;
+}
+
+void
+kbc_at_set_p2_write_hook(void *priv,
+                         void (*p2_write_hook)(void *priv, uint8_t old_p2,
+                                               uint8_t new_p2),
+                         void *p2_priv)
+{
+    atkbc_t *dev = (atkbc_t *) priv;
+
+    dev->p2_write_hook = p2_write_hook;
+    dev->p2_priv       = p2_priv;
 }
 
 static void *

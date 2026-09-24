@@ -463,8 +463,11 @@ fdd_seek(int drive, int track_diff)
     }
 
     int old_track = fdd[drive].track;
+    const int ibm5140 = fdd_fdc && (fdd_fdc->flags & FDC_FLAG_IBM5140);
+    const int degated = ibm5140 && fdd_fdc->drive_interface_gated;
 
-    fdd[drive].track += track_diff;
+    if (!degated)
+        fdd[drive].track += track_diff;
 
     if (fdd[drive].track < 0)
         fdd[drive].track = 0;
@@ -472,7 +475,8 @@ fdd_seek(int drive, int track_diff)
     if (fdd[drive].track > drive_types[fdd[drive].type].max_track)
         fdd[drive].track = drive_types[fdd[drive].type].max_track;
 
-    fdd_changed[drive] = 0;
+    if (!degated && (!ibm5140 || !drive_empty[drive]))
+        fdd_changed[drive] = 0;
 
     if (fdd[drive].turbo) {
         fdd_do_seek_ex(drive, fdd[drive].track);
@@ -494,7 +498,11 @@ fdd_seek(int drive, int track_diff)
         int is_seek_down = (fdd[drive].track < old_track);
 
         /* Get seek timings from audio profile configuration with direction awareness */
-        double   seek_time_us = fdd_audio_get_seek_time(drive, actual_track_diff, is_seek_down);
+        const int step_count = ibm5140 && !degated &&
+                               ((fdd_fdc->command & 0x1f) == 0x07) ?
+                               actual_track_diff : abs(track_diff);
+        double seek_time_us = ibm5140 ? 6000.0 * step_count :
+                              fdd_audio_get_seek_time(drive, actual_track_diff, is_seek_down);
         if (seek_time_us < 1) {
             seek_time_us = DEFAULT_SEEK_TIME_MS * 1000;
         }
@@ -542,9 +550,14 @@ fdd_type_invert_densel(int type)
 {
     int ret;
 
-    if (drive_types[type].flags & FLAG_PS2)
-        ret = (!!strstr(machine_getname(machine), "PS/1")) || (!!strstr(machine_getname(machine), "PS/2")) || (!!strstr(machine_getname(machine), "PS/55"));
-    else
+    if (drive_types[type].flags & FLAG_PS2) {
+        /* The Model 25/30 planar also belongs to the 7690, whose display
+           name does not contain "PS/2". Its drive wiring is unchanged. */
+        ret = (machines[machine].init == machine_ps2_8086_init) ||
+              (!!strstr(machine_getname(machine), "PS/1")) ||
+              (!!strstr(machine_getname(machine), "PS/2")) ||
+              (!!strstr(machine_getname(machine), "PS/55"));
+    } else
         ret = drive_types[type].flags & FLAG_INVERT_DENSEL;
 
     return ret;

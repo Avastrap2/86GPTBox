@@ -471,7 +471,13 @@ svga_in(uint16_t addr, void *priv)
             ret = dev->dac_mask;
             break;
         case 0x2eb:
-            ret = dev->dac_status;
+            /* The 8514/Ultra's DAC (Bt478 type) has no state register: a read
+               of either address port returns the address register, which in
+               read mode runs one entry ahead. Its POST ROM checks this. */
+            if (ATI_8514A_ULTRA)
+                ret = dev->dac_addr;
+            else
+                ret = dev->dac_status;
             break;
         case 0x2ec:
             ret = dev->dac_addr;
@@ -630,6 +636,10 @@ svga_in(uint16_t addr, void *priv)
             }
             break;
         case 0x3da:
+            /* Delay so the XGA BIOS does not fail. */
+            if (machine_has_bus(machine, MACHINE_BUS_MCA) ||
+                machine_has_bus(machine, MACHINE_BUS_MCA32))
+                cycles -= ((int) (isa_timing * 8));
             svga->attrff = 0;
 
             const uint8_t attr_output = svga->egapal[0x00];

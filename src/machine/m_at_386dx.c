@@ -70,7 +70,7 @@ static const device_config_t deskpro386_config[] = {
         .selection      = { { 0 } },
         .bios           = {
             {
-                .name          = "4 September 1986",
+                .name          = "Compaq BIOS - Revision 09/04/86",
                 .internal_name = "deskpro386_09_1986",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
@@ -79,7 +79,7 @@ static const device_config_t deskpro386_config[] = {
                 .files         = { "roms/machines/deskpro386/1986-09-04-HI.json.bin", "" }
             },
             {
-                .name          = "10 May 1988",
+                .name          = "Compaq BIOS - Revision 05/10/88",
                 .internal_name = "deskpro386",
                 .bios_type     = BIOS_NORMAL,
                 .files_no      = 1,
