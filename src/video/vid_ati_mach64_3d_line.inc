@@ -126,18 +126,10 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
     inc = r3d_sign_extend(m->dst_bres_inc, 18);
     dec = r3d_sign_extend(m->dst_bres_dec, 18);
 
-    left = (int) (m->sc_left_right & 0x1fffu);
-    right = (int) ((m->sc_left_right >> 16) & 0x1fffu);
-    top = (int) (m->sc_top_bottom & 0x7fffu);
-    bottom = (int) ((m->sc_top_bottom >> 16) & 0x7fffu);
-    if (right < left) {
-        left = 0;
-        right = 0x1fff;
-    }
-    if (bottom < top) {
-        top = 0;
-        bottom = 0x7fff;
-    }
+    left = r3d_sign_extend(m->sc_left_right, 13);
+    right = r3d_sign_extend(m->sc_left_right >> 16, 13);
+    top = r3d_sign_extend(m->sc_top_bottom, 15);
+    bottom = r3d_sign_extend(m->sc_top_bottom >> 16, 15);
 
     db = (m->dst_off_pitch & 0xfffffu) << 3;
     dp = (int) (((m->dst_off_pitch >> 22) & 0x3ffu) << 3);
@@ -146,10 +138,10 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
 
     if (left < 0)
         left = 0;
+    if (top < 0)
+        top = 0;
     if (right >= dp)
         right = dp - 1;
-    if (right < left)
-        return 1;
 
     {
         uint32_t stride = (uint32_t) dp * (uint32_t) dbpp;
@@ -159,8 +151,6 @@ r3d_draw_shaded_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
             if (rows && bottom >= (int) rows)
                 bottom = (int) rows - 1;
         }
-        if (bottom < top)
-            return 1;
     }
 
     zc = ctx->regs[R3D_Z_CNTL >> 2];

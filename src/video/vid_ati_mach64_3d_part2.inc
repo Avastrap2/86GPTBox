@@ -126,9 +126,37 @@ static void r3d_write_dst(mach64_3d_ctx_t *ctx,uint32_t a,int f,rgba_t c){
     uint32_t base=(m->dst_off_pitch&0xfffff)<<3;int pitch=((m->dst_off_pitch>>22)&0x3ff)<<3;
     if(bpp&&pitch&&a>=base){uint32_t p=(a-base)/(uint32_t)bpp;x=(int)(p%(uint32_t)pitch);y=(int)(p/(uint32_t)pitch);}
     if(f==2){uint8_t p=((r3d_clamp8(c.r)>>5)<<5)|((r3d_clamp8(c.g)>>5)<<2)|(r3d_clamp8(c.b)>>6);r3d_vram_write8(m,a,p);return;}
-    r3d_write_dst_raw(ctx,a,f,r3d_pack(ctx,f,c,x,y));
+    uint32_t raw=r3d_pack(ctx,f,c,x,y);
+    uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];
+    /* A framebuffer component already has a quantized value. Reapplying the
+     * ordered table to its expanded value can increase that component even
+     * when blending contributed nothing (e.g. a black additive texel).
+     * Preserve such RGB components; retain normal packing for changed
+     * components and alpha. Error diffusion is deliberately unaffected. */
+    if ((f==3||f==4) && ((ctl>>R3D_ALPHA_FOG_SHIFT)&3)==1 &&
+        (ctl&(R3D_DITHER_EN|R3D_SCALE_DITHER_TABLE))==
+              (R3D_DITHER_EN|R3D_SCALE_DITHER_TABLE)) {
+        uint32_t old=r3d_read_dst_raw(ctx,a,f), keep=0;
+        rgba_t dst=r3d_unpack(ctx,f,old,0);
+        if(c.r==dst.r)keep|=f==3?0x7c00u:0xf800u;
+        if(c.g==dst.g)keep|=f==3?0x03e0u:0x07e0u;
+        if(c.b==dst.b)keep|=0x001fu;
+        raw=(raw&~keep)|(old&keep);
+    }
+    r3d_write_dst_raw(ctx,a,f,raw);
 }
 static rgba_t r3d_lerp(rgba_t a,rgba_t b,int t){rgba_t r;t=r3d_clamp8(t);r.r=(a.r*(255-t)+b.r*t+127)/255;r.g=(a.g*(255-t)+b.g*t+127)/255;r.b=(a.b*(255-t)+b.b*t+127)/255;r.a=(a.a*(255-t)+b.a*t+127)/255;return r;}
+/* Texture-coordinate fractions are binary: 128 is exactly one half and
+ * 255 is 255/256, not the next texel. Alpha's endpoint-inclusive /255 lerp
+ * must not be used for these weights. Keep alpha and mip blending separate. */
+static rgba_t r3d_lerp_texel(rgba_t a,rgba_t b,int fraction){
+    rgba_t r;
+    r.r=(a.r*(256-fraction)+b.r*fraction+128)>>8;
+    r.g=(a.g*(256-fraction)+b.g*fraction+128)>>8;
+    r.b=(a.b*(256-fraction)+b.b*fraction+128)>>8;
+    r.a=(a.a*(256-fraction)+b.a*fraction+128)>>8;
+    return r;
+}
 static int r3d_component(rgba_t c,int ch){return ch==0?c.r:(ch==1?c.g:(ch==2?c.b:c.a));}
 static int r3d_blend_factor(int code,rgba_t s,rgba_t d,int ch,int sf){switch(code){case 0:return 0;case 1:return 255;case 2:return sf?r3d_component(d,ch):r3d_component(s,ch);case 3:return 255-(sf?r3d_component(d,ch):r3d_component(s,ch));case 4:return s.a;case 5:return 255-s.a;default:return 255;}}
 static rgba_t r3d_blend(uint32_t ctl,rgba_t s,rgba_t d){rgba_t o;int sf=(ctl>>R3D_BLEND_SRC_SHIFT)&7,df=(ctl>>R3D_BLEND_DST_SHIFT)&7,*p[4]={&o.r,&o.g,&o.b,&o.a};for(int ch=0;ch<4;ch++){int sv=r3d_component(s,ch),dv=r3d_component(d,ch);*p[ch]=r3d_clamp8((sv*r3d_blend_factor(sf,s,d,ch,1)+dv*r3d_blend_factor(df,s,d,ch,0)+127)/255);}return o;}
@@ -205,7 +233,7 @@ static r3d_texel_sample_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d
     r3d_texel_sample_t c00=r3d_texel_at_cached(ctx,ts,u,v),result=c00;if(!ts->bilinear)return result;
     int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask;int fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
     r3d_texel_sample_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);
-    result.color=r3d_lerp(r3d_lerp(c00.color,c10.color,fu),r3d_lerp(c01.color,c11.color,fu),fv);
+    result.color=r3d_lerp_texel(r3d_lerp_texel(c00.color,c10.color,fu),r3d_lerp_texel(c01.color,c11.color,fu),fv);
     result.any_inhibits=c00.any_inhibits||c10.any_inhibits||c01.any_inhibits||c11.any_inhibits;
     if(fv>=128)result.nearest_inhibits=(fu>=128)?c11.nearest_inhibits:c01.nearest_inhibits;
     else result.nearest_inhibits=(fu>=128)?c10.nearest_inhibits:c00.nearest_inhibits;

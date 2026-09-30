@@ -42,6 +42,35 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
             uint32_t i = R3D_LEAD_BRES_LNTH >> 2;
             uint32_t cmd = r3d_merge_write(ctx->regs[i], aa, v, type);
 
+            /* DP_SRC and DST_CNTL may still be queued in the legacy FIFO.
+             * Resolve that state before deciding whether this drawing line
+             * belongs to the shaded or legacy path. Testing first can either
+             * drop a 2D line or send a shaded line to the selector-5 fallback.
+             * Ordinary 2D mode and non-drawing preloads need no extra wait. */
+            if (r3d_write_complete(aa, type) &&
+                !(cmd & (R3D_DRAW_TRAP | R3D_LINE_DISABLE)) &&
+                ((ctx->regs[R3D_SCALE_3D_CNTL >> 2] >> R3D_FCN_SHIFT) & 3u) == 3u)
+                r3d_sync_legacy_fifo(ctx);
+
+            /*
+             * RRG-G02700, DST_BRES_LNTH (4-46): TRAIL_X is loaded for
+             * line commands (bit 15 clear), including LINE_DIS preloads
+             * which deliberately do not draw.  A trapezoid loads it only
+             * when bit 31 is set; otherwise it keeps the live edge from
+             * the preceding command.  Loading solely in the trapezoid
+             * walker loses a no-draw preload and reuses a stale edge.
+             * Handle both aliases here, before either the shaded-line
+             * interception or the legacy/shared-register fallback.
+             * This shadow belongs to the synchronous 3D front end; keep
+             * shared-register ordering at the existing draw barriers rather
+             * than adding a FIFO wait to every ordinary 2D line write.
+             */
+            if (r3d_write_complete(aa, type) &&
+                (!(cmd & R3D_DRAW_TRAP) || (cmd & R3D_LINE_DISABLE))) {
+                ctx->trail_x = r3d_sign_extend(cmd >> 16, 13);
+                ctx->trail_valid = 1;
+            }
+
             /*
              * For byte/word command programming, let incomplete writes keep
              * following the ordinary shared-register path.  The final write is

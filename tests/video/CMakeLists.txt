@@ -98,3 +98,18 @@ target_include_directories(mach64_scaler_test PRIVATE
 )
 
 add_test(NAME mach64_scaler COMMAND mach64_scaler_test)
+
+add_executable(mach64_3d_triangle_test
+    mach64_3d_triangle_test.c
+    ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_3d.c
+)
+
+target_include_directories(mach64_3d_triangle_test PRIVATE
+    ${PROJECT_BINARY_DIR}/src/include
+    ${PROJECT_SOURCE_DIR}/src/include
+    ${PROJECT_SOURCE_DIR}/src/cpu
+    ${PROJECT_SOURCE_DIR}/src/codegen
+    ${PROJECT_SOURCE_DIR}/src/codegen_new
+)
+
+add_test(NAME mach64_3d_triangle COMMAND mach64_3d_triangle_test)

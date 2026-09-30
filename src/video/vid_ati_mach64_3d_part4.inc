@@ -84,10 +84,10 @@ r3d_gtb_gui_stat(mach64_t *m)
 
     dst_x = r3d_sign_extend(m->dst_y_x >> 16, 13);
     dst_y = r3d_sign_extend(m->dst_y_x, 15);
-    sc_left = (int) (m->sc_left_right & 0x1fff);
-    sc_right = (int) ((m->sc_left_right >> 16) & 0x1fff);
-    sc_top = (int) (m->sc_top_bottom & 0x7fff);
-    sc_bottom = (int) ((m->sc_top_bottom >> 16) & 0x7fff);
+    sc_left = r3d_sign_extend(m->sc_left_right, 13);
+    sc_right = r3d_sign_extend(m->sc_left_right >> 16, 13);
+    sc_top = r3d_sign_extend(m->sc_top_bottom, 15);
+    sc_bottom = r3d_sign_extend(m->sc_top_bottom >> 16, 15);
 
     if (dst_x < sc_left)
         ret |= 0x10; /* DSTX_LT_SCISSOR_LEFT */

@@ -178,16 +178,18 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
      * 15 select the zero-error side of the lead/trail Bresenham walkers. */
     int fill_lr=!!(m->dst_cntl&R3D_GTB_TRAP_FILL_DIR),lead_zero_neg=!!(m->dst_cntl&R3D_GTB_DST_BRES_SIGN),trail_zero_neg=!!(m->dst_cntl&R3D_GTB_TRAIL_BRES_SIGN);
     if((cmd&0x80000000u)||!ctx->trail_valid){ctx->trail_x=r3d_sign_extend(cmd>>16,13);ctx->trail_valid=1;}int trail=ctx->trail_x,le=(int32_t)m->dst_bres_err,li=(int32_t)m->dst_bres_inc,ld=(int32_t)m->dst_bres_dec,te=(int32_t)ctx->regs[R3D_TRAIL_BRES_ERR>>2],ti=(int32_t)ctx->regs[R3D_TRAIL_BRES_INC>>2],td=(int32_t)ctx->regs[R3D_TRAIL_BRES_DEC>>2];
-    int left=m->sc_left_right&0x1fff,right=(m->sc_left_right>>16)&0x1fff,top=m->sc_top_bottom&0x7fff,bottom=(m->sc_top_bottom>>16)&0x7fff;if(right<left){left=0;right=0x1fff;}if(bottom<top){top=0;bottom=0x7fff;}
+    /* RRG-G02700 pp. 4-82..4-86: signed, inclusive scissors. An inverted
+     * rectangle inhibits writes; it must not expand to the whole surface. */
+    int left=r3d_sign_extend(m->sc_left_right,13),right=r3d_sign_extend(m->sc_left_right>>16,13),top=r3d_sign_extend(m->sc_top_bottom,15),bottom=r3d_sign_extend(m->sc_top_bottom>>16,15);
     uint32_t db=(m->dst_off_pitch&0xfffff)<<3;int dp=((m->dst_off_pitch>>22)&0x3ff)<<3;if(!dp)return;
     /* X outside the programmed pitch would only spill into adjacent rows and
      * can turn a malformed/default 8191-pixel scissor into millions of host
      * pixel operations.  Likewise, rows beyond the physical destination
      * allocation only wrap VRAM and cannot be a valid DirectDraw surface. */
     if(left<0)left=0;
+    if(top<0)top=0;
     if(right>=dp)right=dp-1;
-    if(right<left)return;
-    {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}if(bottom<top)return;}
+    {uint32_t stride=(uint32_t)dp*(uint32_t)dbpp,base=db&m->vram_mask;if(stride&&m->vram_size>base){uint32_t rows=(m->vram_size-base)/stride;if(rows&&bottom>=(int)rows)bottom=(int)rows-1;}}
     uint32_t zc=ctx->regs[R3D_Z_CNTL>>2],zo=ctx->regs[R3D_Z_OFF_PITCH>>2],zb=(zo&0xfffff)<<3;int zp=((zo>>22)&0x3ff)<<3;
 #define RG(name) int64_t name##x=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_X_INC>>2]),name##y=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_Y_INC>>2]),name##0=mach64_3d_s8_12_decode(ctx->regs[R3D_##name##_START>>2])
     RG(RED);RG(GREEN);RG(BLUE);RG(ALPHA);
@@ -204,6 +206,31 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     int tex=fcn==2,bilinear=!!(ctl&R3D_BILINEAR_TEX_EN),af=(ctl>>R3D_ALPHA_FOG_SHIFT)&3,z_enabled=!!((zc&R3D_Z_EN)&&zp),z_write=!!(z_enabled&&(zc&R3D_Z_MASK));rgba_t fog={(m->dp_frgd_clr>>16)&255,(m->dp_frgd_clr>>8)&255,m->dp_frgd_clr&255,255};
     unsigned dp_mono_source=(m->dp_src>>16)&3u,dp_frgd_source=(m->dp_src>>8)&7u;int dp_constant_source=dp_mono_source==MONO_SRC_1&&(dp_frgd_source==MACH64_3D_DP_SRC_BKGD_CLR||dp_frgd_source==MACH64_3D_DP_SRC_FRGD_CLR),destination_compare=mach64_3d_destination_compare_enabled(m->clr_cmp_cntl);uint32_t compare_pixel_mask=dbpp==1?0xffu:(dbpp==2?0xffffu:0xffffffffu);
     r3d_tex_state_t ts;if(tex)r3d_tex_state_init(ctx,tf,bilinear,&ts);
+    /* ATI3DCIF 4.03.2510 leaves positive initial edge errors for the hardware
+     * to consume (its older-device path performs these X steps in software).
+     * Resolve them before the first span, without adding INC or advancing Y.
+     * This also applies to a newly programmed trailing edge at a split. */
+    int initial_dx = ld < 0 ? r3d_edge_step_scanline(&lead, &le, 0, ld, ldir, lead_zero_neg) : 0;
+    if (td < 0)
+        r3d_edge_step_scanline(&trail, &te, 0, td, tdir, trail_zero_neg);
+    int initial_steps = initial_dx < 0 ? -initial_dx : initial_dx;
+    if (initial_steps) {
+        /* START may describe an extrapolated point outside the triangle.
+         * Keep the physical field's modular arithmetic while moving it onto
+         * the initial leading edge; clamping that outside value would lose
+         * a valid color when the first covered sample is reached. */
+        RED0 = mach64_3d_s8_12_decode((uint32_t) (RED0 + REDx * initial_steps));
+        GREEN0 = mach64_3d_s8_12_decode((uint32_t) (GREEN0 + GREENx * initial_steps));
+        BLUE0 = mach64_3d_s8_12_decode((uint32_t) (BLUE0 + BLUEx * initial_steps));
+        ALPHA0 = mach64_3d_s8_12_decode((uint32_t) (ALPHA0 + ALPHAx * initial_steps));
+        Z0 = mach64_3d_s16_12_decode((uint32_t) (Z0 + Zx * initial_steps));
+        s0 = r3d_quad_at(s0, sxi, sx2, initial_steps);
+        sxi += sx2 * initial_steps;
+        syi += sxy2 * initial_steps;
+        t0 = r3d_quad_at(t0, txi, tx2, initial_steps);
+        txi += tx2 * initial_steps;
+        tyi += txy2 * initial_steps;
+    }
     for(int row=0;row<len;row++){
         /* TRAP_FILL_DIR defines which programmed edge is the left/right side.
          * Do not sort crossed edges into a mirrored continuation. */
@@ -219,10 +246,10 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
                 if(tex){tex_s=r3d_quad_at(s0,sxi,sx2,n);tt=r3d_quad_at(t0,txi,tx2,n);tex_sstep=r3d_quad_step(sxi,sx2,n,ldir);ttstep=r3d_quad_step(txi,tx2,n,ldir);tex_systep=syi+(int64_t)n*sxy2;ttystep=tyi+(int64_t)n*txy2;}
                 uint32_t da=db+(uint32_t)((y*dp+dl)*dbpp),za=z_enabled?zb+(uint32_t)((y*zp+dl)*2):0;
                 for(int x=dl;x<dh;x++){
-                    rgba_t shade=r3d_shade(rr,gg,bb,aa),src=shade;int draw=1;uint16_t nz=0;
+                    rgba_t shade={mach64_3d_s8_12_color(rr),mach64_3d_s8_12_color(gg),mach64_3d_s8_12_color(bb),mach64_3d_s8_12_color(aa)},src=shade;int draw=1;uint16_t nz=0;
                     if(tex){int texture_draw=1,texture_key_inhibit=0;rgba_t texel=r3d_sample_texture_cached(ctx,&ts,ctl,tex_s,tt,tex_sstep,ttstep,tex_systep,ttystep,&texture_draw,&texture_key_inhibit);if(!texture_draw){draw=0;}else if(texture_key_inhibit){draw=0;}else if(!r3d_apply_tex_alpha(ctl,&texel,shade.a)){draw=0;}else src=r3d_texture_light(ctl,texel,shade);}
                     if(draw&&af==2)src=r3d_lerp(fog,src,shade.a);
-                    if(draw&&z_enabled){nz=r3d_clamp16(zz>>12);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;}
+                    if(draw&&z_enabled){nz=mach64_3d_s16_12_depth(zz);if(!r3d_z_test(nz,r3d_vram_read16(m,za),(zc>>R3D_Z_TEST_SHIFT)&7))draw=0;}
                     if(draw){
                         uint32_t selected_raw=0;
                         int raw_source=0;

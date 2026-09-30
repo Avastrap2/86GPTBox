@@ -466,10 +466,10 @@ r3d_draw_scaler_rectangle(mach64_3d_ctx_t *ctx)
     int destination_height = m->dst_height_width & 0x1fff;
     int x_direction = (m->dst_cntl & DST_X_DIR) ? 1 : -1;
     int y_direction = (m->dst_cntl & DST_Y_DIR) ? 1 : -1;
-    int scissor_left = m->sc_left_right & 0x1fff;
-    int scissor_right = (m->sc_left_right >> 16) & 0x1fff;
-    int scissor_top = m->sc_top_bottom & 0x7fff;
-    int scissor_bottom = (m->sc_top_bottom >> 16) & 0x7fff;
+    int scissor_left = r3d_sign_extend(m->sc_left_right, 13);
+    int scissor_right = r3d_sign_extend(m->sc_left_right >> 16, 13);
+    int scissor_top = r3d_sign_extend(m->sc_top_bottom, 15);
+    int scissor_bottom = r3d_sign_extend(m->sc_top_bottom >> 16, 15);
     int replicate = !!(control & R3D_SCALE_PIX_REP);
     uint64_t vram_bytes = (uint64_t) m->vram_mask + 1u;
     if (!source_width || !source_height || !source_pitch ||

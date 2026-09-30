@@ -42,11 +42,56 @@ main(void)
     CHECK(mach64_3d_s8_12_decode(UINT32_C(0xfe000010)) == 16);
     CHECK(mach64_3d_s8_12_decode(UINT32_C(0x01fffff0)) == -16);
 
+    /* Color conversion retains the physical signed field, not an unsigned
+     * 8-bit wrap or a clamp of the unbounded host interpolation sum. */
+    CHECK(mach64_3d_s8_12_color(-16) == 0);
+    CHECK(mach64_3d_s8_12_color(INT64_C(0x00ffffff)) == 255);
+    CHECK(mach64_3d_s8_12_color(INT64_C(0x01000000)) == 0);
+    CHECK(mach64_3d_s8_12_color(INT64_C(0x01ffffff)) == 0);
+    CHECK(mach64_3d_s8_12_color(INT64_C(0x02000000)) == 0);
+    CHECK(mach64_3d_s8_12_color((INT64_C(197) - 512) * 65536) == 197);
+    CHECK(mach64_3d_s8_12_color((INT64_C(123) + 512) * 65536) == 123);
+    CHECK(mach64_3d_s8_12_color(INT64_MIN) == 0);
+    CHECK(mach64_3d_s8_12_color(INT64_MAX) == 0);
+    static const int32_t periods[] = { -1073741824, -4, -1, 0, 1, 4, 1073741824 };
+    static const uint32_t fractions[] = { 0, 1, 15, 16, 32768, 65535 };
+    for (unsigned p = 0; p < sizeof(periods) / sizeof(periods[0]); p++) {
+        for (unsigned integer = 0; integer < 512; integer++) {
+            for (unsigned f = 0; f < sizeof(fractions) / sizeof(fractions[0]); f++) {
+                int64_t value = (int64_t) periods[p] * INT64_C(0x02000000) +
+                                (int64_t) integer * 65536 + fractions[f];
+                int expected = integer < 256 ? (int) integer : 0;
+                int32_t decoded = mach64_3d_s8_12_decode((uint32_t) value);
+                CHECK(mach64_3d_s8_12_color(value) == expected);
+                CHECK(mach64_3d_s8_12_color(value) == (decoded < 0 ? 0 : decoded / 65536));
+            }
+        }
+    }
+
     /* Z signs from bit 28, not bit 31. */
     CHECK(mach64_3d_s16_12_decode(UINT32_C(0xffffffff)) == -1);
     CHECK(mach64_3d_s16_12_decode(UINT32_C(0x10000000)) ==
           -(INT32_C(1) << 28));
     CHECK(mach64_3d_s16_12_decode(UINT32_C(0xe0001000)) == 4096);
+
+    CHECK(mach64_3d_s16_12_depth(-1) == 0);
+    CHECK(mach64_3d_s16_12_depth(INT64_C(0x0fffffff)) == 65535);
+    CHECK(mach64_3d_s16_12_depth(INT64_C(0x10000000)) == 0);
+    CHECK(mach64_3d_s16_12_depth(INT64_C(0x1fffffff)) == 0);
+    CHECK(mach64_3d_s16_12_depth((INT64_C(48443) + 131072) * 4096) == 48443);
+    CHECK(mach64_3d_s16_12_depth((INT64_C(23823) - 131072) * 4096) == 23823);
+    CHECK(mach64_3d_s16_12_depth(INT64_MIN) == 0);
+    CHECK(mach64_3d_s16_12_depth(INT64_MAX) == 0);
+    for (unsigned p = 0; p < sizeof(periods) / sizeof(periods[0]); p++) {
+        for (unsigned integer = 0; integer < 131072; integer++) {
+            for (unsigned fractional = 0; fractional <= 4095; fractional += 4095) {
+                int64_t value = (int64_t) periods[p] * INT64_C(0x20000000) +
+                                (int64_t) integer * 4096 + fractional;
+                unsigned expected = integer < 65536 ? integer : 0;
+                CHECK(mach64_3d_s16_12_depth(value) == expected);
+            }
+        }
+    }
 
     CHECK(mach64_3d_s10_16_encode(-146) == UINT32_C(0x07ffff6e));
     CHECK(mach64_3d_s11_16_encode(-146) == UINT32_C(0x0fffff6e));

@@ -76,6 +76,18 @@ static inline uint32_t mach64_3d_s8_12_encode(int64_t value)
     return mach64_3d_field_encode(value, UINT32_C(0x01fffff0));
 }
 
+/* Convert a wide interpolation sum through the physical S.8.12 field before
+ * clamping to a color. ATI setup can cross this field's boundary outside a
+ * thin triangle and return to a valid color at an interior sample. Clamping
+ * the unbounded host sum instead loses that color. Only the sign and eight
+ * integer bits are needed here; leave the accumulator's fraction untouched. */
+static inline int mach64_3d_s8_12_color(int64_t value)
+{
+    uint32_t integer = ((uint32_t) value >> 16) & UINT32_C(0x1ff);
+
+    return (integer & UINT32_C(0x100)) ? 0 : (int) integer;
+}
+
 /* Z: signed S.16.12 in bits 28:0. */
 static inline int32_t mach64_3d_s16_12_decode(uint32_t raw)
 {
@@ -84,6 +96,16 @@ static inline int32_t mach64_3d_s16_12_decode(uint32_t raw)
 static inline uint32_t mach64_3d_s16_12_encode(int64_t value)
 {
     return mach64_3d_field_encode(value, UINT32_C(0x1fffffff));
+}
+
+/* The Z trajectory likewise returns through its physical signed field before
+ * comparison. Wide host sums must not turn a valid interior depth into zero
+ * or the far plane after an extrapolated START/derivative crosses the field. */
+static inline uint16_t mach64_3d_s16_12_depth(int64_t value)
+{
+    uint32_t integer = ((uint32_t) value >> 12) & UINT32_C(0x1ffff);
+
+    return (integer & UINT32_C(0x10000)) ? 0 : (uint16_t) integer;
 }
 
 #endif
