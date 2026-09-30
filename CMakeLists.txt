@@ -138,6 +138,7 @@ option(SDL2         "Use SDL2 instead of SDL3"                                  
 option(BUILD_TESTING "Build the unit test suite"                                  OFF)
 option(BUILD_BENCHMARKS "Build performance benchmarks"                            OFF)
 option(MACH64_ACCEL_TESTS "Build Mach64 accelerator regression tests"            OFF)
+option(MEM_LOOKUP_TESTS "Build memory write-lookup regression tests"             OFF)
 option(RAGE2P_KEYED_BLT_DIAGNOSTICS "Enable Rage II+ keyed-BLT K-record probes"  OFF)
 
 if(BUILD_TESTING)
@@ -291,4 +292,9 @@ endif()
 if(MACH64_ACCEL_TESTS)
     enable_testing()
     add_subdirectory(tests/video)
+endif()
+
+if(MEM_LOOKUP_TESTS)
+    enable_testing()
+    add_subdirectory(tests/mem)
 endif()
