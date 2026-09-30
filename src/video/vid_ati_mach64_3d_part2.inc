@@ -227,9 +227,18 @@ static r3d_texel_sample_t r3d_texel_at_cached(mach64_3d_ctx_t *ctx,const r3d_tex
  * Keep S/T in the native GT normalized-coordinate scale through the quadratic
  * recurrence and convert to texels only at the sampler.  START and derivative
  * values share the raw register alignment expected by the HAL setup stream.
+ *
+ * A 2x2 filter weights texel centres, which lie half a texel past each
+ * integer coordinate.  The ATI HAL passes normalized D3D coordinates without
+ * any half-texel bias, so a sample at T=0 blends the last and first rows of a
+ * wrapping map equally.  Final Reality's neon entrance relies on this: its
+ * rim samples T=0 of a map whose only bright row is the last one.  Nearest
+ * sampling still selects the texel containing the coordinate.
  */
 static r3d_texel_sample_t r3d_sample_texel_cached(mach64_3d_ctx_t *ctx,const r3d_tex_state_t *ts,int64_t s,int64_t t){
-    int sh=ts->coord_shift;int u=(int)(s>>sh)&ts->wmask,v=(int)(t>>sh)&ts->hmask;
+    int sh=ts->coord_shift;
+    if(ts->bilinear){int64_t half=(int64_t)1<<(sh-1);s-=half;t-=half;}
+    int u=(int)(s>>sh)&ts->wmask,v=(int)(t>>sh)&ts->hmask;
     r3d_texel_sample_t c00=r3d_texel_at_cached(ctx,ts,u,v),result=c00;if(!ts->bilinear)return result;
     int u1=(u+1)&ts->wmask,v1=(v+1)&ts->hmask;int fu=(int)(s>>(sh-8))&255,fv=(int)(t>>(sh-8))&255;
     r3d_texel_sample_t c10=r3d_texel_at_cached(ctx,ts,u1,v),c01=r3d_texel_at_cached(ctx,ts,u,v1),c11=r3d_texel_at_cached(ctx,ts,u1,v1);

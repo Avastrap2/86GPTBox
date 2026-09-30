@@ -1094,10 +1094,11 @@ driver_triangle_case(mach64_t *m, unsigned fixture, int format)
     expect("ATI fixture has interior samples", interior > 0, 1);
 }
 
-/* A descending 255 -> 0 ramp exposes confusing an 8-bit coordinate
- * fraction with an endpoint-inclusive alpha weight: at half a texel the
- * expected value is 128; immediately before the next texel it is still 1.
- * Exercise both axes, the wrap boundary, and the actual command path. */
+/* One white texel among black ones exposes both the 8-bit binary fraction
+ * (not an endpoint-inclusive /255 alpha weight) and the 2x2 filter's texel
+ * centres, half a texel past each integer coordinate.  The white texel is
+ * fully weighted only at its centre and half weighted at either integer
+ * edge.  Exercise both axes, the wrap boundary, and the command path. */
 static void
 bilinear_fraction_case(mach64_t *m, int axis, int wrap)
 {
@@ -1116,9 +1117,42 @@ bilinear_fraction_case(mach64_t *m, int axis, int wrap)
         write_reg(m,axis?T_START:S_START,((wrap?7u:0u)<<23)|(fraction<<15));
         write_reg(m,DST_Y_X_ALIAS,xy(8,8));
         write_reg(m,LEAD_LENGTH,LOAD_TRAIL|(9u<<16)|DRAW_TRAP|1);
-        unsigned expected=(255u*(256-fraction)+128)/256;
+        /* Weight of the white texel at distance |fraction-128|/256 from its centre. */
+        unsigned weight=fraction<128?fraction+128:384-fraction;
+        unsigned expected=(255u*weight+128)/256;
         expect("binary texture fraction",load_pixel(m,(8*SIZE+8)*4,4),
                0xff000000u|expected*0x010101u);
+    }
+}
+
+/* Final Reality's neon entrance bevel samples T=0 of a map whose only bright
+ * row is the last one.  With texel-centre weighting its rim blends the last
+ * and first rows equally; at the first row's centre only that row remains.
+ * Nearest sampling selects the first row throughout. */
+static void
+bilinear_wrap_edge_case(mach64_t *m, int bilinear)
+{
+    static const unsigned offsets[] = { 0, 1u << 21, 1u << 22 };
+    static const unsigned bilinear_levels[] = { 128, 64, 0 };
+
+    snprintf(case_name, sizeof(case_name), "texture wrap edge bilinear=%d", bilinear);
+    cases++;
+    setup(m, 6);
+    write_reg(m, Z_CNTL, 0);
+    write_reg(m, SCALE_3D_CNTL, TEXTURE | (bilinear ? 1u << 25 : 0));
+    for (int v = 0; v < 8; v++)
+        for (int u = 0; u < 8; u++)
+            store_pixel(m, TEX_BASE + (v * 8 + u) * 4, 4,
+                        0xff000000u | (v == 7 ? 0xff2020u : 0u));
+    for (unsigned i = 0; i < 3; i++) {
+        /* T=0, a quarter texel, then half a texel (the first row's centre). */
+        write_reg(m, T_START, offsets[i]);
+        write_reg(m, DST_Y_X_ALIAS, xy(8, 8));
+        write_reg(m, LEAD_LENGTH, LOAD_TRAIL | (9u << 16) | DRAW_TRAP | 1);
+        unsigned level = bilinear ? bilinear_levels[i] : 0;
+        unsigned red = (255u * level + 128) / 256, other = (0x20u * level + 128) / 256;
+        expect("wrapped edge row weight", load_pixel(m, (8 * SIZE + 8) * 4, 4),
+               0xff000000u | red << 16 | other << 8 | other);
     }
 }
 
@@ -1129,6 +1163,8 @@ main(void)
     mach64_t *m = create_machine();
     for(int axis=0;axis<2;axis++)
         for(int wrap=0;wrap<2;wrap++)bilinear_fraction_case(m,axis,wrap);
+    for (int bilinear = 0; bilinear <= 1; bilinear++)
+        bilinear_wrap_edge_case(m, bilinear);
     for (unsigned fi = 0; fi < sizeof(formats) / sizeof(formats[0]); fi++) {
         int format = formats[fi];
         for (int textured = 0; textured <= 1; textured++)

@@ -22,7 +22,7 @@ return before a directly launched test finishes.
 
 ## Coverage
 
-The command test currently runs 1,071 cases.
+The command test currently runs 1,073 cases.
 
 | Cases | Checks |
 |---:|---|
@@ -42,7 +42,8 @@ The command test currently runs 1,071 cases.
 | 27 | Signed, inverted, negative, single-pixel and outside-pitch scissors through trapezoids, shaded lines and front-end scaler rectangles; GUI status, write inhibition and command continuation. |
 | 8 | Shaded/legacy line dispatch after delayed DP_SRC/DST_CNTL updates, including polygon mode, through both length aliases. This uses a deterministic barrier callback, not an asynchronous worker. |
 | 6 | Ordered-dither blending in RGB555/RGB565: black additive, fully transparent and red-only sources over every table phase and component level must leave unchanged destination components untouched. |
-| 4 | Bilinear weights: all 256 binary coordinate fractions on both axes, within a map and across its wrap boundary. |
+| 4 | Bilinear weights: all 256 binary coordinate fractions on both axes, within a map and across its wrap boundary, weighted at texel centres. |
+| 2 | Wrap-edge rows: at T=0 a bilinear sample blends a map's last and first rows equally; nearest sampling keeps the first row. |
 
 The triangle expectations use an explicit coverage predicate and closed-form
 color, depth, and quadratic S/T expressions. They do not call the renderer's
@@ -191,6 +192,23 @@ commands in shading mode now synchronize pending shared state before path
 selection. Non-drawing preloads and ordinary 2D mode add no wait, and already
 clean state uses the existing no-op barrier. Actual worker-thread scheduling
 and the user's desktop corruption are not reproduced by this stubbed test.
+
+### Bilinear texel centres
+
+The renderer previously weighted texel `i` fully at coordinate `i`, so a
+bilinear sample at T=0 returned the first row alone. It now weights texels at
+their centres, half a texel past each integer coordinate; nearest sampling is
+unchanged. The ATI HAL passes normalized coordinates without a half-texel bias
+(its only S/T constant is the float-to-fixed conversion), and the GT register
+guide has no texture clamp, so edge samples blend the wrapped opposite row.
+
+Final Reality's octagonal entrance shows the difference. Its neon liner's
+front bevel samples T=0..1.83 of `Neon.JPG`, whose only bright row is the last.
+A headless capture of that frame replayed through the production renderer
+has no rim colour with corner weighting; with centre weighting the four
+diagonal rims show the thin red line in a video labelled as a Rage II.
+The same frame's depth tests pass for every neon pixel. This is evidence from
+one scene and a video, not a measurement of the ASIC's filter arithmetic.
 
 ### Remaining limits
 
