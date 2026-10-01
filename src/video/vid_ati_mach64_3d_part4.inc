@@ -1,4 +1,5 @@
 #define R3D_GUI_STAT 0x338
+#define R3D_FIFO_STAT 0x310
 #define R3D_GTB_FIFO_VISIBLE 48
 #define R3D_DST_Y_X_ALIAS 0x134
 
@@ -59,8 +60,10 @@ static uint32_t
 r3d_gtb_gui_stat(mach64_t *m)
 {
     uint32_t used;
+    uint32_t modelled = 0;
     uint32_t free_entries;
     uint32_t ret = 0;
+    int busy = 0;
     int dst_x;
     int dst_y;
     int sc_left;
@@ -75,11 +78,19 @@ r3d_gtb_gui_stat(mach64_t *m)
     if (used && !m->blitter_busy)
         mach64_wake_fifo_thread(m);
 
+    /* With the engine timing model the FIFO drains in emulated time: report
+       its occupancy, and keep GUI_ACTIVE while the modelled engine works. */
+    if (m->engine_status && m->engine_status(m, &modelled, &busy)) {
+        used = modelled;
+    } else {
+        busy = used || m->blitter_busy;
+    }
+
     free_entries = (used >= R3D_GTB_FIFO_VISIBLE) ? 0 :
                    (R3D_GTB_FIFO_VISIBLE - used);
     ret |= free_entries << 16;
 
-    if (used || m->blitter_busy || m->accel.busy)
+    if (busy || m->accel.busy)
         ret |= 0x01; /* GUI_ACTIVE */
 
     dst_x = r3d_sign_extend(m->dst_y_x >> 16, 13);
@@ -156,6 +167,18 @@ mach64_3d_read(mach64_t *m, uint32_t a, uint32_t *v)
     if (b == R3D_GUI_STAT) {
         *v = r3d_gtb_gui_stat(m);
         return 1;
+    }
+
+    /* FIFO_STAT: a '1' for each occupied entry of the sixteen it shows.
+       The core reports its own queue, which empties in no emulated time. */
+    if (b == R3D_FIFO_STAT && m->engine_status) {
+        uint32_t modelled = 0;
+        int busy = 0;
+
+        if (m->engine_status(m, &modelled, &busy)) {
+            *v = (modelled >= 16) ? 0xffffu : ((1u << modelled) - 1u);
+            return 1;
+        }
     }
 
     /*

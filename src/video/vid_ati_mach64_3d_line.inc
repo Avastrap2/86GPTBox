@@ -331,5 +331,8 @@ r3d_draw_3d_line(mach64_3d_ctx_t *ctx, uint32_t cmd)
     m->dst_y_x = ((uint32_t) (x & 0x1fff) << 16) |
                  ((uint32_t) y & 0x7fff);
 
+    if (m->engine_3d)
+        r3d_report_work(ctx, (uint32_t) len, 0);
+
     return 1;
 }

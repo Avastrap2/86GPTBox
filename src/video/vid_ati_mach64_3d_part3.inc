@@ -2,6 +2,7 @@
 #include "vid_ati_mach64_3d_data_path.h"
 #include "vid_ati_mach64_3d_reg_fields.h"
 #include "vid_ati_mach64_3d_trapezoid.h"
+#include "vid_ati_mach64_gtb_timing.h"
 
 #define R3D_GTB_DST_BRES_SIGN      (1u << 11)
 #define R3D_GTB_TRAIL_X_DIR         (1u << 13)
@@ -171,6 +172,29 @@ r3d_edge_step_scanline(int *x, int *e, int inc, int dec, int dir,
     return *x - old;
 }
 
+/*
+ * Tell an installed engine timing model what a draw cost: the pixels and
+ * scanlines it walked and the memory each pixel touches under the current
+ * SCALE_3D_CNTL, Z_CNTL and pixel formats.  Drawing itself is unaffected.
+ */
+static void r3d_report_work(mach64_3d_ctx_t *ctx,uint32_t pixels,uint32_t rows){
+    mach64_t*m=ctx->mach64;uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2],zc=ctx->regs[R3D_Z_CNTL>>2];
+    int fcn=(ctl>>R3D_FCN_SHIFT)&3,ztest=(zc>>R3D_Z_TEST_SHIFT)&7,blend=(ctl>>R3D_TEX_BLEND_SHIFT)&R3D_TEX_BLEND_MASK;
+    int z_on=(zc&R3D_Z_EN)&&(((ctx->regs[R3D_Z_OFF_PITCH>>2]>>22)&0x3ff)!=0);
+    mach64_gtb_3d_t t;
+    memset(&t,0,sizeof(t));
+    t.pixels=pixels;t.rows=rows;
+    t.dst_bits=(uint32_t)r3d_bytes_per_pixel(r3d_dst_format(m))*8u;
+    if(fcn==2){
+        t.tex_bits=(uint32_t)r3d_bytes_per_pixel(r3d_tex_format(m))*8u;
+        if(ctl&R3D_MIP_MAP_DISABLE)t.texels=((ctl&R3D_BILINEAR_TEX_EN)||blend>=2)?4:1;
+        else t.texels=(blend>=2)?4:((blend==1)?2:((ctl&R3D_BILINEAR_TEX_EN)?4:1));
+    }
+    t.z_read=z_on&&ztest!=0&&ztest!=7;
+    t.z_write=z_on&&!!(zc&R3D_Z_MASK);
+    t.dst_read=(((ctl>>R3D_ALPHA_FOG_SHIFT)&3)==1)||mach64_3d_destination_compare_enabled(m->clr_cmp_cntl);
+    m->engine_3d(m,&t);
+}
 static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     mach64_t*m=ctx->mach64;uint32_t ctl=ctx->regs[R3D_SCALE_3D_CNTL>>2];int fcn=(ctl>>R3D_FCN_SHIFT)&3,df=r3d_dst_format(m),dbpp=r3d_bytes_per_pixel(df),tf=r3d_tex_format(m),tbpp=r3d_bytes_per_pixel(tf),len=cmd&0x7fff;if(!len||!dbpp||!fcn)return;if(fcn==2&&!tbpp)return;
     int lead=r3d_sign_extend(m->dst_y_x>>16,13),y=r3d_sign_extend(m->dst_y_x,15),ydir=(m->dst_cntl&DST_Y_DIR)?1:-1,ldir=(m->dst_cntl&DST_X_DIR)?1:-1,tdir=(m->dst_cntl&R3D_GTB_TRAIL_X_DIR)?1:-1;
@@ -231,12 +255,14 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
         txi += tx2 * initial_steps;
         tyi += txy2 * initial_steps;
     }
+    uint32_t walked=0;
     for(int row=0;row<len;row++){
         /* TRAP_FILL_DIR defines which programmed edge is the left/right side.
          * Do not sort crossed edges into a mirrored continuation. */
         if(y>=top&&y<=bottom){
             int dl,dh;
             if(mach64_3d_trapezoid_clip_span(lead,trail,fill_lr,left,right,&dl,&dh)){
+                walked+=(uint32_t)(dh-dl);
                 /* X interpolation registers are defined for steps in the
                  * programmed DST_X_DIR direction, not absolute screen +X. */
                 int n=(dl-lead)*ldir;
@@ -302,4 +328,5 @@ static void r3d_draw_trapezoid(mach64_3d_ctx_t *ctx,uint32_t cmd){
     ctx->regs[R3D_S_START>>2]=(uint32_t)s0;ctx->regs[R3D_S_Y_INC>>2]=(uint32_t)syi;ctx->regs[R3D_S_XINC_START>>2]=(uint32_t)sxi;
     ctx->regs[R3D_T_START>>2]=(uint32_t)t0;ctx->regs[R3D_T_Y_INC>>2]=(uint32_t)tyi;ctx->regs[R3D_T_XINC_START>>2]=(uint32_t)txi;
     r3d_tex_mark_internal(ctx);
+    if(m->engine_3d)r3d_report_work(ctx,walked,(uint32_t)len);
 }

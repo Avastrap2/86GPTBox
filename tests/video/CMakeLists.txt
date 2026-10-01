@@ -62,6 +62,13 @@ add_executable(mach64_scaler_math_test
 
 add_test(NAME mach64_scaler_math COMMAND mach64_scaler_math_test)
 
+add_executable(mach64_gtb_timing_test
+    mach64_gtb_timing_test.c
+    ${PROJECT_SOURCE_DIR}/src/video/vid_ati_mach64_gtb_timing.c
+)
+
+add_test(NAME mach64_gtb_timing COMMAND mach64_gtb_timing_test)
+
 add_executable(mach64_texture_palette_test
     mach64_texture_palette_test.c
 )

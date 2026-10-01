@@ -1004,6 +1004,9 @@ mach64_start_fill(mach64_t *mach64)
     mach64->accel.poly_draw = 0;
     mach64->accel.busy      = 1;
     mach64->accel.op        = OP_RECT;
+
+    if (mach64->engine_op)
+        mach64->engine_op(mach64, OP_RECT);
 }
 
 void
@@ -1024,6 +1027,9 @@ mach64_start_line(mach64_t *mach64)
 
     mach64->accel.busy = 1;
     mach64->accel.op   = OP_LINE;
+
+    if (mach64->engine_op)
+        mach64->engine_op(mach64, OP_LINE);
 }
 
 // calculates colour compare function for mach64 blit

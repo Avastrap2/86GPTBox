@@ -120,6 +120,7 @@ add_library(vid OBJECT
     vid_ati_mach64_3d.c
     vid_ati_mach64_gtb_hook.c
     vid_ati_mach64_rage2p.c
+    vid_ati_mach64_gtb_timing.c
 
     # Chips & Technologies
     vid_chips_69000.c

@@ -7,6 +7,7 @@
  * command decoder in front of the legacy Mach64 FIFO.
  */
 #include "vid_ati_mach64_3d.h"
+#include "vid_ati_mach64_gtb_timing.h"
 
 /*
  * ARS2D.bin is a complete ATI PCI option-ROM image for 1002:4755.  Its ROM
@@ -377,11 +378,291 @@ mach64rage2p_contains(const uint8_t *buf, size_t len, const char *needle)
     return 0;
 }
 
+/*
+ * Drawing-engine timing (the model is in vid_ati_mach64_gtb_timing.c).
+ *
+ * Every register write the guest queues is an entry of a modelled 48-entry
+ * command FIFO, which drains as the modelled engine finishes its work.  The
+ * guest sees the occupancy in GUI_STAT and FIFO_STAT, and a write to a full
+ * FIFO waits, as a PCI retry does on the real card, by charging the emulated
+ * CPU the remaining time.  A 2D operation's cost is known once the core has
+ * run it; a 3D one as soon as the synchronous renderer has drawn it.
+ */
+#define MACH64_GTB_RING_MASK    (MACH64_GTB_FIFO_RING - 1)
+#define MACH64_GTB_MAX_WAIT_NS  50000000.0   /* one wait charges no more */
+#define MACH64_GTB_LOST_NS      1000000000.0 /* a backlog the card cannot have */
+
+typedef struct mach64rage2p_engine_t {
+    mach64_gtb_fifo_model_t fifo;
+    double                  legacy_ns[MACH64_GTB_FIFO_RING]; /* by core FIFO index */
+    double                  pending_ns;  /* 3D work drawn during this write */
+    uint64_t                floor;       /* emulated time already charged */
+    uint32_t                clock_key;
+    mach64_gtb_clocks_t     clocks;
+} mach64rage2p_engine_t;
+
+static uint64_t
+mach64rage2p_engine_ticks(double ns)
+{
+    return (uint64_t) (ns * cpuclock / 1000000000.0 + 0.5);
+}
+
+static uint64_t
+mach64rage2p_engine_now(mach64rage2p_engine_t *e)
+{
+#ifdef USE_DYNAREC
+    if (cpu_use_dynarec)
+        update_tsc();
+#endif
+    return (tsc > e->floor) ? tsc : e->floor;
+}
+
+static mach64_gtb_clocks_t
+mach64rage2p_engine_measure(const mach64_t *mach64)
+{
+    mach64_gtb_clocks_t c = mach64_gtb_pll_clocks(mach64->pll_regs, (double) cpu_pci_speed);
+
+    /* The CRTC's display fetch takes its share of the memory bandwidth:
+       bytes per pixel at the pixel clock, during the displayed part of each
+       frame (CRTC_H/V_TOTAL_DISP, in characters and lines). */
+    if (mach64->crtc_gen_cntl & (1u << 24)) {
+        double pixel_clock = mach64->pll_freq[mach64->clock_cntl & 3];
+        double h_total     = (double) ((mach64->crtc_h_total_disp & 0x1ff) + 1);
+        double h_disp      = (double) (((mach64->crtc_h_total_disp >> 16) & 0xff) + 1);
+        double v_total     = (double) ((mach64->crtc_v_total_disp & 0x7ff) + 1);
+        double v_disp      = (double) (((mach64->crtc_v_total_disp >> 16) & 0x7ff) + 1);
+        double active      = (h_disp * v_disp) / (h_total * v_total);
+
+        if (active > 1.0)
+            active = 1.0;
+        if (pixel_clock > 0.0)
+            c.crtc_fraction = pixel_clock * ((mach64->svga.bpp + 7) / 8) * active / (c.mclk * 8.0);
+    }
+    return c;
+}
+
+/* CPU thread only; the FIFO thread measures for itself. */
+static const mach64_gtb_clocks_t *
+mach64rage2p_engine_clocks(mach64_t *mach64, mach64rage2p_engine_t *e)
+{
+    uint32_t key = 2166136261u;
+
+    for (int i = 2; i <= 11; i++)
+        key = (key ^ mach64->pll_regs[i]) * 16777619u;
+    key = (key ^ (mach64->clock_cntl & 3) ^ ((mach64->crtc_gen_cntl >> 20) & 0x10) ^
+           ((uint32_t) mach64->svga.bpp << 8)) * 16777619u;
+    key = (key ^ mach64->crtc_h_total_disp) * 16777619u;
+    key = (key ^ mach64->crtc_v_total_disp) * 16777619u;
+    if (key != e->clock_key || e->clocks.mclk == 0.0) {
+        e->clocks    = mach64rage2p_engine_measure(mach64);
+        e->clock_key = key;
+        mach64_log("Rage II+ engine timing: MCLK %.1f MHz, XCLK %.1f MHz, display %.0f%% of memory\n",
+                   e->clocks.mclk / 1000000.0, e->clocks.xclk / 1000000.0, e->clocks.crtc_fraction * 100.0);
+    }
+    return &e->clocks;
+}
+
+static int
+mach64rage2p_engine_cost(void *priv, const mach64_gtb_fifo_entry_t *entry, uint64_t *cost)
+{
+    mach64_t              *mach64 = (mach64_t *) priv;
+    mach64rage2p_engine_t *e      = (mach64rage2p_engine_t *) mach64->engine_timing;
+
+    if (!entry->legacy) {
+        *cost = entry->cost;
+        return 1;
+    }
+    /* The core has not run this entry yet. */
+    if ((int) ((unsigned) mach64->fifo_read_idx - (unsigned) entry->fifo_idx) <= 0)
+        return 0;
+    *cost = mach64rage2p_engine_ticks(e->legacy_ns[entry->fifo_idx & MACH64_GTB_RING_MASK]);
+    return 1;
+}
+
+static uint64_t
+mach64rage2p_engine_update(mach64_t *mach64, mach64rage2p_engine_t *e)
+{
+    uint64_t now = mach64rage2p_engine_now(e);
+
+    mach64_gtb_fifo_fold(&e->fifo, mach64rage2p_engine_cost, mach64);
+    if (e->fifo.free_at > now + mach64rage2p_engine_ticks(MACH64_GTB_LOST_NS)) {
+        memset(&e->fifo, 0, sizeof(e->fifo));
+        e->floor = 0;
+        now      = mach64rage2p_engine_now(e);
+    }
+    mach64_gtb_fifo_depart(&e->fifo, now);
+    return now;
+}
+
+static uint64_t
+mach64rage2p_engine_wait(mach64rage2p_engine_t *e, uint64_t until)
+{
+    uint64_t now = mach64rage2p_engine_now(e);
+
+    if (until > now) {
+        uint64_t limit = mach64rage2p_engine_ticks(MACH64_GTB_MAX_WAIT_NS);
+        uint64_t wait  = until - now;
+
+        if (wait > limit)
+            wait = limit;
+        cycles -= (int) wait;
+        e->floor = now + wait;
+        now      = mach64rage2p_engine_now(e);
+    }
+    return now;
+}
+
+static void
+mach64rage2p_engine_before_write(mach64_t *mach64, mach64rage2p_engine_t *e)
+{
+    uint64_t now = mach64rage2p_engine_update(mach64, e);
+
+    while (mach64_gtb_fifo_used(&e->fifo) >= MACH64_GTB_FIFO_DEPTH) {
+        if (e->fifo.head == e->fifo.fold) {
+            /* The oldest entry's cost is known only once the core has run it. */
+            mach64_wait_fifo_idle(mach64);
+            mach64_gtb_fifo_fold(&e->fifo, mach64rage2p_engine_cost, mach64);
+            if (e->fifo.head == e->fifo.fold) {
+                /* The core FIFO was reset under these entries. */
+                mach64_gtb_fifo_drop_unfolded(&e->fifo);
+                break;
+            }
+        }
+        now = mach64rage2p_engine_wait(e, e->fifo.ring[e->fifo.head & MACH64_GTB_RING_MASK].start);
+        mach64_gtb_fifo_depart(&e->fifo, now);
+    }
+}
+
+static void
+mach64rage2p_engine_after_write(mach64_t *mach64, mach64rage2p_engine_t *e, int legacy, int fifo_idx)
+{
+    double   take_ns = 1000000000.0 / mach64rage2p_engine_clocks(mach64, e)->xclk;
+    uint64_t cost    = legacy ? 0 : mach64rage2p_engine_ticks(take_ns + e->pending_ns);
+
+    e->pending_ns = 0.0;
+    mach64_gtb_fifo_push(&e->fifo, mach64rage2p_engine_now(e), legacy, fifo_idx, cost);
+}
+
+static uint32_t
+mach64rage2p_engine_bits(int size)
+{
+    switch (size) {
+        case 0:
+            return 8;
+        case 1:
+            return 16;
+        case 2:
+            return 32;
+        case WIDTH_4BIT:
+            return 4;
+        default:
+            return 1;
+    }
+}
+
+/* Mixes that need the destination: all but 0, 1, leave alone, ~S and S. */
+static int
+mach64rage2p_mix_reads_dst(int mix)
+{
+    switch (mix & 0x1f) {
+        case 1:
+        case 2:
+        case 3:
+        case 4:
+        case 7:
+            return 0;
+        default:
+            return 1;
+    }
+}
+
+/* Runs where the core runs the operation: the FIFO thread or the CPU thread. */
+static void
+mach64rage2p_engine_op(mach64_t *mach64, int op)
+{
+    mach64rage2p_engine_t *e         = (mach64rage2p_engine_t *) mach64->engine_timing;
+    mach64_gtb_clocks_t    clocks    = mach64rage2p_engine_measure(mach64);
+    uint32_t               dst_bits  = mach64rage2p_engine_bits(mach64->accel.dst_size);
+    uint32_t               pixel     = (dst_bits >= 32) ? 0xffffffffu : ((1u << ((dst_bits < 8) ? 8 : dst_bits)) - 1u);
+    uint32_t               pitch     = (((mach64->dst_off_pitch >> 22) & 0x3ffu) << 3) * dst_bits / 8;
+    int                    dst_read  = mach64rage2p_mix_reads_dst(mach64->accel.mix_fg) ||
+                                       ((mach64->accel.source_mix != MONO_SRC_1) && mach64rage2p_mix_reads_dst(mach64->accel.mix_bg)) ||
+                                       ((mach64->accel.write_mask & pixel) != pixel) ||
+                                       (!mach64->accel.clr_cmp_src && (mach64->accel.clr_cmp_fn > 1));
+    mach64_gtb_work_t      w;
+
+    if (op == OP_RECT) {
+        mach64_gtb_rect_t r;
+
+        memset(&r, 0, sizeof(r));
+        r.width      = (uint32_t) mach64->accel.dst_width;
+        r.height     = (uint32_t) mach64->accel.dst_height;
+        r.x          = mach64->accel.dst_x_start;
+        r.dst_offset = (mach64->dst_off_pitch & 0xfffffu) << 3;
+        r.dst_pitch  = pitch;
+        r.dst_bits   = dst_bits;
+        r.dst_read   = dst_read;
+        if ((mach64->accel.source_fg == SRC_BLITSRC) || (mach64->accel.source_bg == SRC_BLITSRC))
+            r.src_bits = mach64rage2p_engine_bits(mach64->accel.src_size);
+        else if (mach64->accel.source_mix == MONO_SRC_BLITSRC)
+            r.src_bits = 1;
+        w = mach64_gtb_rect_work(&r);
+    } else
+        w = mach64_gtb_line_work((uint32_t) mach64->accel.x_count, dst_bits, pitch,
+                                 !!(mach64->dst_cntl & DST_Y_MAJOR), dst_read);
+
+    e->legacy_ns[mach64->fifo_read_idx & MACH64_GTB_RING_MASK] += mach64_gtb_work_seconds(&w, &clocks) * 1000000000.0;
+}
+
+/* The 3D renderer draws synchronously, on the CPU thread. */
+static void
+mach64rage2p_engine_3d(mach64_t *mach64, const mach64_gtb_3d_t *work)
+{
+    mach64rage2p_engine_t *e = (mach64rage2p_engine_t *) mach64->engine_timing;
+    mach64_gtb_work_t      w = mach64_gtb_3d_work(work);
+
+    e->pending_ns += mach64_gtb_work_seconds(&w, mach64rage2p_engine_clocks(mach64, e)) * 1000000000.0;
+}
+
+static int
+mach64rage2p_engine_status(mach64_t *mach64, uint32_t *used, int *busy)
+{
+    mach64rage2p_engine_t *e = (mach64rage2p_engine_t *) mach64->engine_timing;
+    uint64_t               now;
+
+    if (!e)
+        return 0;
+    /* A guest polling the FIFO waits on entries the core has yet to run. */
+    if ((mach64->fifo_write_idx != mach64->fifo_read_idx) && !mach64->blitter_busy)
+        mach64_wake_fifo_thread(mach64);
+    now   = mach64rage2p_engine_update(mach64, e);
+    *used = mach64_gtb_fifo_used(&e->fifo);
+    *busy = mach64_gtb_fifo_busy(&e->fifo, now);
+    return 1;
+}
+
 void
 mach64_queue(mach64_t *mach64, uint32_t addr, uint32_t val, uint32_t type)
 {
-    if (!mach64_3d_write(mach64, addr, val, type))
-        mach64_queue_legacy(mach64, addr, val, type);
+    mach64rage2p_engine_t *e = (mach64rage2p_engine_t *) mach64->engine_timing;
+    int                    idx;
+
+    if (!e) {
+        if (!mach64_3d_write(mach64, addr, val, type))
+            mach64_queue_legacy(mach64, addr, val, type);
+        return;
+    }
+
+    mach64rage2p_engine_before_write(mach64, e);
+    if (mach64_3d_write(mach64, addr, val, type)) {
+        mach64rage2p_engine_after_write(mach64, e, 0, 0);
+        return;
+    }
+    /* The core adds the operation's cost to this slot when it runs it. */
+    idx = mach64->fifo_write_idx;
+    e->legacy_ns[idx & MACH64_GTB_RING_MASK] = 1000000000.0 / mach64rage2p_engine_clocks(mach64, e)->xclk;
+    mach64_queue_legacy(mach64, addr, val, type);
+    mach64rage2p_engine_after_write(mach64, e, 1, idx);
 }
 
 /*
@@ -881,6 +1162,14 @@ mach64rage2p_init(const device_t *info)
         return NULL;
     }
 
+    /* The drawing engine takes the time the real chip would. */
+    mach64->engine_timing = calloc(1, sizeof(mach64rage2p_engine_t));
+    if (mach64->engine_timing) {
+        mach64->engine_op     = mach64rage2p_engine_op;
+        mach64->engine_3d     = mach64rage2p_engine_3d;
+        mach64->engine_status = mach64rage2p_engine_status;
+    }
+
     /* Refresh VT2's reset template with the complete GTB identity and handlers. */
     if (reset_state[mach64->svga.monitor_index])
         *reset_state[mach64->svga.monitor_index] = *mach64;
@@ -891,10 +1180,14 @@ mach64rage2p_init(const device_t *info)
 static void
 mach64rage2p_close(void *priv)
 {
+    /* The FIFO thread charges the timing model until mach64_close stops it. */
+    void *engine_timing = ((mach64_t *) priv)->engine_timing;
+
     mach64rage2p_aux_detach((mach64_t *) priv);
     mach64_gtb_state_detach(priv);
     mach64_3d_detach((mach64_t *) priv);
     mach64_close(priv);
+    free(engine_timing);
 }
 
 const device_t mach64rage2p_device = {

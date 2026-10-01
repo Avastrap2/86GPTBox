@@ -110,6 +110,8 @@ enum {
 #define MACH64_FLAG_DRAM    (1 << 17) /* the board's memory is DRAM (256Kx16), not VRAM */
 #define MACH64_PCI_IOCONFIG 0x40        // "User Defined Configuration"
 
+struct mach64_gtb_3d_t;
+
 typedef struct mach64_t {
     mem_mapping_t linear_mapping;
     mem_mapping_t mmio_mapping;
@@ -378,6 +380,13 @@ typedef struct mach64_t {
     void   *i2c;
     void   *i2c_tv;
     void   *ddc;
+
+    /* Guest-time model of the drawing engine, installed by the Rage II+
+       (vid_ati_mach64_rage2p.c).  Unset, drawing takes no time. */
+    void *engine_timing;
+    void (*engine_op)(struct mach64_t *mach64, int op);
+    void (*engine_3d)(struct mach64_t *mach64, const struct mach64_gtb_3d_t *work);
+    int  (*engine_status)(struct mach64_t *mach64, uint32_t *used, int *busy);
 } mach64_t;
 
 extern video_timings_t timing_mach64_isa;
