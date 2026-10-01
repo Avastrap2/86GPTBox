@@ -3,8 +3,8 @@
 
 #include "vid_ati_mach64_3d_part1.inc"
 #include "vid_ati_mach64_3d_part2.inc"
-#include "vid_ati_mach64_3d_line.inc"
 #include "vid_ati_mach64_3d_part3.inc"
+#include "vid_ati_mach64_3d_line.inc"
 
 /*
  * Keep the established part4 register decoder as the base implementation, then
@@ -33,23 +33,24 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
         /*
          * 3D RAGE exposes the lead/Bresenham length register at both MM
          * offsets 0_48 and 0_51 (byte offsets 0x120 and 0x144).  part4 already
-         * mirrors both addresses into the same shadow for trapezoids.  Shaded
-         * line commands must be intercepted at both aliases too; otherwise a
+         * mirrors both addresses into the same shadow for trapezoids.  3D line
+         * commands must be intercepted at both aliases too; otherwise a
          * line written through 0x144 is consumed as GT-only state without ever
          * starting the line walker, leaving holes in connected LINESTRIPs.
          */
         if (b == R3D_LEAD_BRES_LNTH || b == R3D_LEAD_BRES_LNTH_ALIAS) {
             uint32_t i = R3D_LEAD_BRES_LNTH >> 2;
             uint32_t cmd = r3d_merge_write(ctx->regs[i], aa, v, type);
+            unsigned fcn = (ctx->regs[R3D_SCALE_3D_CNTL >> 2] >> R3D_FCN_SHIFT) & 3u;
 
             /* DP_SRC and DST_CNTL may still be queued in the legacy FIFO.
              * Resolve that state before deciding whether this drawing line
-             * belongs to the shaded or legacy path. Testing first can either
-             * drop a 2D line or send a shaded line to the selector-5 fallback.
+             * belongs to the 3D or legacy path. Testing first can either
+             * drop a 2D line or send a 3D line to the selector-5 fallback.
              * Ordinary 2D mode and non-drawing preloads need no extra wait. */
             if (r3d_write_complete(aa, type) &&
                 !(cmd & (R3D_DRAW_TRAP | R3D_LINE_DISABLE)) &&
-                ((ctx->regs[R3D_SCALE_3D_CNTL >> 2] >> R3D_FCN_SHIFT) & 3u) == 3u)
+                (fcn == 2u || fcn == 3u))
                 r3d_sync_legacy_fifo(ctx);
 
             /*
@@ -59,7 +60,7 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
              * when bit 31 is set; otherwise it keeps the live edge from
              * the preceding command.  Loading solely in the trapezoid
              * walker loses a no-draw preload and reuses a stale edge.
-             * Handle both aliases here, before either the shaded-line
+             * Handle both aliases here, before either the 3D line
              * interception or the legacy/shared-register fallback.
              * This shadow belongs to the synchronous 3D front end; keep
              * shared-register ordering at the existing draw barriers rather
@@ -74,18 +75,18 @@ mach64_3d_write(mach64_t *m, uint32_t a, uint32_t v, uint32_t type)
             /*
              * For byte/word command programming, let incomplete writes keep
              * following the ordinary shared-register path.  The final write is
-             * claimed only after the full command selects the 3D shaded-line
-             * source.  This prevents the legacy 2D line engine from consuming
-             * source selector 5 and substituting black.
+             * claimed only after the full command selects the 3D line source.
+             * This prevents the legacy 2D line engine from consuming source
+             * selector 5 and substituting black.
              */
             if (r3d_write_complete(aa, type) &&
-                r3d_is_shaded_line_command(ctx, cmd)) {
+                r3d_is_3d_line_command(ctx, cmd)) {
                 ctx->regs[i] = cmd;
                 m->dst_bres_lnth = r3d_merge_write(m->dst_bres_lnth,
                                                     aa, v, type);
 
                 r3d_sync_legacy_fifo(ctx);
-                r3d_draw_shaded_line(ctx, cmd);
+                r3d_draw_3d_line(ctx, cmd);
                 return 1;
             }
         }

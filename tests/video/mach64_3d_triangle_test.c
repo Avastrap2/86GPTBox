@@ -862,6 +862,33 @@ line_to_triangle_case(mach64_t *m, unsigned address, int last_pixel)
     expect("trailing edge excluded", load_pixel(m, (8 * SIZE + 12) * 4, 4), BACKGROUND);
 }
 
+/* The Windows 95 HAL draws wireframe triangle edges as textured lines:
+ * SCALE_3D_FCN 2 with the 3D foreground source.  Like a trapezoid span, an
+ * X step adds the S/T X increments and a Y step the Y increments, so a line
+ * stepping one texel per pixel reads a row (X-major) or column (Y-major). */
+static void
+textured_line_case(mach64_t *m, unsigned address, int ymajor)
+{
+    snprintf(case_name, sizeof(case_name), "textured line alias=%03x ymajor=%d", address, ymajor);
+    cases++;
+    setup(m, 6);
+    write_reg(m, Z_CNTL, 0);
+    write_reg(m, SCALE_3D_CNTL, TEXTURE);
+    m->dst_cntl |= DST_LAST_PEL | (ymajor ? DST_Y_MAJOR : 0);
+    write_reg(m, S_X_INC, 1u << 23); /* One texel of the 8x8 map. */
+    write_reg(m, T_Y_INC, 1u << 23);
+    write_reg(m, DST_Y_X_ALIAS, xy(8, 8));
+    write_reg(m, address, 4);
+    for (int k = 0; k < 4; k++) {
+        int x = ymajor ? 8 : 8 + k, y = ymajor ? 8 + k : 8;
+        expect("textured line texel", load_pixel(m, (y * SIZE + x) * 4, 4),
+               ymajor ? texture_color(0, k) : texture_color(k, 0));
+    }
+    expect("pixel past the line untouched",
+           load_pixel(m, ((ymajor ? 12 : 8) * SIZE + (ymajor ? 8 : 12)) * 4, 4), BACKGROUND);
+    expect("textured line endpoint", m->dst_y_x, ymajor ? xy(8, 11) : xy(11, 8));
+}
+
 static void
 legacy_barrier_case(mach64_t *m)
 {
@@ -1216,6 +1243,10 @@ main(void)
     for (int mode = 0; mode < 4; mode++) {
         line_dispatch_case(m, mode, LEAD_LENGTH);
         line_dispatch_case(m, mode, LEAD_ALIAS);
+    }
+    for (int ymajor = 0; ymajor <= 1; ymajor++) {
+        textured_line_case(m, LEAD_LENGTH, ymajor);
+        textured_line_case(m, LEAD_ALIAS, ymajor);
     }
     for (int textured = 0; textured <= 1; textured++)
         for (int dx = -1; dx <= 1; dx += 2)
