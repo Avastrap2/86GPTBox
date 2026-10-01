@@ -924,9 +924,17 @@ mach64_accel_common(mach64_t *mach64)
         }
     }
 
-    /* Scissors are signed: 13 bits across, 15 down (RRG 3-78..3-83). */
-    mach64->accel.sc_left   = mach64_sext(mach64->sc_left_right & 0x1fff, 13);
-    mach64->accel.sc_right  = mach64_sext((mach64->sc_left_right >> 16) & 0x1fff, 13);
+    /* Scissors are signed: 13 bits across, 15 down (RRG 3-78..3-83). The
+       GT-B's are 14 bits across, as on the RAGE PRO (RRG-G03300 5-40): its
+       DP_SET_GUI_ENGINE opens them with SC_RIGHT 1FFFh (5-54), which as 13
+       bits would be -1 and clip everything the Rage II+ driver draws. */
+    {
+        const int sc_bits = (mach64->type == MACH64_GTB) ? 14 : 13;
+        const uint32_t sc_mask = (1u << sc_bits) - 1;
+
+        mach64->accel.sc_left  = mach64_sext(mach64->sc_left_right & sc_mask, sc_bits);
+        mach64->accel.sc_right = mach64_sext((mach64->sc_left_right >> 16) & sc_mask, sc_bits);
+    }
     mach64->accel.sc_top    = mach64_sext(mach64->sc_top_bottom & 0x7fff, 15);
     mach64->accel.sc_bottom = mach64_sext((mach64->sc_top_bottom >> 16) & 0x7fff, 15);
 
