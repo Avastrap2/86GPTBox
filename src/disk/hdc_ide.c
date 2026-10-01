@@ -239,6 +239,74 @@ static uint8_t ide_qua_pnp_rom[] = {
 ide_t *ide_drives[IDE_NUM] = { 0 };
 
 /*
+ * Task-file writes a hard disc turns away only because DRQ is set.  Task file
+ * ownership keeps a data transfer on its own registers, but a host may leave
+ * a PIO data-in transfer unfinished and set up its next command instead, which
+ * the command register then accepts.  Windows 95 does exactly that when
+ * HWiNFO32 reads part of an IDENTIFY DEVICE block behind its back: dropping
+ * the registers it writes in the meantime ran its next DMA command on the
+ * previous command's sectors.  Hold such writes and load them into the task
+ * file only when a new command ends the old transfer.
+ */
+typedef struct ide_tf_held_s {
+    uint8_t mask;
+    uint8_t val[7];
+} ide_tf_held_t;
+
+static ide_tf_held_t ide_tf_held[IDE_NUM];
+
+static void
+ide_tf_hold(ide_t *ide, int reg, uint8_t val)
+{
+    if ((ide->type == IDE_HDD) && !(ide->tf->atastat & BSY_STAT)) {
+        ide_tf_held[ide->channel].val[reg] = val;
+        ide_tf_held[ide->channel].mask |= (1 << reg);
+    }
+}
+
+static void
+ide_tf_load_held(ide_t *ide)
+{
+    ide_tf_held_t *held = &ide_tf_held[ide->channel];
+
+    for (int reg = 1; reg <= 6; reg++) {
+        if (!(held->mask & (1 << reg)))
+            continue;
+
+        const uint8_t val = held->val[reg];
+
+        switch (reg) {
+            case 1:
+                ide->tf->cylprecomp = val;
+                break;
+            case 2:
+                ide->tf->secount = val;
+                break;
+            case 3:
+                ide->tf->sector = val;
+                ide->lba_addr   = (ide->lba_addr & 0xfffff00) | val;
+                break;
+            case 4:
+                ide->tf->cylinder = (ide->tf->cylinder & 0xff00) | val;
+                ide->lba_addr     = (ide->lba_addr & 0xfff00ff) | (val << 8);
+                break;
+            case 5:
+                ide->tf->cylinder = (ide->tf->cylinder & 0xff) | (val << 8);
+                ide->lba_addr     = (ide->lba_addr & 0xf00ffff) | (val << 16);
+                break;
+            case 6:
+                ide->tf->drvsel = val & 0xef;
+                ide->lba_addr   = (ide->lba_addr & 0x0ffffff) | (ide->tf->head << 24);
+                break;
+            default:
+                break;
+        }
+    }
+
+    held->mask = 0;
+}
+
+/*
  * Host image reads are independent of guest-visible IDE state until the
  * emulated command-completion callback consumes their result.  Starting the
  * read when the command is issued lets host I/O overlap the emulated seek and
@@ -1743,6 +1811,7 @@ static void
 dev_reset(ide_t *ide)
 {
     ide_async_read_discard(ide);
+    ide_tf_held[ide->channel].mask = 0;
     ide_set_signature(ide);
 
     if ((ide->type == IDE_ATAPI) && ide->stop)
@@ -1881,53 +1950,66 @@ ide_writeb(uint16_t addr, uint8_t val, void *priv)
                 ide->tf->cylprecomp = val;
                 if (ide->type == IDE_ATAPI)
                     ide_log("ATAPI transfer mode: %s\n", (val & 1) ? "DMA" : "PIO");
-            }
+            } else
+                ide_tf_hold(ide, addr, val);
 
             if (!(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT)))
                 ide_other->tf->cylprecomp = val;
+            else
+                ide_tf_hold(ide_other, addr, val);
             break;
 
         case 0x2: /* Sector count */
             if (!(ide->tf->atastat & (BSY_STAT | DRQ_STAT)))
                 ide->tf->secount       = val;
+            else
+                ide_tf_hold(ide, addr, val);
             if (!(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT)))
                 ide_other->tf->secount = val;
+            else
+                ide_tf_hold(ide_other, addr, val);
             break;
 
         case 0x3: /* Sector */
             if (!(ide->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide->tf->sector        = val;
                 ide->lba_addr          = (ide->lba_addr & 0xfffff00) | val;
-            }
+            } else
+                ide_tf_hold(ide, addr, val);
 
             if (!(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide_other->tf->sector  = val;
                 ide_other->lba_addr    = (ide_other->lba_addr & 0xfffff00) | val;
-            }
+            } else
+                ide_tf_hold(ide_other, addr, val);
             break;
 
         case 0x4: /* Cylinder low */
             if (!(ide->type & IDE_SHADOW) && !(ide->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide->tf->cylinder = (ide->tf->cylinder & 0xff00) | val;
                 ide->lba_addr     = (ide->lba_addr & 0xfff00ff) | (val << 8);
-            }
+            } else
+                ide_tf_hold(ide, addr, val);
 
             if (!(ide_other->type & IDE_SHADOW) && !(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide_other->tf->cylinder = (ide_other->tf->cylinder & 0xff00) | val;
                 ide_other->lba_addr     = (ide_other->lba_addr & 0xfff00ff) | (val << 8);
-            }
+            } else
+                ide_tf_hold(ide_other, addr, val);
             break;
 
         case 0x5: /* Cylinder high */
             if (!(ide->type & IDE_SHADOW) && !(ide->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide->tf->cylinder = (ide->tf->cylinder & 0xff) | (val << 8);
                 ide->lba_addr     = (ide->lba_addr & 0xf00ffff) | (val << 16);
-            }
+            } else
+                ide_tf_hold(ide, addr, val);
 
             if (!(ide_other->type & IDE_SHADOW) && !(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                 ide_other->tf->cylinder = (ide_other->tf->cylinder & 0xff) | (val << 8);
                 ide_other->lba_addr     = (ide_other->lba_addr & 0xf00ffff) | (val << 16);
-            }
+            } else
+                ide_tf_hold(ide_other, addr, val);
             break;
 
         case 0x6: /* Drive/Head */
@@ -1961,13 +2043,15 @@ ide_writeb(uint16_t addr, uint8_t val, void *priv)
                     ide->tf->drvsel     = val & 0xef;
                     ide->lba_addr       = (ide->lba_addr & 0x0ffffff) |
                                           (ide->tf->head << 24);
-                }
+                } else
+                    ide_tf_hold(ide, addr, val);
 
                 if (!(ide_other->tf->atastat & (BSY_STAT | DRQ_STAT))) {
                     ide_other->tf->drvsel = val & 0xef;
                     ide_other->lba_addr = (ide_other->lba_addr & 0x0ffffff) |
                                           (ide->tf->head << 24);
-                }
+                } else
+                    ide_tf_hold(ide_other, addr, val);
             }
             break;
 
@@ -1979,6 +2063,8 @@ ide_writeb(uint16_t addr, uint8_t val, void *priv)
                 !(ide->tf->atastat & BSY_STAT)) {
                 ide->tf->atastat &= ~DRQ_STAT;
                 ide->tf->pos      = 0;
+                /* The registers written since are this command's. */
+                ide_tf_load_held(ide);
             }
 
             if ((ide->tf->atastat & (BSY_STAT | DRQ_STAT)) &&
@@ -1991,6 +2077,7 @@ ide_writeb(uint16_t addr, uint8_t val, void *priv)
 
             ide_irq_lower(ide);
             ide->command = val;
+            ide_tf_held[ide->channel].mask = 0;
 
             ide->tf->error = 0;
 
