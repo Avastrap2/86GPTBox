@@ -1416,16 +1416,17 @@ mach64_ext_readb(uint32_t addr, void *priv)
                     break;
                 case 0x2e8 ... 0x2eb:
                     /* DST_X_Y and DST_WIDTH_HEIGHT (0_BA, 0_BB) are VT-B
-                       registers: neither the GX nor the VT book has them. */
+                       registers: neither the GX nor the VT book has them.
+                       The GT-B (Rage II+) is of the same generation. */
                     ret = 0;
-                    if (mach64->type < MACH64_VT3)
+                    if (mach64->type < MACH64_GTB)
                         break;
                     mach64_wait_fifo_idle(mach64);
                     READ8(addr ^ 2, mach64->dst_y_x);
                     break;
                 case 0x2ec ... 0x2ef:
                     ret = 0;
-                    if (mach64->type < MACH64_VT3)
+                    if (mach64->type < MACH64_GTB)
                         break;
                     mach64_wait_fifo_idle(mach64);
                     READ8(addr ^ 2, mach64->dst_height_width);

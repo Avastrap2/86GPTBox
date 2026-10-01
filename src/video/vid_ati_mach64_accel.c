@@ -184,8 +184,9 @@ mach64_accel_write_fifo(mach64_t *mach64, uint32_t addr, uint8_t val)
             break;
         case 0x2e8 ... 0x2eb:
             /* DST_X_Y (0_BA) and DST_WIDTH_HEIGHT (0_BB) are VT-B registers,
-               in neither the GX nor the VT book. */
-            if (mach64->type >= MACH64_VT3)
+               in neither the GX nor the VT book. The GT-B (Rage II+) is of
+               the same generation and keeps them. */
+            if (mach64->type >= MACH64_GTB)
                 WRITE8(addr ^ 2, mach64->dst_y_x, val);
             break;
         case 0x110 ... 0x111:
@@ -212,7 +213,7 @@ start_blit_op:
             break;
 
         case 0x2ec ... 0x2ef:
-            if (mach64->type < MACH64_VT3)
+            if (mach64->type < MACH64_GTB)
                 break;
             WRITE8(addr ^ 2, mach64->dst_height_width, val);
             mach64->dst_bres_lnth = (mach64->dst_bres_lnth & ~0x7fff) | ((mach64->dst_height_width >> 16) & 0x1fff);
