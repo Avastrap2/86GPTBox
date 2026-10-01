@@ -104,6 +104,7 @@ static const NETWORK_CARD net_cards[] = {
     { &plip_device                },
     { &pe3_device                 },
     /* ISA16 */
+    { &threec509b_device          },
     { &pcnet_am79c960_device      },
     { &pcnet_am79c961_device      },
     { &de220p_device              },
@@ -113,6 +114,8 @@ static const NETWORK_CARD net_cards[] = {
     { &threec592_device           },
     { &threec597_device           },
     /* MCA */
+    { &threec529_mc_device        },
+    { &threec529_tp_device        },
     { &ibm_ethernet_efe5_device   },
     { &ibm_ethernet_efd5_device   },
     { &ibm_ethernet_efd4_device   },

@@ -615,14 +615,9 @@ mach64rage2p_install_mmio_handlers(mach64_t *mach64)
                             mach64rage2p_mmio_writeb,
                             mach64rage2p_mmio_writew,
                             mach64rage2p_mmio_writel);
+    /* The big-endian aperture has no register window (RRG-G02700 figure
+     * 2.1), so the little-endian linear block is the only aperture copy. */
     mem_mapping_set_handler(&mach64->mmio_linear_mapping,
-                            mach64rage2p_mmio_readb,
-                            mach64rage2p_mmio_readw,
-                            mach64rage2p_mmio_readl,
-                            mach64rage2p_mmio_writeb,
-                            mach64rage2p_mmio_writew,
-                            mach64rage2p_mmio_writel);
-    mem_mapping_set_handler(&mach64->mmio_linear_mapping_2,
                             mach64rage2p_mmio_readb,
                             mach64rage2p_mmio_readw,
                             mach64rage2p_mmio_readl,

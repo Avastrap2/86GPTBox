@@ -289,12 +289,18 @@ if(RAGE2P_KEYED_BLT_DIAGNOSTICS)
     target_compile_definitions(vid PRIVATE RAGE2P_KEYED_BLT_DIAGNOSTICS)
 endif()
 
+# tests/CMakeLists.txt already adds tests/video and tests/mem for
+# BUILD_TESTING/BUILD_BENCHMARKS; each directory gates its opt-in targets.
 if(MACH64_ACCEL_TESTS)
     enable_testing()
-    add_subdirectory(tests/video)
+    if(NOT (BUILD_TESTING OR BUILD_BENCHMARKS))
+        add_subdirectory(tests/video)
+    endif()
 endif()
 
 if(MEM_LOOKUP_TESTS)
     enable_testing()
-    add_subdirectory(tests/mem)
+    if(NOT (BUILD_TESTING OR BUILD_BENCHMARKS))
+        add_subdirectory(tests/mem)
+    endif()
 endif()

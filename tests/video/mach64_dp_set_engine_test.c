@@ -42,6 +42,21 @@ thread_wait_event(event_t *event, int timeout)
     return 0;
 }
 
+/* Uncontended FIFO lock: these tests run the worker inline on one thread. */
+int
+thread_wait_mutex(mutex_t *mutex)
+{
+    (void) mutex;
+    return 1;
+}
+
+int
+thread_release_mutex(mutex_t *mutex)
+{
+    (void) mutex;
+    return 1;
+}
+
 uint64_t
 plat_timer_read(void)
 {
