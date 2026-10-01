@@ -605,6 +605,88 @@ mach64rage2p_mmio_writel(uint32_t addr, uint32_t val, void *priv)
     mach64_ext_writel(addr, val, priv);
 }
 
+/*
+ * The Rage II+ Windows 95 driver also uses the registers in the top 4 KiB of
+ * the big-endian aperture, the second 8 MiB of the linear aperture.  With that
+ * window read as memory it rejects the card ("the adapter type is incorrect")
+ * and never enables its accelerator.  The VT book's aperture map (RRG-G02700
+ * figure 2.1) shows registers at the top of the first 8 MiB only, and the core
+ * maps the whole second 8 MiB as memory, so keep the GT-B's 4 KiB register
+ * window there in front of the core's big-endian memory handlers.
+ */
+#define MACH64_GTB_BE_REG_WINDOW 0x1000u
+
+extern uint16_t mach64_readw_be(uint32_t addr, void *priv);
+extern uint32_t mach64_readl_be(uint32_t addr, void *priv);
+extern void     mach64_writew_be(uint32_t addr, uint16_t val, void *priv);
+extern void     mach64_writel_be(uint32_t addr, uint32_t val, void *priv);
+
+static mach64_t *
+mach64rage2p_be_regs(uint32_t addr, void *priv)
+{
+    mach64_t            *mach64 = (mach64_t *) ((svga_t *) priv)->priv;
+    const mem_mapping_t *map    = &mach64->linear_mapping_big_endian;
+
+    return ((addr - map->base) >= (map->size - MACH64_GTB_BE_REG_WINDOW)) ? mach64 : NULL;
+}
+
+static uint8_t
+mach64rage2p_be_readb(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    return mach64 ? mach64rage2p_mmio_readb(addr, mach64) : mach64_readb_be(addr, priv);
+}
+
+static uint16_t
+mach64rage2p_be_readw(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    return mach64 ? mach64rage2p_mmio_readw(addr, mach64) : mach64_readw_be(addr, priv);
+}
+
+static uint32_t
+mach64rage2p_be_readl(uint32_t addr, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    return mach64 ? mach64rage2p_mmio_readl(addr, mach64) : mach64_readl_be(addr, priv);
+}
+
+static void
+mach64rage2p_be_writeb(uint32_t addr, uint8_t val, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    if (mach64)
+        mach64rage2p_mmio_writeb(addr, val, mach64);
+    else
+        mach64_writeb_be(addr, val, priv);
+}
+
+static void
+mach64rage2p_be_writew(uint32_t addr, uint16_t val, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    if (mach64)
+        mach64rage2p_mmio_writew(addr, val, mach64);
+    else
+        mach64_writew_be(addr, val, priv);
+}
+
+static void
+mach64rage2p_be_writel(uint32_t addr, uint32_t val, void *priv)
+{
+    mach64_t *mach64 = mach64rage2p_be_regs(addr, priv);
+
+    if (mach64)
+        mach64rage2p_mmio_writel(addr, val, mach64);
+    else
+        mach64_writel_be(addr, val, priv);
+}
+
 static void
 mach64rage2p_install_mmio_handlers(mach64_t *mach64)
 {
@@ -615,8 +697,6 @@ mach64rage2p_install_mmio_handlers(mach64_t *mach64)
                             mach64rage2p_mmio_writeb,
                             mach64rage2p_mmio_writew,
                             mach64rage2p_mmio_writel);
-    /* The big-endian aperture has no register window (RRG-G02700 figure
-     * 2.1), so the little-endian linear block is the only aperture copy. */
     mem_mapping_set_handler(&mach64->mmio_linear_mapping,
                             mach64rage2p_mmio_readb,
                             mach64rage2p_mmio_readw,
@@ -624,6 +704,13 @@ mach64rage2p_install_mmio_handlers(mach64_t *mach64)
                             mach64rage2p_mmio_writeb,
                             mach64rage2p_mmio_writew,
                             mach64rage2p_mmio_writel);
+    mem_mapping_set_handler(&mach64->linear_mapping_big_endian,
+                            mach64rage2p_be_readb,
+                            mach64rage2p_be_readw,
+                            mach64rage2p_be_readl,
+                            mach64rage2p_be_writeb,
+                            mach64rage2p_be_writew,
+                            mach64rage2p_be_writel);
 }
 
 /*
