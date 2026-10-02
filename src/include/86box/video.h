@@ -381,6 +381,7 @@ extern const device_t mach64ct_device;
 extern const device_t mach64ct_device_onboard;
 extern const device_t mach64vt_device;
 extern const device_t mach64vt2_device;
+extern const device_t mach64gtb_device;
 extern const device_t mach64vt3_onboard_device;
 
 /* ATi 18800 */

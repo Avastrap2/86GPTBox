@@ -271,16 +271,16 @@ flushmmucache_nopc(void)
 void
 mem_flush_write_page(uint32_t addr, UNUSED(uint32_t virt))
 {
-    const page_t *page_target = &pages[addr >> 12];
-    const uintptr_t page_base = (uintptr_t) ram + (addr & ~0xfff);
+    const page_t   *page_target = &pages[addr >> 12];
+    const uintptr_t page_base   = (uintptr_t) ram + (addr & ~0xfff);
 
     for (uint16_t c = 0; c < 256; c++) {
         if (writelookup[c] != (int) 0xffffffff) {
             /* Each cached translation has its own virtual-page bias. Use it
                to identify the physical page, including aliases other than
                the address through which the code was compiled. */
-            const uint32_t virtual_page = writelookup[c];
-            const uintptr_t lookup_base = writelookup2[virtual_page];
+            const uint32_t  virtual_page = writelookup[c];
+            const uintptr_t lookup_base  = writelookup2[virtual_page];
             if ((lookup_base != LOOKUP_INV &&
                  lookup_base + ((uintptr_t) virtual_page << 12) == page_base) ||
                 page_lookup[virtual_page] == page_target) {

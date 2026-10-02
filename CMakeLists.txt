@@ -137,10 +137,6 @@ option(QT           "Use the Qt-based user interface"                           
 option(SDL2         "Use SDL2 instead of SDL3"                                   OFF)
 option(BUILD_TESTING "Build the unit test suite"                                  OFF)
 option(BUILD_BENCHMARKS "Build performance benchmarks"                            OFF)
-option(MACH64_ACCEL_TESTS "Build Mach64 accelerator regression tests"            OFF)
-option(MEM_LOOKUP_TESTS "Build memory write-lookup regression tests"             OFF)
-option(IDE_TESTS    "Build IDE task-file regression tests"                       OFF)
-option(RAGE2P_KEYED_BLT_DIAGNOSTICS "Enable Rage II+ keyed-BLT K-record probes"  OFF)
 
 if(BUILD_TESTING)
     enable_testing()
@@ -285,30 +281,3 @@ endif()
 set(CMAKE_TOP_LEVEL_PROCESSED TRUE)
 
 add_subdirectory(src)
-
-if(RAGE2P_KEYED_BLT_DIAGNOSTICS)
-    target_compile_definitions(vid PRIVATE RAGE2P_KEYED_BLT_DIAGNOSTICS)
-endif()
-
-# tests/CMakeLists.txt already adds tests/video and tests/mem for
-# BUILD_TESTING/BUILD_BENCHMARKS; each directory gates its opt-in targets.
-if(MACH64_ACCEL_TESTS)
-    enable_testing()
-    if(NOT (BUILD_TESTING OR BUILD_BENCHMARKS))
-        add_subdirectory(tests/video)
-    endif()
-endif()
-
-if(MEM_LOOKUP_TESTS)
-    enable_testing()
-    if(NOT (BUILD_TESTING OR BUILD_BENCHMARKS))
-        add_subdirectory(tests/mem)
-    endif()
-endif()
-
-if(IDE_TESTS)
-    enable_testing()
-    if(NOT (BUILD_TESTING OR BUILD_BENCHMARKS))
-        add_subdirectory(tests/disk)
-    endif()
-endif()
