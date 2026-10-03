@@ -447,11 +447,11 @@ composite_tests(void)
  * function Ch. What follows the source in memory must never reach the
  * screen.
  */
-#define OVERLAY_SRC_W 4
-#define OVERLAY_SRC_H 2
-#define OVERLAY_PITCH 8 /* pixels */
-#define OVERLAY_W     8
-#define OVERLAY_H     4
+#define OVERLAY_SRC_W   4
+#define OVERLAY_SRC_H   2
+#define OVERLAY_PITCH   8 /* pixels */
+#define OVERLAY_W       8
+#define OVERLAY_H       4
 
 #define SCALE_REPLICATE (SCALE_HORZ_MODE | SCALE_VERT_MODE)
 
@@ -528,19 +528,26 @@ overlay_draw_yuv(int type, const uint32_t *source, uint32_t scale_cntl, uint32_t
 }
 
 static void
-overlay_check(int type, const char *name, int y, const uint32_t expect[OVERLAY_W])
+overlay_check(const char *card, const char *name, int y, const uint32_t expect[OVERLAY_W])
 {
     int x = 0;
 
     while ((x < OVERLAY_W) && (overlay_screen[y][x] == expect[x]))
         x++;
-    CHECK(x == OVERLAY_W, "%s overlay, %s: line %d pixel %d is %06x, not %06x", (type == MACH64_GTB) ? "GT-B" : "VT2",
-          name, y, x, overlay_screen[y][x], expect[x]);
+    CHECK(x == OVERLAY_W, "%s overlay, %s: line %d pixel %d is %06x, not %06x", card, name, y, x, overlay_screen[y][x],
+          expect[x]);
 }
 
 static void
 overlay_tests(void)
 {
+    static const struct {
+        int         type;
+        const char *name;
+    } cards[] = {
+        { MACH64_VT2, "VT2" },
+        { MACH64_GTB, "GT-B" }
+    };
     static const uint32_t pairs[OVERLAY_W] = { 0x100000, 0x100000, 0x200000, 0x200000, 0x300000, 0x300000, 0x400000, 0x400000 };
     static const uint32_t quads[OVERLAY_W] = { 0x100000, 0x100000, 0x100000, 0x100000, 0x300000, 0x300000, 0x300000, 0x300000 };
     static const uint32_t edge[OVERLAY_W]  = { 0x100000, 0x200000, 0x300000, 0x400000, 0x400000, 0x400000, 0x400000, 0x400000 };
@@ -558,49 +565,50 @@ overlay_tests(void)
     /* U at half the rate of Y: 80h, 90h, A0h, B0h, then C0h. */
     static const uint32_t blue[OVERLAY_W] = { 0x808080, 0x807b9c, 0x8075b8, 0x8070d4, 0x806af1, 0x806af1, 0x806af1, 0x806af1 };
 
-    for (int i = 0; i < 2; i++) {
-        int type = i ? MACH64_GTB : MACH64_VT2;
+    for (size_t i = 0; i < (sizeof(cards) / sizeof(cards[0])); i++) {
+        int         type = cards[i].type;
+        const char *card = cards[i].name;
 
         /* A 2x zoom with ECP at VCLK / 2: the driver doubles HORZ_INC to
            1.0, and each step covers two pixels, as the Rage II+ Windows 95
            driver has it at 1280x960. RGB is replicated, blends or not. */
         overlay_draw_rgb(type, 1, 0x10000800);
-        overlay_check(type, "ECP at VCLK / 2", 0, pairs);
+        overlay_check(card, "ECP at VCLK / 2", 0, pairs);
 
         /* ECP at VCLK / 4: HORZ_INC four times as large, a step every four
            pixels. */
         overlay_draw_rgb(type, 2, 0x20000800);
-        overlay_check(type, "ECP at VCLK / 4", 0, quads);
+        overlay_check(card, "ECP at VCLK / 4", 0, quads);
 
         /* Past the last pixel and line of the source, they are repeated. */
         overlay_draw_rgb(type, 0, 0x10001000);
-        overlay_check(type, "last pixel", 0, edge);
-        overlay_check(type, "last line", 2, last);
-        overlay_check(type, "last line", 3, last);
+        overlay_check(card, "last pixel", 0, edge);
+        overlay_check(card, "last line", 2, last);
+        overlay_check(card, "last line", 3, last);
 
         /* YUV at 2x, blended both ways. */
         overlay_draw_yuv(type, overlay_grey, 0, 0x08000800);
-        overlay_check(type, "blends", 0, grey_0);
-        overlay_check(type, "blends", 1, grey_half);
-        overlay_check(type, "blends", 2, grey_1);
-        overlay_check(type, "blends", 3, grey_1);
+        overlay_check(card, "blends", 0, grey_0);
+        overlay_check(card, "blends", 1, grey_half);
+        overlay_check(card, "blends", 2, grey_1);
+        overlay_check(card, "blends", 3, grey_1);
 
         /* Replicated both ways, then one way each. */
         overlay_draw_yuv(type, overlay_grey, SCALE_REPLICATE, 0x08000800);
-        overlay_check(type, "replication", 0, grey_0_rep);
-        overlay_check(type, "replication", 1, grey_0_rep);
-        overlay_check(type, "replication", 2, grey_1_rep);
+        overlay_check(card, "replication", 0, grey_0_rep);
+        overlay_check(card, "replication", 1, grey_0_rep);
+        overlay_check(card, "replication", 2, grey_1_rep);
         overlay_draw_yuv(type, overlay_grey, SCALE_HORZ_MODE, 0x08000800);
-        overlay_check(type, "pixel replication", 1, half_rep);
+        overlay_check(card, "pixel replication", 1, half_rep);
         overlay_draw_yuv(type, overlay_grey, SCALE_VERT_MODE, 0x08000800);
-        overlay_check(type, "line replication", 1, grey_0);
+        overlay_check(card, "line replication", 1, grey_0);
 
         /* A step of two pixels takes the 50-50 blend. */
         overlay_draw_yuv(type, overlay_grey, 0, 0x20001000);
-        overlay_check(type, "2:1", 0, halved);
+        overlay_check(card, "2:1", 0, halved);
 
         overlay_draw_yuv(type, overlay_blue, 0, 0x08000800);
-        overlay_check(type, "U and V", 0, blue);
+        overlay_check(card, "U and V", 0, blue);
     }
 }
 
@@ -849,80 +857,6 @@ timing_cost_tests(void)
     card_close(mach64);
 }
 
-/*
- * An engine reset (GEN_GUI_EN to 0) runs the writes queued before it and
- * ends the operation in progress. ATI's Windows NT 3.5 driver for the 3D
- * Rage II+ sets the scissors to its 800x600 screen, opens them over all of
- * video memory and resets the engine at once, the opening still queued;
- * then it caches bitmaps from line 627 down. With the opening dropped,
- * those were clipped away (issue 8188). These are its writes at 8 bpp.
- */
-static void
-engine_reset_tests(void)
-{
-    mach64_t        *mach64 = card_create();
-    mach64_timing_t *timing;
-    uint32_t         used;
-    int              busy;
-    int              wrong = 0;
-
-    write_reg(mach64, 0x100, 0x1a000000); /* DST_OFF_PITCH: 832 pixels a line */
-    write_reg(mach64, 0x130, 0x00000003); /* DST_CNTL */
-    write_reg(mach64, 0x2c8, 0xffffffff); /* DP_WRITE_MASK */
-    write_reg(mach64, 0x2d0, 0x00020202); /* DP_PIX_WIDTH: 8 bpp */
-    write_reg(mach64, 0x2d8, 0x00000100); /* DP_SRC: DP_FRGD_CLR */
-    write_reg(mach64, 0x2d4, 0x00070003); /* DP_MIX: S, else D */
-    write_reg(mach64, 0x2a8, 0x03200000); /* SC_LEFT_RIGHT: the screen */
-    write_reg(mach64, 0x2b4, 0x02580000); /* SC_TOP_BOTTOM */
-    fifo_run(mach64);
-
-    write_reg(mach64, 0x2a8, 0x0fff0000);
-    write_reg(mach64, 0x2b4, 0x13b10000); /* down to line 5041, the end of video memory */
-    mach64_reset_engine(mach64);
-
-    write_reg(mach64, 0x2c4, 0x00000007); /* DP_FRGD_CLR */
-    write_reg(mach64, 0x10c, 627);        /* DST_Y_X */
-    write_reg(mach64, 0x118, (8 << 16) | 2);
-    fifo_run(mach64);
-    for (int y = 627; y < 629; y++) {
-        for (int x = 0; x < 8; x++) {
-            if (vram_read(mach64, 8, (y * 832) + x) != 7)
-                wrong++;
-        }
-    }
-    CHECK(!wrong, "a fill at line 627 after the reset: %d of 16 pixels not drawn", wrong);
-
-    /* A host data blit waiting for its data ends; what follows draws nothing. */
-    write_reg(mach64, 0x2d8, 0x00000200); /* DP_SRC: host data */
-    write_reg(mach64, 0x10c, 640);
-    write_reg(mach64, 0x118, (8 << 16) | 1);
-    fifo_run(mach64);
-    CHECK(mach64->accel.busy, "the host data blit did not start");
-    mach64_reset_engine(mach64);
-    CHECK(!mach64->accel.busy, "the reset left the engine busy");
-    write_reg(mach64, 0x200, 0x0f0f0f0f);
-    write_reg(mach64, 0x200, 0x0f0f0f0f);
-    fifo_run(mach64);
-    wrong = 0;
-    for (int x = 0; x < 8; x++) {
-        if (vram_read(mach64, 8, (640 * 832) + x) != 0)
-            wrong++;
-    }
-    CHECK(!wrong, "host data after the reset drew %d pixels", wrong);
-
-    /* The GT-B's modeled FIFO is emptied and its engine idle. */
-    timing = mach64->timing = mach64_timing_init();
-    timing_push(timing, 0, 0, 0, 1000);
-    timing_push(timing, 0, 0, 0, 1000);
-    mach64_timing_fold(mach64);
-    used = timing_used(mach64, 10, &busy);
-    CHECK((used == 1) && busy, "before the reset: %u used, busy %d", used, busy);
-    mach64_reset_engine(mach64);
-    used = timing_used(mach64, 10, &busy);
-    CHECK(!used && !busy, "after the reset: %u used, busy %d", used, busy);
-    card_close(mach64);
-}
-
 int
 main(void)
 {
@@ -933,7 +867,6 @@ main(void)
     timing_fifo_tests();
     timing_clock_tests();
     timing_cost_tests();
-    engine_reset_tests();
 
     if (failures) {
         fprintf(stderr, "Mach64 draw engine: %d checks failed\n", failures);

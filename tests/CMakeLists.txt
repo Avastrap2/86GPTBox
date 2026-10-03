@@ -4,6 +4,7 @@ add_subdirectory(device)
 add_subdirectory(video)
 add_subdirectory(scsi)
 add_subdirectory(mem)
+add_subdirectory(sound)
 add_subdirectory(disk)
 
 if(BUILD_TESTING)

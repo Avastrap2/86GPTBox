@@ -2269,7 +2269,7 @@ mach64_ext_writeb(uint32_t addr, uint8_t val, void *priv)
                 case 0xd0 ... 0xd3:
                     /* GEN_GUI_EN (bit 8): "0 = Resets draw engine" (RRG 3-57). */
                     if (((addr & 3) == 1) && (mach64->gen_test_cntl & 0x100) && !(val & 0x01))
-                        mach64_reset_engine(mach64);
+                        mach64_fifo_discard(mach64);
                     WRITE8(addr, mach64->gen_test_cntl, val);
                     if ((mach64->type >= MACH64_VT) && !mach64_pll_test_mode(mach64))
                         mach64->pll_regs[PLL_TEST_CNTL] = 0;
@@ -3408,7 +3408,7 @@ mach64_common_init(const device_t *info)
         mach64->isa_8bit = (device_get_config_int("bus_width") == 8);
     mach64->ati_io[0] = 0xce; /* 1CEh, offset 2 (VGA Register Guide 5-1) */
     mach64->ati_io[1] = 0x81;
-    mach64->vram_size = (mach64->type == MACH64_CT || mach64->type == MACH64_VT || mach64->type == MACH64_VT3) ? 2 : ((info->local & (1 << 20)) ? 4 : device_get_config_int("memory"));
+    mach64->vram_size = (mach64->type == MACH64_CT || mach64->type == MACH64_VT || mach64->type == MACH64_VT3) ? 2 : (device_get_config_int("memory"));
     mach64->vram_mask = (mach64->vram_size << 20) - 1;
     mach64->io_base = 0; /* PCI 40h select: 0 = 2ECh */
 
@@ -3675,8 +3675,8 @@ mach64gtb_init(const device_t *info)
     mach64->pci                           = 1;
     mach64->vlb                           = 0;
     mach64->pci_id                        = 0x4755;
-    mach64->config_chip_id                = 0x9a004755; /* "GU", ASIC ID 9Ah (VT/RAGE RRG 4-17) */
-    mach64->dac_cntl                      = 1 << 16;    /*Internal 24-bit DAC*/
+    mach64->config_chip_id                = 0x9a004755;   /* "GU", ASIC ID 9Ah (VT/RAGE RRG 4-17) */
+    mach64->dac_cntl                      = 1 << 16;      /*Internal 24-bit DAC*/
     mach64->config_stat0                  = 5 | (1 << 4); /* CFG_MEM_TYPE 5, SGRAM on the GT-B, and the CFG_VGA_EN strap */
     mach64->mem_cntl                      = 7;            /* MEM_SIZE, 4 bits from the VT-B on: 4 MB */
     mach64->use_block_decoded_io          = 4;
@@ -4042,6 +4042,27 @@ static const device_config_t mach64vt2_config[] = {
     },
     { .name = "", .description = "", .type = CONFIG_END }
 };
+
+static const device_config_t mach64gtb_config[] = {
+    {
+        .name           = "memory",
+        .description    = "Memory size",
+        .type           = CONFIG_SELECTION,
+        .default_string = NULL,
+        .default_int    = 4,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = {
+            { .description = "2 MB", .value = 2 },
+            { .description = "4 MB", .value = 4 },
+            { .description = "8 MB", .value = 8 },
+            { .description = ""                 }
+        },
+        .bios           = { { 0 } }
+    },
+    { .name = "", .description = "", .type = CONFIG_END }
+};
+
 // clang-format on
 
 const device_t mach64gx_isa_device = {
@@ -4067,6 +4088,20 @@ const device_t mach64gx_vlb_device = {
     .close         = mach64_close,
     .reset         = mach64_reset,
     .available     = mach64gx_vlb_available,
+    .speed_changed = mach64_speed_changed,
+    .force_redraw  = mach64_force_redraw,
+    .config        = mach64gx_vram_config
+};
+
+const device_t mach64gx_vlb_onboard_device = {
+    .name          = "ATI Mach64GX VLB (On-Board)",
+    .internal_name = "mach64gx_vlb_onboard",
+    .flags         = DEVICE_VLB,
+    .local         = MACH64_GX | MACH64_FLAG_ONBOARD,
+    .init          = mach64gx_init,
+    .close         = mach64_close,
+    .reset         = mach64_reset,
+    .available     = NULL,
     .speed_changed = mach64_speed_changed,
     .force_redraw  = mach64_force_redraw,
     .config        = mach64gx_vram_config
@@ -4101,6 +4136,20 @@ const device_t mach64gx_pci_device = {
     .alias         = "ATI WinTurbo"
 };
 
+const device_t mach64gx_pci_onboard_device = {
+    .name          = "ATI Mach64GX PCI (On-Board)",
+    .internal_name = "mach64gx_pci_onboard",
+    .flags         = DEVICE_PCI,
+    .local         = MACH64_GX | MACH64_FLAG_DRAM | MACH64_FLAG_ONBOARD,
+    .init          = mach64gx_init,
+    .close         = mach64_close,
+    .reset         = mach64_reset,
+    .available     = NULL,
+    .speed_changed = mach64_speed_changed,
+    .force_redraw  = mach64_force_redraw,
+    .config        = mach64gx_config,
+};
+
 const device_t mach64ct_device = {
     .name          = "ATI Mach64CT",
     .internal_name = "mach64ct",
@@ -4115,7 +4164,7 @@ const device_t mach64ct_device = {
     .config        = NULL
 };
 
-const device_t mach64ct_device_onboard = {
+const device_t mach64ct_onboard_device = {
     .name          = "ATI Mach64CT (On-Board)",
     .internal_name = "mach64ct_onboard",
     .flags         = DEVICE_PCI,
@@ -4161,14 +4210,15 @@ const device_t mach64gtb_device = {
     .name          = "ATI 3D Rage II+ DVD",
     .internal_name = "mach64_rage2p",
     .flags         = DEVICE_PCI,
-    .local         = MACH64_GTB | (1 << 20), /* 4 MB */
+    .local         = MACH64_GTB,
     .init          = mach64gtb_init,
     .close         = mach64_close,
     .reset         = mach64_reset,
     .available     = mach64gtb_available,
     .speed_changed = mach64_speed_changed,
     .force_redraw  = mach64_force_redraw,
-    .config        = NULL
+    .config        = mach64gtb_config,
+    .alias         = "ATI 3D Charger"
 };
 
 const device_t mach64vt3_onboard_device = {

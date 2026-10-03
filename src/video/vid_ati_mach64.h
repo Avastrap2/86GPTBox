@@ -382,9 +382,9 @@ typedef struct mach64_t {
     void   *ddc;
 
     /* 3D Rage II+ (GT-B) */
-    mach64_3d_t     *gt3d;          /* 3D engine and scaler, vid_ati_mach64_3d.c */
-    mach64_timing_t *timing;        /* draw engine timing, vid_ati_mach64_accel.c */
-    mem_mapping_t    aux_mapping;   /* the register aperture at BAR2 */
+    mach64_3d_t     *gt3d;        /* 3D engine and scaler, vid_ati_mach64_3d.c */
+    mach64_timing_t *timing;      /* draw engine timing, vid_ati_mach64_accel.c */
+    mem_mapping_t    aux_mapping; /* the register aperture at BAR2 */
     uint32_t         aux_base;
     uint8_t          gtb_regs[256]; /* control registers kept as written */
     uint8_t          genena;        /* 46E8h */
@@ -488,7 +488,7 @@ void     mach64_ext_writel(uint32_t addr, uint32_t val, void *priv);
 void     mach64_fifo_thread(void *param);
 void     mach64_wake_fifo_thread(mach64_t *mach64);
 void     mach64_wait_fifo_idle(mach64_t *mach64);
-void     mach64_reset_engine(mach64_t *mach64);
+void     mach64_fifo_discard(mach64_t *mach64);
 
 uint8_t  mach64_readb_be(uint32_t addr, void *priv);
 void     mach64_writeb_be(uint32_t addr, uint8_t val, void *priv);
