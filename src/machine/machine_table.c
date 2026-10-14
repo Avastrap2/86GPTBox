@@ -5808,7 +5808,7 @@ const machine_t machines[] = {
             .max_multi   = 0
         },
         .bus_flags = MACHINE_AT,
-        .flags     = MACHINE_IDE,
+        .flags     = 0,
         .ram       = {
             .min  = 512, /* gets stuck at POST code 10 with less */
             .max  = 8192,
@@ -14706,7 +14706,7 @@ const machine_t machines[] = {
             .max_multi   = MACHINE_MULTIPLIER_FIXED
         },
         .bus_flags = MACHINE_PS2_PCI,
-        .flags     = MACHINE_IDE_DUAL | MACHINE_VIDEO,
+        .flags     = MACHINE_IDE | MACHINE_VIDEO,
         .ram       = {
             .min  = 2048,
             .max  = 131072,
@@ -20625,7 +20625,7 @@ const machine_t machines[] = {
             .max_multi   = 3.5
         },
         .bus_flags = MACHINE_PS2_PCI,
-        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_SOUND | MACHINE_GAMEPORT, /* Machine has internal video: ATI 3D Rage II+ DVD (Mach64GT-B) */
+        .flags     = MACHINE_IDE_DUAL | MACHINE_VIDEO | MACHINE_APM | MACHINE_SOUND | MACHINE_GAMEPORT,
         .ram       = {
             .min  = 8192,
             .max  = 262144,
@@ -20646,7 +20646,7 @@ const machine_t machines[] = {
         .device                   = &an430tx_device,
         .kbd_device               = NULL,
         .fdc_device               = NULL,
-        .vid_device               = NULL,
+        .vid_device               = &mach64gtb_onboard_device,
         .snd_device               = &ymf715_onboard_device,
         .net_device               = NULL,
         .aliases                  = { "Intel Anchorage", "Micron Millennia MME", "Packard Bell PB79x", "Sony Vaio PCV-130", "Sony Vaio PCV-150", "" }
@@ -21685,7 +21685,7 @@ const machine_t machines[] = {
         .fdc_device               = NULL,
         .vid_device               = NULL,
         .snd_device               = NULL,
-        .net_device               = &i82559er_onboard_device, /* stand-in for DP83815 (also accepted by BIOS and software) */
+        .net_device               = &dp83815_onboard_device,
         .scsi_device              = &ncr53c875_onboard_pci_device, /* Machine has also internal SCSI: NCR 53c825 (as seen in one unit) */
         .aliases                  = { "Cobalt 4xxxWG", "Cobalt Carmel", "" }
     },
@@ -22003,7 +22003,7 @@ const machine_t machines[] = {
             .max_multi   = 6.0
         },
         .bus_flags = MACHINE_PS2_AGP | MACHINE_BUS_USB,
-        .flags     = MACHINE_AGP_INTERNAL | MACHINE_SUPER_IO | MACHINE_IDE_DUAL | MACHINE_SOUND | MACHINE_APM | MACHINE_ACPI | MACHINE_USB, /* Machine has internal video: SiS 6306 (not yet implemented) */
+        .flags     = MACHINE_AGP_INTERNAL | MACHINE_SUPER_IO | MACHINE_IDE_DUAL | MACHINE_VIDEO | MACHINE_SOUND | MACHINE_APM | MACHINE_ACPI | MACHINE_USB,
         .ram       = {
             .min  = 8192,
             .max  = 1048576,
@@ -22024,7 +22024,7 @@ const machine_t machines[] = {
         .device                   = &in530_device,
         .kbd_device               = NULL,
         .fdc_device               = NULL,
-        .vid_device               = NULL,
+        .vid_device               = &sis6306_onboard_device,
         .snd_device               = &ess_solo1_onboard_device,
         .net_device               = NULL,
         .aliases                  = { "GVC FR520", "Packard Bell Miami", "NEC Valuestar U VU47L", "Packard Bell PB980", "" }
@@ -25418,7 +25418,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI | MACHINE_USB,
         .ram       = {
             .min  = 8192,
-            .max  = 2097152,
+            .max  = 3145728,
             .step = 8192
         },
         .nvrmask                  = 255,
@@ -26524,7 +26524,7 @@ const machine_t machines[] = {
         .flags     = MACHINE_IDE_DUAL | MACHINE_SOUND | MACHINE_APM | MACHINE_ACPI | MACHINE_GAMEPORT | MACHINE_USB,
         .ram       = {
             .min  = 16384,
-            .max  = 4194304,
+            .max  = 3145728,
             .step = 8192
         },
         .nvrmask                  = 255,
@@ -26669,8 +26669,8 @@ const machine_t machines[] = {
             .min_multi   = 0,
             .max_multi   = 0
         },
-        .bus_flags = MACHINE_PS2_PCI | MACHINE_BUS_USB,
-        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI | MACHINE_USB,
+        .bus_flags = MACHINE_PS2_PCI,
+        .flags     = MACHINE_IDE_DUAL | MACHINE_APM | MACHINE_ACPI,
         .ram       = {
             .min  = 8192,
             .max  = 1048576,
@@ -27176,7 +27176,7 @@ machine_get_min_ram(int m)
 int
 machine_get_max_ram(int m)
 {
-    return MIN(((int) machines[m].ram.max), 3145728);
+    return MIN(((int) machines[m].ram.max), 4194304);
 }
 
 int

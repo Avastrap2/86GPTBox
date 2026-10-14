@@ -214,7 +214,9 @@ video_cards[] = {
     { .device = &voodoo_3_2000_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
     { .device = &voodoo_3_3000_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
     { .device = &voodoo_3_3500_agp_device,                      .flags = VIDEO_FLAG_TYPE_NONE      },
+#ifdef USE_RAGE128_MAXX
     { .device = &ati_rage128_maxx_device,                       .flags = VIDEO_FLAG_TYPE_SECONDARY },
+#endif /* USE_RAGE128_MAXX */
     { .device = &ati_rage128_pro_device,                        .flags = VIDEO_FLAG_TYPE_SECONDARY },
     { .device = &millennium_ii_agp_device,                      .flags = VIDEO_FLAG_TYPE_SECONDARY },
 #ifdef USE_G100
@@ -253,10 +255,11 @@ video_cards_migrate[] = {
     { .device = &gd5446_pci_device,                             .old_internal_name = "cl_gd5446_pci"                  },
     { .device = &gd5446_pci_device,                             .old_internal_name = "cl_gd5446_stb_pci"              },
     /* S3 86c911 ISA */
-    { .device = &s3_86c911_isa_device,                          .old_internal_name = "stealthvram_isa"                },
+    { .device = &s3_86c911_isa_device,                          .old_internal_name = "stealthvram911_isa"             },
     { .device = &s3_86c911_isa_device,                          .old_internal_name = "orchid_s3_911"                  },
     /* S3 86c924 ISA */
     { .device = &s3_86c924_isa_device,                          .old_internal_name = "ami_s3_924"                     },
+    { .device = &s3_86c924_isa_device,                          .old_internal_name = "stealthvram924_isa"             },
     /* S3 86c928 ISA */
     { .device = &s3_86c928_isa_device,                          .old_internal_name = "elsawin2k928_isa"               },
     { .device = &s3_86c928_isa_device,                          .old_internal_name = "metheus928_isa"                 },
