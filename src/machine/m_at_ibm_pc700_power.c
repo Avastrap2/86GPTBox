@@ -12,8 +12,8 @@
  *
  *          Its program is not available, so the commands are taken
  *          from how the LQKT47A BIOS uses them. A command is sent as
- *          nibbles in bits 3-0 of port 48h with bit 4 set. Dh and Eh
- *          take a data byte; for the others, bits 7-6 select clear,
+ *          nibbles in bits 3-0 of port 48h with bit 4 set. Ch, Dh and
+ *          Eh take a data byte; for the others, bits 7-6 select clear,
  *          set or read of a flag in the 80C51's bit-addressable RAM,
  *          and a read returns the flag in bit 0 of port 48h. Bit 0 of
  *          port 49h is the patent's PROC_RDY ANDed with its CMD_STATE#
@@ -96,7 +96,7 @@ ibm_pc700_power_command(ibm_pc700_power_t *dev)
             dev->reply = !!(*flags & mask);
             break;
         default:
-            /* The BIOS sends C4h after POST; what it does is not known. */
+            /* The BIOS never sends a two-nibble command with bits 7-6 set. */
             break;
     }
 }
@@ -124,7 +124,7 @@ ibm_pc700_power_write(uint16_t port, uint8_t val, void *priv)
             dev->cmd = val << 4;
             break;
         case 1:
-            if ((dev->cmd == 0xd0) || (dev->cmd == 0xe0))
+            if ((dev->cmd == 0xc0) || (dev->cmd == 0xd0) || (dev->cmd == 0xe0))
                 dev->data = val << 4;
             else {
                 dev->cmd |= val;
@@ -137,10 +137,14 @@ ibm_pc700_power_write(uint16_t port, uint8_t val, void *priv)
             dev->nibbles = 0;
             if (dev->cmd == 0xd0)
                 dev->ptr = dev->data & 0x3f;
-            else {
+            else if (dev->cmd == 0xe0) {
                 dev->ram[dev->ptr] = dev->data;
                 dev->ptr           = (dev->ptr + 1) & 0x3f;
             }
+            /*
+             * What Ch does is not known: the BIOS sends Ch 4Ah, then reads
+             * port 48h, after POST, and Ch 2Dh while relocating SMBASE.
+             */
             break;
     }
 }

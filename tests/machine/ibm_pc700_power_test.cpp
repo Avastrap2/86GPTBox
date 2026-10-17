@@ -55,7 +55,7 @@ protected:
     }
 
     /* As the LQKT47A BIOS sends a command: an optional first nibble with bit 7
-       set for Dh and Eh, then the two nibbles of the byte, each with bit 4. */
+       set for Ch, Dh and Eh, then the two nibbles of the byte, each with bit 4. */
     void send(uint16_t cmd)
     {
         if (cmd & 0x8000)
@@ -87,6 +87,22 @@ TEST_F(IbmPc700PowerTest, DataByteOEhIsNotACommand)
     for (uint16_t cmd : { 0x8d03, 0x8e0e, 0x8e00, 0x8e00, 0x0044 })
         send(cmd);
     EXPECT_EQ(power_offs, 0);
+}
+
+TEST_F(IbmPc700PowerTest, CommandChTakesADataByte)
+{
+    /* The BIOS sends Ch 4Ah after POST; the next command must still decode. */
+    send(0x8c4a);
+    send(0x000e);
+    EXPECT_EQ(power_offs, 1);
+}
+
+TEST_F(IbmPc700PowerTest, CommandChLeavesTheFlags)
+{
+    /* Ch 2Dh, sent while the BIOS relocates SMBASE, is not a flag clear. */
+    send(0x006d);
+    send(0x8c2d);
+    EXPECT_EQ(flag(0x2d), 1);
 }
 
 TEST_F(IbmPc700PowerTest, LengthComesFromTheFirstNibble)
