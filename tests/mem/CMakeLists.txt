@@ -16,12 +16,11 @@ if(BUILD_TESTING)
 
     # mem_write_lookup_test.c includes mem.c; interprocedural optimization
     # removes the device and platform functions the lookups do not reach.
-    # Four builds cover the old and new page layouts, each with and without
-    # USE_DYNAREC.
+    # Two builds cover the page layout with and without USE_DYNAREC.
     include(CheckIPOSupported)
     check_ipo_supported(RESULT mem_lookup_ipo LANGUAGES C)
     if(mem_lookup_ipo)
-        foreach(mode IN ITEMS old new old_interpreter new_interpreter)
+        foreach(mode IN ITEMS dynarec interpreter)
             set(test_target mem_write_lookup_${mode}_test)
             add_executable(${test_target} mem_write_lookup_test.c)
             set_property(TARGET ${test_target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
@@ -31,11 +30,8 @@ if(BUILD_TESTING)
                 ${PROJECT_SOURCE_DIR}/src/cpu
                 ${PROJECT_BINARY_DIR}/src/include
             )
-            if(mode STREQUAL "old" OR mode STREQUAL "new")
+            if(mode STREQUAL "dynarec")
                 target_compile_definitions(${test_target} PRIVATE USE_DYNAREC)
-            endif()
-            if(mode MATCHES "^new")
-                target_compile_definitions(${test_target} PRIVATE USE_NEW_DYNAREC)
             endif()
             add_test(NAME mem_write_lookup_${mode} COMMAND ${test_target})
         endforeach()

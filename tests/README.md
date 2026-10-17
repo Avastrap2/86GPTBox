@@ -17,6 +17,35 @@ Try to match your code's filename and append the type of test it is.
 
 ## Summary of current tests
 
+# Network packet buffering
+
+Build `network_queue_tests` with `BUILD_TESTING=ON`, then run
+`ctest --test-dir build -R '^network_queue$' --output-on-failure`.
+The tests exercise the shared queues, scheduler and SLiRP receive callbacks
+with timer, mutex and backend stubs. They cover bounded 255-frame capacity,
+wraparound, overflow counters, failed-swap ownership, burst retention,
+partial deferred merges, FIFO ordering, backend wakeups and unchanged
+16-frame batches and link pacing. They do not measure guest SMB throughput.
+
+# Realtek RTL8139C+ receive flow control
+
+Build `rtl8139_rx_tests` with `BUILD_TESTING=ON`, then run
+`ctest --test-dir build -R '^rtl8139_rx$' --output-on-failure`.
+The test checks that, in C+ mode, a frame arriving with no guest-owned
+receive descriptor is refused for later retry instead of being counted as
+missed and discarded.
+
+# Realtek RTL8139C+ timer
+
+Build `rtl8139_timer_tests` with `BUILD_TESTING=ON`, then run
+`ctest --test-dir build -R '^rtl8139_timer$' --output-on-failure`.
+The tests use the NIC's private timer implementation and the real timer engine,
+with PCI interrupt stubs. They cover counter polling without interrupts,
+match deadlines, wraparound, disabling/reprogramming interrupts, counter reset,
+clock halt/resume, guest TSC rewrites, speed changes, fractional PCI periods,
+late callbacks, and idle callback frequency. They are isolated regressions,
+not guest-driver integration tests or a host-performance benchmark.
+
 # TEAC CD-55A
 
 The `mke_cdrom_tests` target includes Panasonic regressions and TEAC protocol
@@ -189,9 +218,9 @@ ctest --test-dir build --output-on-failure -R '^MicroTouch\.'
 
 # Memory write lookups
 
-Build with `BUILD_TESTING=ON`, then run `ctest --test-dir build --output-on-failure -R '^mem_write_lookup_'`. The four `mem_write_lookup_*_test` targets need interprocedural optimization, which removes the device and platform functions the lookups do not reach; without it they are skipped.
+Build with `BUILD_TESTING=ON`, then run `ctest --test-dir build --output-on-failure -R '^mem_write_lookup_'`. The two `mem_write_lookup_*_test` targets need interprocedural optimization, which removes the device and platform functions the lookups do not reach; without it they are skipped.
 
-The tests include `src/mem/mem.c` and cover the old and new page layouts, each with and without `USE_DYNAREC`; the interpreter targets test the non-dynarec branches, they do not run an interpreter. They check direct RAM access, code at either end of a page, the page being compiled, the old backend's four code-list slots, dirty-word tracking, several virtual aliases of one page, unrelated pages with the same translation bias, the highest virtual page and the replacement ring wrapping around. Invalidating a physical page must work with an unaligned address and with a zero or unrelated virtual address. They are lookup and dirty-tracking tests, not a self-modifying code test in a guest.
+The tests include `src/mem/mem.c`, with and without `USE_DYNAREC`; the interpreter target tests the non-dynarec branches, it does not run an interpreter. They check direct RAM access, code at either end of a page, the page being compiled, several virtual aliases of one page, unrelated pages with the same translation bias, the highest virtual page and the replacement ring wrapping around. Invalidating a physical page must work with an unaligned address and with a zero or unrelated virtual address. They are lookup and dirty-tracking tests, not a self-modifying code test in a guest.
 
 # IDE task file
 
@@ -234,17 +263,6 @@ branch target, and rejection of unrecognized images.
 These do not prove that the Vectra boots. See the
 [experimental machine notes](../doc/hardware/hp-vectra-486n.md) for scope,
 performance limitations, and remaining hardware/firmware requirements.
-
-# IBM PC 7x0 Rapid Resume controller
-
-Build `ibm_pc700_tests` with `BUILD_TESTING=ON`, then run
-`ctest --test-dir build --output-on-failure -R 'IbmPc700RapidTest\.'`.
-The tests feed the Rapid Resume power controller model for ports 48h-49h the
-writes the LQKT47A BIOS makes: every two-nibble command it sends, the Dh/Eh
-commands that carry a data byte (so a 0Eh data byte does not switch the
-machine off), writes with SD4 low, the BIOS's flag self-test, the wake reason
-reported at power-on and the variable writes. The heartbeat and busy timing
-on the status port live in the machine file and are not covered.
 
 # INI configuration parser
 

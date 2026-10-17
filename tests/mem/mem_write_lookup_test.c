@@ -35,41 +35,17 @@ reset_fixture(void)
     recomp_page = UINT32_MAX;
     for (unsigned i = 0; i < 0x20; i++) {
         pages[i].mem = ram + i * 4096;
-#ifndef USE_NEW_DYNAREC
-        pages[i].write_w = mem_write_ramw_page;
-#endif
     }
 }
 
 static void
-set_block_presence(unsigned physical_page, unsigned quarter, int end_only)
+set_block_presence(unsigned physical_page, int end_only)
 {
-#ifdef USE_NEW_DYNAREC
     if (end_only)
         pages[physical_page].block_2 = 1;
     else
         pages[physical_page].block = 1;
-#else
-    /* Only presence is read; these functions never dereference the block. */
-    if (end_only)
-        pages[physical_page].block_2[quarter] = (struct codeblock_t *) test_ram;
-    else
-        pages[physical_page].block[quarter] = (struct codeblock_t *) test_ram;
-#endif
 }
-
-#ifndef USE_NEW_DYNAREC
-static void
-cached_write_word(uint32_t linear, uint16_t value)
-{
-    if (writelookup2[linear >> 12] != LOOKUP_INV)
-        memcpy((void *) (writelookup2[linear >> 12] + linear), &value, 2);
-    else if (page_lookup[linear >> 12])
-        page_lookup[linear >> 12]->write_w(linear, value, page_lookup[linear >> 12]);
-    else
-        check(0, "test requires a populated write lookup");
-}
-#endif
 
 int
 main(void)
@@ -85,23 +61,13 @@ main(void)
           "ordinary RAM translation addresses the physical page");
 
     for (unsigned end_only = 0; end_only < 2; end_only++) {
-        for (unsigned quarter = 0; quarter < 4; quarter++) {
-            reset_fixture();
-            set_block_presence(physical >> 12, quarter, end_only);
-            addwritelookup(linear, physical);
-            snprintf(name, sizeof(name), "%s block quarter %u selects tracked writes",
-                     end_only ? "ending" : "starting", quarter);
-            check(page_lookup[linear >> 12] == &pages[physical >> 12], name);
-            snprintf(name, sizeof(name), "%s block quarter %u has no direct-write bypass",
-                     end_only ? "ending" : "starting", quarter);
-            check(writelookup2[linear >> 12] == LOOKUP_INV, name);
-#ifndef USE_NEW_DYNAREC
-            cached_write_word(linear + (quarter << 10), 0x38df);
-            snprintf(name, sizeof(name), "%s block quarter %u write marks code dirty",
-                     end_only ? "ending" : "starting", quarter);
-            check(pages[physical >> 12].dirty_mask[quarter] == 1, name);
-#endif
-        }
+        reset_fixture();
+        set_block_presence(physical >> 12, end_only);
+        addwritelookup(linear, physical);
+        snprintf(name, sizeof(name), "%s block selects tracked writes", end_only ? "ending" : "starting");
+        check(page_lookup[linear >> 12] == &pages[physical >> 12], name);
+        snprintf(name, sizeof(name), "%s block has no direct-write bypass", end_only ? "ending" : "starting");
+        check(writelookup2[linear >> 12] == LOOKUP_INV, name);
     }
 
     reset_fixture();
@@ -132,7 +98,7 @@ main(void)
     }
 
     reset_fixture();
-    set_block_presence(physical >> 12, 0, 0);
+    set_block_presence(physical >> 12, 0);
     addwritelookup(alias1, physical);
     addwritelookup(alias2, physical);
     mem_flush_write_page(physical, 0);
