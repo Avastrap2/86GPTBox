@@ -1378,6 +1378,12 @@ extern int             machine_at_ficva503a_init(const machine_t *);
 extern int             machine_at_5emapro_init(const machine_t *);
 extern int             machine_at_k6bv3p_a_init(const machine_t *);
 
+/* VIA VPX */
+#ifdef EMU_DEVICE_H
+extern const device_t  tx100_device;
+#endif
+extern int             machine_at_tx100_init(const machine_t *);
+
 /* SiS 5591 */
 extern int             machine_at_5sg100_init(const machine_t *);
 
@@ -1732,7 +1738,7 @@ extern int             machine_ps55_model_5540t_init(const machine_t *);
 extern int             machine_ps55_model_5550t_init(const machine_t *);
 extern int             machine_ps55_model_5550v_init(const machine_t *);
 
-/* m_tandy.c */
+/* m_tandy1k.c */
 extern int tandy1k_eeprom_read(void);
 #ifdef EMU_DEVICE_H
 extern const device_t  tandy_1000sx_video_device;
@@ -1746,6 +1752,13 @@ extern int             machine_tandy1000hx_init(const machine_t *);
 extern const device_t  tandy_1000sl_video_device;
 #endif
 extern int             machine_tandy1000sl2_init(const machine_t *);
+
+/* m_tandy2k.c */
+#ifdef EMU_DEVICE_H
+extern const device_t  tandy_2000_device;
+extern const device_t  tandy_2000_video_device;
+#endif
+extern int             machine_tandy2000_init(const machine_t *);
 
 /* m_v86p.c */
 #ifdef EMU_DEVICE_H
