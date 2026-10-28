@@ -1267,6 +1267,7 @@ usb_update_io_mapping(pipc_t *dev, int func)
 {
     int on = !pipc_usb_disabled(dev, func - 2);
 
+    uhci_set_present(dev->usb[func - 2], on);
     uhci_update_io_mapping(dev->usb[func - 2], dev->usb_regs[func - 2][0x20] & ~0x1f, dev->usb_regs[func - 2][0x21], on && (dev->usb_regs[func - 2][PCI_REG_COMMAND] & PCI_COMMAND_IO));
     uhci_set_bus_master(dev->usb[func - 2], on && (dev->usb_regs[func - 2][PCI_REG_COMMAND] & PCI_COMMAND_L_BM));
 }
@@ -1537,7 +1538,10 @@ pipc_write(int func, int addr, UNUSED(int len), uint8_t val, void *priv)
                 break;
 
             case 0x77:
-                if ((dev->local >= VIA_PIPC_686A) && (val & 0x10) && (dev->ioapic == NULL))
+                /* The Acorp 6VIA90AP's BIOS enables the I/O APIC but has neither
+                   an MP table nor an ACPI MADT, so no OS can ever use it. */
+                if ((dev->local >= VIA_PIPC_686A) && (val & 0x10) && (dev->ioapic == NULL) &&
+                    (machines[machine].init != machine_at_6via90ap_init))
                     warning("PIPC: Warning: Internal I/O APIC enabled.\n");
                 dev->pci_isa_regs[0x77] = val;
                 /* Internal APIC Enable: the I/O APIC's window decoded
