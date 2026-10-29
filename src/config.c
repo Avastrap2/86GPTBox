@@ -1976,9 +1976,8 @@ load_floppy_and_cdrom_drives(void)
             d = fdd_get_from_internal_name("35_2hd");
         else
             d = fdd_get_from_internal_name(p);
+        /* The lookup only returns types that exist (0 for unknown names). */
         fdd_set_type(&drives[c], d);
-        if (fdd_get_type(&drives[c]) > 13)
-            fdd_set_type(&drives[c], 13);
 
         sprintf(temp, "fdd_%02i_writeprot", c + 1);
         drv->read_only = !!ini_section_get_int(cat, temp, 0);

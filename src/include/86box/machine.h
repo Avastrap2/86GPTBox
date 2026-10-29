@@ -46,6 +46,7 @@
 #define MACHINE_BUS_USB       0x00040000 /* sys has USB bus */
 #define MACHINE_BUS_AGP       0x00080000 /* sys has AGP bus */
 #define MACHINE_BUS_AC97      0x00100000 /* sys has AC97 bus (ACR/AMR/CNR slot) */
+#define MACHINE_BUS_S100      0x00200000 /* sys has S-100 (IEEE-696) bus */
 /* Aliases. */
 #define MACHINE_CASSETTE    (MACHINE_BUS_CASSETTE) /* sys has cassette port */
 /* Combined flags. */
@@ -1759,6 +1760,12 @@ extern const device_t  tandy_2000_device;
 extern const device_t  tandy_2000_video_device;
 #endif
 extern int             machine_tandy2000_init(const machine_t *);
+
+/* m_scp8086.c */
+#ifdef EMU_DEVICE_H
+extern const device_t  scp8086_device;
+#endif
+extern int             machine_scp8086_init(const machine_t *);
 
 /* m_v86p.c */
 #ifdef EMU_DEVICE_H

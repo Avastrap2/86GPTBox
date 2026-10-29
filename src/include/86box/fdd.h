@@ -51,6 +51,7 @@ extern int  fdd_can_read_medium(void *priv);
 extern int  fdd_doublestep_40(void *priv);
 extern int  fdd_is_pcjx_360(void *priv);
 extern int  fdd_is_525(void *priv);
+extern int  fdd_type_is_8inch(int type);
 extern int  fdd_supports_360_rpm(void *priv);
 extern int  fdd_is_dd(void *priv);
 extern int  fdd_is_hd(void *priv);
@@ -192,6 +193,12 @@ typedef struct fdd_drive_t {
     void *             local;
 
     void *             fdc;
+
+    /* A controller other than an NEC 765-type fdc_t (fdc is then NULL): the
+       86F engine hands it each bit cell of the turning disk, to read with
+       d86f_get_bit() or write with d86f_put_bit(), and runs no commands. */
+    void (*ctrl_bit)(void *ctrl, void *drv, int side);
+    void *             ctrl;
 
     void (*seek)(void *priv, int track);
     void (*readsector)(void *priv, int sector, int track, int side,

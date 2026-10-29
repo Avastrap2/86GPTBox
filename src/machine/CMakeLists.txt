@@ -34,6 +34,7 @@ add_library(mch OBJECT
     m_xt_ibm5550.c
     m_tandy1k.c
     m_tandy2k.c
+    m_scp8086.c
     m_v86p.c
     m_at_t3100e.c
     m_ps1.c

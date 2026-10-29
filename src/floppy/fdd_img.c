@@ -72,6 +72,7 @@ typedef struct img_t {
     uint8_t          skew;
     uint8_t          is_ioctl;
     fdd_drive_t *    ioctl_drive;
+    uint8_t          ibm3740;   /* 8" single density: FM, sectors in order */
 } img_t;
 
 static double    bit_rate_300;
@@ -705,7 +706,7 @@ img_seek(void *priv, int track)
                             sr -= dev->sectors;
                     }
                 } else {
-                    if (dev->gap3_size < 68)
+                    if ((dev->gap3_size < 68) && !dev->ibm3740)
                         sr = interleave(sector, 1, dev->sectors);
                     else
                         sr = dev->dmf ? (dmf_r[sector]) : (sector + 1);
@@ -1176,6 +1177,11 @@ jump_if_fdf:
     dev->sides       = 2;
     dev->sector_size = 2;
 
+    /* A raw image of 256256 bytes is the 8" single density standard, IBM
+       3740: 77 tracks of 26 FM sectors of 128 bytes on one side, with no
+       PC boot sector to describe it. */
+    dev->ibm3740 = !fdi && !cqm && !fdf && !ddi && (size == 256256);
+
     img_log("BPB reports %i sides and %i bytes per sector (%i sectors total)\n",
             bpb_sides, bpb_bps, bpb_total);
 
@@ -1189,7 +1195,12 @@ jump_if_fdf:
     guess = guess || !fdd_get_check_bpb(drv);
     guess = guess && !fdi;
     guess = guess && !cqm;
-    if (guess) {
+    if (dev->ibm3740) {
+        dev->sectors     = 26;
+        dev->tracks      = 77;
+        dev->sides       = 1;
+        dev->sector_size = 0;
+    } else if (guess) {
         /*
          * The BPB is giving us a wacky number of sides and/or bytes
          * per sector, therefore it is most probably not a BPB at all,
@@ -1465,6 +1476,15 @@ jump_if_fdf:
         }
     }
 
+    /* 8" FM turns at 360 RPM with a 500 kbps cell rate, on high density
+       media as far as the drive's hole sensing is concerned. */
+    if (dev->ibm3740) {
+        temp_rate       = 4;
+        dev->disk_flags = 1 << 1;
+        dev->xdf_type   = 0;
+        dev->dmf        = 0;
+    }
+
     if (temp_rate == 0xff) {
         img_log("Image is bigger than can fit on an ED floppy, ejecting...\n");
         fclose(dev->fp);
@@ -1474,7 +1494,12 @@ jump_if_fdf:
     }
 
     dev->gap2_size = (temp_rate == 3) ? 41 : 22;
-    if (dev->dmf)
+    if (dev->ibm3740) {
+        /* The IBM 3740 gaps: 11 bytes after the ID, 27 after the data
+           (FD1771-01 data sheet, formatting table). */
+        dev->gap2_size = 11;
+        dev->gap3_size = 27;
+    } else if (dev->dmf)
         dev->gap3_size = 8;
     else {
         if (dev->sectors == -1)
@@ -1500,7 +1525,7 @@ jump_if_fdf:
         dev->disk_flags |= 0x60;
     }
 
-    dev->track_flags = 0x08;           /* IMG files are always assumed to be MFM-encoded. */
+    dev->track_flags = dev->ibm3740 ? 0x00 : 0x08; /* IMG files are MFM-encoded, but for IBM 3740 ones. */
     dev->track_flags |= temp_rate & 3; /* Data rate. */
     if (temp_rate & 4)
         dev->track_flags |= 0x20; /* RPM. */

@@ -1164,7 +1164,7 @@ d86f_put_bit(void *priv, const int side, const int bit)
     uint16_t       surface_data = 0;
     uint16_t       encoded_data;
 
-    if (fdc_get_diswr(drv->fdc))
+    if ((drv->fdc != NULL) && fdc_get_diswr(drv->fdc))
         return;
 
     uint32_t       track_word   = dev->track_pos >> 4;
@@ -1229,6 +1229,25 @@ d86f_put_bit(void *priv, const int side, const int bit)
         drv->d86f_handler.encoded_data(drv, side)[track_word] = (encoded_data & 0xFF) << 8;
         drv->d86f_handler.encoded_data(drv, side)[track_word] |= (encoded_data >> 8);
     }
+}
+
+uint16_t
+d86f_last_word(void *priv, const int side)
+{
+    fdd_drive_t * drv = (fdd_drive_t *) priv;
+    const d86f_t *dev = (d86f_t *) drv->d86f_priv;
+
+    return dev->last_word[side];
+}
+
+/* Whether the cell under the head is the one at the index hole. */
+int
+d86f_at_index(void *priv, const int side)
+{
+    fdd_drive_t * drv = (fdd_drive_t *) priv;
+    const d86f_t *dev = (d86f_t *) drv->d86f_priv;
+
+    return dev->track_pos == drv->d86f_handler.index_hole_pos(drv, side);
 }
 
 static uint8_t
@@ -2644,6 +2663,13 @@ d86f_poll(void *priv)
     int side = fdd_get_head(drv);
     if (!fdd_is_double_sided(drv))
         side = 0;
+
+    /* Another kind of controller works the bits itself. */
+    if (drv->ctrl_bit != NULL) {
+        drv->ctrl_bit(drv->ctrl, drv, side);
+        d86f_advance_bit(drv, side);
+        return;
+    }
 
     const int mfm = fdc_is_mfm(drv->fdc);
 

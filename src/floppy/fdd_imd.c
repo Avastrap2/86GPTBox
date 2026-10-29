@@ -505,36 +505,22 @@ imd_writeback(void *priv)
     fdd_drive_t *drv   = (fdd_drive_t *) priv;
     imd_t *      dev   = (imd_t *) drv->local;
     const int    track = dev->track;
-    const char * n_map = 0;
 
     if (drv->writeprot)
         return;
 
+    /* The buffer is the file as loaded, and writes only change sector data
+       in place, so the track goes back byte for byte: header, the sector,
+       cylinder, head and size maps, and every record with its type byte. */
     for (int side = 0; side < dev->sides; side++) {
         if (dev->tracks[track][side].is_present) {
+            const uint8_t  spt = dev->tracks[track][side].params[3];
+            const uint32_t end = dev->tracks[track][side].sector_data_offs[spt - 1] +
+                                 dev->tracks[track][side].sector_data_size[spt - 1];
+
             fseek(dev->fp, (off_t) dev->tracks[track][side].file_offs, SEEK_SET);
-            const uint8_t h   = dev->tracks[track][side].params[2];
-            const uint8_t spt = dev->tracks[track][side].params[3];
-            const uint8_t n   = dev->tracks[track][side].params[4];
-            fwrite(dev->tracks[track][side].params, 1, 5, dev->fp);
-
-            if (h & 0x80)
-                fwrite(dev->buffer + dev->tracks[track][side].c_map_offs, 1,
-                       spt, dev->fp);
-
-            if (h & 0x40)
-                fwrite(dev->buffer + dev->tracks[track][side].h_map_offs, 1,
-                       spt, dev->fp);
-
-            if (n == 0xFF) {
-                n_map = dev->buffer + dev->tracks[track][side].n_map_offs;
-                fwrite(n_map, 1, spt, dev->fp);
-            }
-            for (uint8_t i = 0; i < spt; i++) {
-                const uint32_t ssize = 128 << (((n_map != NULL) && (n == 0xff)) ? n_map[i] : n);
-                fwrite(dev->buffer + dev->tracks[track][side].sector_data_offs[i], 1,
-                        ssize, dev->fp);
-            }
+            fwrite(dev->buffer + dev->tracks[track][side].file_offs, 1,
+                   end - dev->tracks[track][side].file_offs, dev->fp);
         }
     }
 
@@ -567,8 +553,11 @@ poll_write_data(void *priv, const int side, const uint16_t pos, const uint8_t da
     if (drv->writeprot)
         return;
 
-    if ((type & 1) || (type == 0) || (type > 8))
-        return; /* Should never happen. */
+    /* Only a record of full data (an odd type) holds the sector's bytes; a
+       compressed one cannot grow in place, and images with any load
+       write-protected. */
+    if (!(type & 1) || (type > 8))
+        return;
 
     dev->current_data[side][pos + 1] = (char) data;
 }
@@ -724,6 +713,11 @@ imd_load(void *priv, char *fn)
             dev->tracks[track][side].side_flags |= 0x20;
         if ((dev->tracks[track][side].side_flags & 7) == 1)
             dev->tracks[track][side].side_flags |= 0x20;
+        /* 8" formats at the 500 kbps rate turn at 360 RPM: 26 sectors of 128
+           bytes in FM (IBM 3740) or of 256 bytes in MFM (System 34). */
+        if (((dev->tracks[track][side].side_flags & 7) == 0) && (track_spt == 26) &&
+            (((sector_size == 0) && !mfm) || ((sector_size == 1) && mfm)))
+            dev->tracks[track][side].side_flags |= 0x20;
         if ((dev->tracks[track][side].side_flags & 0x07) == 0x00)
             dev->tracks[track][side].max_sector_size = 6;
         else
@@ -834,8 +828,12 @@ imd_load(void *priv, char *fn)
            - Leaving only GAP1: 96 : 47;
            - Not leaving even GAP1: 146 : 73.
          */
-        raw_tsize    = get_raw_tsize(dev->tracks[track][side].side_flags, 0);
-        minimum_gap3 = 12 * track_spt;
+        /* get_raw_tsize() counts MFM bytes; an FM byte takes the same sixteen
+           bit cells at half the data rate, so an FM track holds half as many. */
+        raw_tsize    = get_raw_tsize(dev->tracks[track][side].side_flags, 0) >> (mfm ? 0 : 1);
+        /* pre_sector already counts about nine FM bytes more per sector than
+           the IBM layout uses, so FM keeps only a token minimum gap. */
+        minimum_gap3 = (mfm ? 12 : 1) * track_spt;
 
         if ((dev->tracks[track][side].side_flags == 0x0A) || (dev->tracks[track][side].side_flags == 0x29))
             converted_rate = 2;
@@ -853,7 +851,7 @@ imd_load(void *priv, char *fn)
                    If we can't fit the sectors with a reasonable minimum gap at perfect RPM,
                    let's try 2% slower.
                  */
-                raw_tsize = get_raw_tsize(dev->tracks[track][side].side_flags, 1);
+                raw_tsize = get_raw_tsize(dev->tracks[track][side].side_flags, 1) >> (mfm ? 0 : 1);
                 /* Set disk flags so that rotation speed is 2% slower. */
                 dev->disk_flags |= (3 << 5);
                 size_diff = (int) (raw_tsize - track_total);

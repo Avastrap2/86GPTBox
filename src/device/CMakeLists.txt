@@ -66,7 +66,9 @@ add_library(dev OBJECT
     phoenix_486_jumper.c
     postcard.c
     radisys_config.c
+    am9513.c
     serial_8251.c
+    serial_line.c
     serial.c
     softpower.c
     smbus_ali7101.c

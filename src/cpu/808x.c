@@ -96,6 +96,10 @@ uint16_t        last_addr = 0x0000;
 static int       prefetching = 1;
 static int       refresh = 0, cycdiff;
 
+/* A device holding the bus READY line low until it can finish an I/O cycle. */
+static int     (*io_ready)(uint16_t port, int out, void *priv);
+static void     *io_ready_priv;
+
 static i8080 emulated_processor;
 static bool cpu_md_write_disable = 1;
 
@@ -296,6 +300,26 @@ resub_cycles(int old_cycles)
     }
 }
 
+void
+cpu_set_io_ready(int (*ready)(uint16_t port, int out, void *priv), void *priv)
+{
+    io_ready      = ready;
+    io_ready_priv = priv;
+}
+
+/* READY is sampled at the end of T3; while it is low the bus unit stays in
+   one-clock wait states, with the bus held, and emulated time keeps running
+   so the device can become ready. */
+static void
+cpu_io_wait_ready(uint16_t port, int out)
+{
+    if (io_ready == NULL)
+        return;
+
+    while (!io_ready(port, out, io_ready_priv))
+        wait_cycs(1, 1);
+}
+
 #undef readmemb
 #undef readmemw
 #undef readmeml
@@ -321,12 +345,14 @@ cpu_io(int bits, int out, uint16_t port)
 
         if (out) {
             wait_cycs(cycs, 1);
+            cpu_io_wait_ready(port, 1);
             if (bits == 16) {
                 if (is8086 && !(port & 1)) {
                     old_cycles = cycles;
                     outw(port, AX);
                 } else {
                     wait_cycs(cycs, 1);
+                    cpu_io_wait_ready(port + 1, 1);
                     old_cycles = cycles;
                     outb(port++, AL);
                     outb(port, AH);
@@ -337,12 +363,14 @@ cpu_io(int bits, int out, uint16_t port)
             }
         } else {
             wait_cycs(cycs, 1);
+            cpu_io_wait_ready(port, 0);
             if (bits == 16) {
                 if (is8086 && !(port & 1)) {
                     old_cycles = cycles;
                     AX         = inw(port);
                 } else {
                     wait_cycs(cycs, 1);
+                    cpu_io_wait_ready(port + 1, 0);
                     old_cycles = cycles;
                     AL         = inb(port++);
                     AH         = inb(port);

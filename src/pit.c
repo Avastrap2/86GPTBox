@@ -1896,6 +1896,12 @@ pit_set_clock(uint32_t clock)
         xt_cpu_multi = 3ULL;
 
         switch (cpu_s->rspeed) {
+            case 4000000:
+                /* 24 MHz divided by six (SCP-200B at 4 MHz). */
+                cpuclock     = 24000000.0;
+                xt_cpu_multi = 6ULL;
+                break;
+
             case 7159092:
                 if (cpu_s->cpu_flags & CPU_ALTERNATE_XTAL) {
                     cpuclock     = 28636368.0;

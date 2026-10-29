@@ -832,7 +832,7 @@ MachineStatus::refresh(QStatusBar *sbar)
         int t = fdd_get_type(drv);
         if (t == 0)
             d->fdd[i].pixmaps = &d->pixmaps.floppy_disabled;
-        else if ((t >= 1) && (t <= 6))
+        else if (((t >= 1) && (t <= 6)) || fdd_type_is_8inch(t))
             d->fdd[i].pixmaps = &d->pixmaps.floppy_525;
         else
             d->fdd[i].pixmaps = &d->pixmaps.floppy_35;

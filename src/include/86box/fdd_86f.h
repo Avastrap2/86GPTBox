@@ -90,6 +90,13 @@ extern uint32_t d86f_get_raw_size(void *priv, int side);
 extern void     d86f_set_cur_track(void *priv, int track);
 extern void     d86f_zero_track(void *priv);
 
+/* Bit cell access for a controller wired through fdd_drive_t.ctrl_bit. */
+extern void     d86f_get_bit(void *priv, int side);
+extern void     d86f_put_bit(void *priv, int side, int bit);
+extern uint16_t d86f_last_word(void *priv, int side);
+extern int      d86f_at_index(void *priv, int side);
+extern int      d86f_is_mfm(void *priv);
+
 extern uint16_t *common_encoded_data(void *priv, int side);
 extern void      common_read_revolution(void *priv);
 extern uint32_t  common_get_raw_size(void *priv, int side);

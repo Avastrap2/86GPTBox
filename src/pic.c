@@ -71,6 +71,8 @@ static uint8_t ibm5140_diag_value;
 static uint8_t ibm5140_diag_enabled;
 static uint8_t ibm5140_diag_lines[8];
 static void (*ibm5140_wake)(void);
+/* The SCP CPU Support card: slave on the master's IR1, both 8259As early parts. */
+static int pic_scp300f = 0;
 
 static uint16_t smi_irq_mask   = 0x0000;
 static uint16_t smi_irq_status = 0x0000;
@@ -438,11 +440,18 @@ pic_reset(void)
         pic.at = pic2.at = 0;
         update_pending = pic_update_pending_dual;
     } else {
-        if (is_dual)
+        if (pic_scp300f)
+            pic.slaves[1] = &pic2;
+        else if (is_dual)
             pic.slaves[is_pc98 ? 7 : 2] = &pic2;
 
-        update_pending = is_at ? pic_update_pending_at : pic_update_pending_xt;
+        update_pending = (is_at || pic_scp300f) ? pic_update_pending_at : pic_update_pending_xt;
         pic.at = pic2.at = is_at;
+    }
+
+    if (pic_scp300f) {
+        pic.flags |= PIC_EARLY_8259A;
+        pic2.flags |= PIC_EARLY_8259A;
     }
     pic.zenith = pic2.zenith = is_zenith;
 
@@ -628,6 +637,12 @@ static __inline void
 pic_auto_non_specific_eoi(pic_t *dev)
 {
     uint8_t irq;
+
+    /* "The AEOI mode can only be used in a master 8259A and not a slave;
+       8259As with a copyright date of 1985 or later will operate in the
+       AEOI mode as a master or a slave" (Intel 8259A data sheet). */
+    if ((dev->flags & PIC_EARLY_8259A) && !dev->is_master)
+        return;
 
     if (dev->icw4 & 2) {
         irq = pic_non_specific_find(dev);
@@ -931,6 +946,7 @@ pic_reset_hard(void)
     /* Full machine initialization must not inherit the previous board type. */
     pic.flags &= ~PIC_IBM5140;
     ibm5140_wake = NULL;
+    pic_scp300f  = 0;
     pic_reset();
 
     /* Explicitly reset the latches. */
@@ -1107,6 +1123,24 @@ pic_init_tandy2k(void)
     pic_reset_hard();
     io_sethandler(0x0060, 0x0010, pic_read_even, NULL, NULL, pic_write_even, NULL, NULL, &pic);
     io_sethandler(0x0070, 0x0010, pic_read_even, NULL, NULL, pic_write_even, NULL, NULL, &pic2);
+}
+
+/* The SCP CPU Support card cascades its on-board slave 8259A into the
+   master's IR1 (SCP-300F manual p. 7); the card decodes both controllers in
+   its own block of ports, which the machine maps. */
+void
+pic_init_scp300f(void)
+{
+    for (uint8_t irq = 0; irq < 8; irq++)
+        irq_vector_override[irq] = -1;
+
+    pic_clear_output_callback();
+
+    shadow  = 0;
+    cascade = 1;
+    pic_reset_hard();
+    pic_scp300f = 1;
+    pic_reset();
 }
 
 void

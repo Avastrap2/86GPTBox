@@ -171,6 +171,13 @@ extern uint8_t   i8251_read(uint16_t addr, void *priv);
 extern void      i8251_write(uint16_t addr, uint8_t val, void *priv);
 extern void      i8251_set_irq(void *priv, int irq_mask);
 extern void      i8251_set_clock(void *priv, double hz);
+#ifdef EMU_SERIAL_LINE_H
+extern void      i8251_attach_line(void *priv, serial_line_t *tx, serial_line_t *rx);
+#endif
+extern void      i8251_set_ready_callbacks(void *priv, void (*rxrdy)(void *priv, int level),
+                                           void (*txrdy)(void *priv, int level), void *cb_priv);
+extern void      i8251_set_clock_edges(void *priv, double period, double rise);
+extern void      i8251_set_modem_inputs(void *priv, int cts, int dsr);
 
 extern const device_t i8251_device;
 extern const device_t ns8250_device;

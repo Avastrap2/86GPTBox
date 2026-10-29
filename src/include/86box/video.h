@@ -358,6 +358,9 @@ extern void     video_clamp_vram_2(uint64_t bios_flags, int *vram);
 #endif
 
 #ifdef EMU_DEVICE_H
+/* Lear Siegler ADM-3A serial terminal */
+extern const device_t adm3a_device;
+
 /* IBM XGA and XGA-2 */
 extern void xga_device_add(void);
 

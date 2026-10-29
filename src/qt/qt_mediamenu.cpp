@@ -140,7 +140,7 @@ MediaMenu::refresh(QMenu *parentMenu)
     floppyMenus.clear();
     MachineStatus::iterateFDD([this, parentMenu](int i) {
         auto *menu     = parentMenu->addMenu("");
-        QIcon img_icon = fdd_is_525(&drives[i]) ? QIcon(":/settings/qt/icons/floppy_525_image.ico") : QIcon(":/settings/qt/icons/floppy_35_image.ico");
+        QIcon img_icon = (fdd_is_525(&drives[i]) || fdd_type_is_8inch(fdd_get_type(&drives[i]))) ? QIcon(":/settings/qt/icons/floppy_525_image.ico") : QIcon(":/settings/qt/icons/floppy_35_image.ico");
         menu->addAction(getIconWithIndicator(img_icon, pixmap_size, QIcon::Normal, New), tr("&New image…"), [this, i]() { floppyNewImage(i); });
         menu->addSeparator();
         menu->addAction(getIconWithIndicator(img_icon, pixmap_size, QIcon::Normal, Browse), tr("&Existing image…"), [this, i]() { floppySelectImage(i, false); });
@@ -781,7 +781,7 @@ MediaMenu::updateImageHistory(int index, int slot, ui::MediaType type)
             menu                  = floppyMenus[index];
             children              = menu->children();
             imageHistoryUpdatePos = dynamic_cast<QAction *>(children[floppyImageHistoryPos[slot]]);
-            menu_icon             = fdd_is_525(&drives[index]) ? QIcon(":/settings/qt/icons/floppy_525_image.ico") : QIcon(":/settings/qt/icons/floppy_35_image.ico");
+            menu_icon             = (fdd_is_525(&drives[index]) || fdd_type_is_8inch(fdd_get_type(&drives[index]))) ? QIcon(":/settings/qt/icons/floppy_525_image.ico") : QIcon(":/settings/qt/icons/floppy_35_image.ico");
             if (fn.left(5) == "wp://")
                 fi.setFile(fn.right(fn.length() - 5));
             else

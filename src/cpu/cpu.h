@@ -114,7 +114,8 @@ enum {
     CPU_PKG_SOCKET8          = (1 << 24),
     CPU_PKG_SLOT1            = (1 << 25),
     CPU_PKG_SLOT2            = (1 << 26),
-    CPU_PKG_SOCKET370        = (1 << 27)
+    CPU_PKG_SOCKET370        = (1 << 27),
+    CPU_PKG_8086_SCP         = (1 << 29)
 };
 
 #define CPU_SUPPORTS_DYNAREC 1
@@ -1134,6 +1135,10 @@ extern void    i808x_hook_prefetch_queue(void     (*pf_set_pos)(int pos),
                                          void     (*c_wait)(int c, int bus));
 
 extern void    wait_cycs(int c, int bus);
+
+/* Lets a device hold READY low for whole I/O cycles of the 808x (an S-100 or
+   ISA wait line); NULL removes it. */
+extern void    cpu_set_io_ready(int (*ready)(uint16_t port, int out, void *priv), void *priv);
 
 #define prefetch_queue_set_suspended(s) prefetch_queue_set_prefetching(!s)
 #define prefetch_queue_get_suspended !prefetch_queue_get_prefetching

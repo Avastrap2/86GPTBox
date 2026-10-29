@@ -80,6 +80,9 @@ add_library(vid OBJECT
     vid_tandy1k.c
     vid_tandy2k.c
 
+    # Serial terminals
+    vid_adm3a.c
+
     # Hercules
     vid_mda.c
     vid_hercules.c

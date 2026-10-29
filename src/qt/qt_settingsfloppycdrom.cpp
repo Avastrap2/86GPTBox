@@ -56,7 +56,7 @@ SettingsFloppyCDROM::setFloppyType(QAbstractItemModel *model, const QModelIndex 
     QIcon icon;
     if (type == 0)
         icon = floppy_disabled_icon;
-    else if (type >= 1 && type <= 6)
+    else if ((type >= 1 && type <= 6) || fdd_type_is_8inch(type))
         icon = floppy_525_icon;
     else
         icon = floppy_35_icon;
