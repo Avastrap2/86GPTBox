@@ -20,11 +20,19 @@
  *          code of the ADM-3A key with that legend. CTRL clears bits 6 and
  *          5 of the code and SHIFT works as on the terminal. Keys the
  *          terminal has but a PC does not are on Insert (LINE FEED), End
- *          (CLEAR), Pause (BREAK) and Right Alt (REPT); Backspace, Tab, the
- *          arrows and Home send the CTRL codes the ADM-3A uses for them.
+ *          (CLEAR), Pause (BREAK), Right Alt (REPT) and F1 (HERE IS);
+ *          Backspace, Tab, the arrows and Home send the CTRL codes the
+ *          ADM-3A uses for them.
  *
- *          Not emulated: the beeper, the answerback and read-back options,
- *          202 modem turnaround and the extension port.
+ *          The beeper sounds the 3.6 kHz LC2 signal for the period of a
+ *          retriggerable one-shot (18K and 30 uF on a DM74123, about 157 ms)
+ *          fired by a received BEL and by the cursor reaching column 71 as
+ *          a character is written; a column overflow cuts it short. The
+ *          answerback option sends its message of up to 32 characters for
+ *          a received ENQ or the HERE IS key.
+ *
+ *          Not emulated: the read-back option, 202 modem turnaround and
+ *          the extension port.
  *
  * Authors: Avastrap2
  *
@@ -44,6 +52,7 @@
 #include <86box/mem.h>
 #include <86box/rom.h>
 #include <86box/serial_line.h>
+#include <86box/sound.h>
 #include <86box/thread.h>
 #include <86box/video.h>
 #include <86box/vid_adm3a.h>
@@ -67,6 +76,15 @@
 
 #define ADM3A_KEY_QUEUE 64
 
+/* Beeper (section 4.3.11, logic sheet 4): the 74123 period is
+   0.28 R C (1 + 0.7 / R) with R in kilohms, for 18K and 30 uF. */
+#define ADM3A_BEEP_US   (0.28 * 18.0 * 30.0 * (1.0 + (0.7 / 18.0)) * 1000.0)
+#define ADM3A_BEEP_HZ   3600.0
+#define ADM3A_BEEP_AMP  6000
+#define ADM3A_BEEPS     16
+#define ADM3A_LINE_END  71 /* the column count that sounds the beeper */
+#define ADM3A_ANSWER    32
+
 enum {
     KEY_NONE = 0,
     KEY_CHAR,
@@ -75,7 +93,8 @@ enum {
     KEY_LOCK,
     KEY_REPT,
     KEY_BREAK,
-    KEY_CLEAR
+    KEY_CLEAR,
+    KEY_HERE_IS
 };
 
 typedef struct adm3a_t {
@@ -144,6 +163,16 @@ typedef struct adm3a_t {
     uint64_t   frame_time;
     pc_timer_t frame_timer;
 
+    /* Beeper: the one-shot's periods, oldest first. */
+    double   beep_on[ADM3A_BEEPS];
+    double   beep_off[ADM3A_BEEPS];
+    int      beeps;
+    double   mix_tsc;
+
+    /* Answerback option: empty when it is not fitted. */
+    uint8_t  answer[ADM3A_ANSWER];
+    int      answer_len;
+
     uint32_t fg;
     uint32_t bg;
 } adm3a_t;
@@ -159,6 +188,81 @@ static const char adm3a_legend[2][0x40] = {
       'D', 'F', 'G', 'H', 'J', 'K', 'L', ':', '"', '~', 0,   '|', 'Z', 'X', 'C', 'V',
       'B', 'N', 'M', '<', '>', '?', 0,   '*', 0,   ' ', 0,   0,   0,   0,   0,   0 }
 };
+
+/* ---- Beeper ------------------------------------------------------------- */
+
+/* Fire the one-shot; it retriggers, so a new pulse while it runs extends
+   the beep. */
+static void
+adm3a_beep(adm3a_t *dev)
+{
+    double now = (double) tsc;
+    double end = now + (ADM3A_BEEP_US * dev->tsc_per_us);
+
+    if (dev->beeps && (dev->beep_off[dev->beeps - 1] > now)) {
+        dev->beep_off[dev->beeps - 1] = end;
+        return;
+    }
+
+    if (dev->beeps == ADM3A_BEEPS) {
+        memmove(dev->beep_on, dev->beep_on + 1, (ADM3A_BEEPS - 1) * sizeof(double));
+        memmove(dev->beep_off, dev->beep_off + 1, (ADM3A_BEEPS - 1) * sizeof(double));
+        dev->beeps--;
+    }
+    dev->beep_on[dev->beeps]  = now;
+    dev->beep_off[dev->beeps] = end;
+    dev->beeps++;
+}
+
+/* CLRBEL: the one-shot is cleared. */
+static void
+adm3a_beep_clear(adm3a_t *dev)
+{
+    double now = (double) tsc;
+
+    if (dev->beeps && (dev->beep_off[dev->beeps - 1] > now))
+        dev->beep_off[dev->beeps - 1] = now;
+}
+
+/* The speaker gets LC2 NANDed with the one-shot's output: a square wave
+   while it runs, nothing otherwise. */
+static void
+adm3a_get_buffer(int32_t *buffer, uint16_t len, void *priv)
+{
+    adm3a_t *dev  = (adm3a_t *) priv;
+    double   now  = (double) tsc;
+    double   from = dev->mix_tsc;
+    double   half = (dev->tsc_per_us * 1000000.0) / (ADM3A_BEEP_HZ * 2.0);
+    int      b    = 0;
+
+    if ((from <= 0.0) || (from > now))
+        from = now;
+
+    for (int i = 0; (i < len) && dev->beeps; i++) {
+        double t = from + (((now - from) * i) / len);
+
+        while ((b < dev->beeps) && (dev->beep_off[b] <= t))
+            b++;
+        if ((b < dev->beeps) && (dev->beep_on[b] <= t)) {
+            int32_t v = (((uint64_t) (t / half)) & 1) ? ADM3A_BEEP_AMP : -ADM3A_BEEP_AMP;
+
+            buffer[2 * i] += v;
+            buffer[(2 * i) + 1] += v;
+        }
+    }
+
+    /* Forget the periods that are over. */
+    b = 0;
+    while ((b < dev->beeps) && (dev->beep_off[b] <= now))
+        b++;
+    if (b) {
+        memmove(dev->beep_on, dev->beep_on + b, (dev->beeps - b) * sizeof(double));
+        memmove(dev->beep_off, dev->beep_off + b, (dev->beeps - b) * sizeof(double));
+        dev->beeps -= b;
+    }
+
+    dev->mix_tsc = now;
+}
 
 /* ---- Display ------------------------------------------------------------- */
 
@@ -229,14 +333,31 @@ adm3a_forespace(adm3a_t *dev)
         return;
     }
 
+    /* OVERFLOW clears the beeper's one-shot, so that at high baud rates
+       long lines do not keep it on. */
+    adm3a_beep_clear(dev);
+
     if (dev->auto_nl) {
         dev->col = 0;
         adm3a_down(dev);
     }
 }
 
+static void adm3a_tx_start(adm3a_t *dev);
+
+/* The answerback message goes out through the keyboard's code lines. */
 static void
-adm3a_execute(adm3a_t *dev, uint8_t c)
+adm3a_answerback(adm3a_t *dev)
+{
+    for (int i = 0; (i < dev->answer_len) && (dev->pending_count < ADM3A_KEY_QUEUE); i++)
+        dev->pending[dev->pending_count++] = dev->answer[i];
+
+    adm3a_tx_start(dev);
+}
+
+/* local: the character is the terminal's own, looped back in half duplex. */
+static void
+adm3a_execute(adm3a_t *dev, uint8_t c, int local)
 {
     c &= 0x7f;
 
@@ -277,10 +398,21 @@ adm3a_execute(adm3a_t *dev, uint8_t c)
         if ((c != ' ') || !dev->space_adv || !dev->after_cr)
             dev->scr[adm3a_screen_row(dev, dev->row)][dev->col] = c;
         adm3a_forespace(dev);
+        /* LINE END: the written character brings the column count to 71,
+           warning of the end of the line. */
+        if (dev->col == ADM3A_LINE_END)
+            adm3a_beep(dev);
         return;
     }
 
     switch (c) {
+        case 0x05: /* ENQ: answerback; KSDLY keeps a local ENQ from it */
+            if (!local && dev->answer_len)
+                adm3a_answerback(dev);
+            break;
+        case 0x07: /* BEL */
+            adm3a_beep(dev);
+            break;
         case 0x08: /* BS */
             if (dev->col > 0)
                 dev->col--;
@@ -364,10 +496,10 @@ adm3a_doit(void *priv)
 
     if (dev->echo_full) {
         dev->echo_full = 0;
-        adm3a_execute(dev, dev->echo);
+        adm3a_execute(dev, dev->echo, 1);
     } else if (dev->rx_full) {
         dev->rx_full = 0;
-        adm3a_execute(dev, dev->rx_hold);
+        adm3a_execute(dev, dev->rx_hold, 0);
     }
 
     adm3a_doit_schedule(dev);
@@ -481,6 +613,8 @@ adm3a_key_kind(uint16_t scan, uint8_t *code)
             return KEY_BREAK;
         case 0x14f:
             return KEY_CLEAR;
+        case 0x03b:
+            return KEY_HERE_IS;
         case 0x147:
             *code = 0x1e; /* CTRL with the HOME key */
             return KEY_CHAR;
@@ -578,6 +712,11 @@ adm3a_key_event(adm3a_t *dev, uint16_t scan, int down)
             /* SHIFT with CLEAR: a local clear, which also unlocks the keyboard. */
             if (down && dev->shift)
                 adm3a_clear(dev);
+            return;
+        case KEY_HERE_IS:
+            /* Without the answerback option the key does nothing. */
+            if (down && !dev->kb_locked && dev->answer_len)
+                adm3a_answerback(dev);
             return;
         case KEY_CHAR:
             if (!down) {
@@ -799,6 +938,22 @@ adm3a_init(UNUSED(const device_t *info))
     dev->hz50        = device_get_config_int("hz50");
     dev->baud        = adm3a_baud(device_get_config_int("baud"));
 
+    /* The answerback PROM's message; ^X stands for CTRL-X, ^^ for ^. */
+    {
+        const char *msg = device_get_config_string("answerback");
+
+        for (int i = 0; (msg != NULL) && msg[i] && (dev->answer_len < ADM3A_ANSWER); i++) {
+            uint8_t c = (uint8_t) msg[i];
+
+            if ((c == '^') && msg[i + 1]) {
+                c = (uint8_t) msg[++i];
+                if (c != '^')
+                    c &= 0x1f;
+            }
+            dev->answer[dev->answer_len++] = c & 0x7f;
+        }
+    }
+
     format     = device_get_config_int("format");
     dev->data8 = !!(format & 0x10);
     dev->bit8  = !!(format & 0x20);
@@ -827,6 +982,7 @@ adm3a_init(UNUSED(const device_t *info))
     timer_set_delay_u64(&dev->frame_timer, dev->frame_time);
 
     keyboard_set_input_handler(adm3a_host_key, dev);
+    sound_add_handler(adm3a_get_buffer, dev);
 
     return dev;
 }
@@ -998,6 +1154,19 @@ static const device_config_t adm3a_config[] = {
         .description    = "50 Hz refresh",
         .type           = CONFIG_BINARY,
         .default_string = NULL,
+        .default_int    = 0,
+        .file_filter    = NULL,
+        .spinner        = { 0 },
+        .selection      = { { 0 } },
+        .bios           = { { 0 } }
+    },
+    {
+        /* The answerback option board's PROM, up to 32 characters; empty
+           when the option is not fitted. ^M stands for CTRL-M and so on. */
+        .name           = "answerback",
+        .description    = "Answerback message (^M = CTRL-M)",
+        .type           = CONFIG_STRING,
+        .default_string = "",
         .default_int    = 0,
         .file_filter    = NULL,
         .spinner        = { 0 },
