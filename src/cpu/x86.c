@@ -65,8 +65,6 @@ uint64_t xt_cpu_multi;
 int nmi            = 0;
 int nmi_auto_clear = 0;
 
-/* Was the CPU ever reset? */
-int x86_was_reset  = 0;
 int soft_reset_pci = 0;
 
 /* Is the TRAP flag on? */
@@ -344,6 +342,8 @@ reset_common(int hard)
     ccr4 = 0x85;
     cyrix.arr[3].base = 0x30000;
     cyrix.arr[3].size = 65536;
+    if (is_gxm)
+        cpu_gxm_reset();
 
     if (reset_init)
         /* INIT leaves CD and NW, and sets ET (Pentium Vol. 3, Table 16-1,
@@ -391,7 +391,7 @@ reset_common(int hard)
         cpu_state.pc = 0xFFF0;
         if (hard) {
             rammask = cpu_16bitbus ? 0xFFFFFF : 0xFFFFFFFF;
-            if (is6117)
+            if (is6117 || is386ex)
                 rammask |= 0x3000000;
             mem_a20_key = mem_a20_alt = mem_a20_state = 0;
         }
@@ -424,10 +424,11 @@ reset_common(int hard)
         cpu_set_edx();
     }
     x86seg_reset();
+    cpu_update_64k_status();
 #ifdef USE_DYNAREC
     /* The data segments come out of reset with a 64K limit: not flat, so
        the recompiler keeps their limit checks */
-    cpu_cur_status |= CPU_STATUS_NOTFLATDS | CPU_STATUS_NOTFLATSS | CPU_STATUS_NOTFLATES;
+    cpu_cur_status |= CPU_STATUS_NOTFLATDS | CPU_STATUS_NOTFLATSS | CPU_STATUS_NOTFLATES | CPU_STATUS_NOTWIDEDS | CPU_STATUS_NOTWIDESS;
 #endif
 #ifdef USE_DYNAREC
     if (hard)

@@ -20,6 +20,7 @@ add_library(dev OBJECT
     access_bus.c
     ast_nvr.c
     ast_readout.c
+    board_led.c
     bugger.c
     cartridge.c
     cassette.c
@@ -45,6 +46,7 @@ add_library(dev OBJECT
     kbc_at.c
     kbc_at_dev.c
     kbc_ps2_m25.c
+    kbc_tvis.c
     kbc_xt.c
     keyboard.c
     keyboard_at.c
@@ -67,10 +69,13 @@ add_library(dev OBJECT
     postcard.c
     radisys_config.c
     am9513.c
-    serial_8251.c
+    serial_backend.c
+    serial_host.c
+    serial_i8251.c
     serial_line.c
-    serial.c
-    softpower.c
+    serial_ns8250.c
+    serial_scn26x1.c
+    softpower_ibm5140.c
     smbus_ali7101.c
     smbus_piix4.c
     smbus_sis5595.c

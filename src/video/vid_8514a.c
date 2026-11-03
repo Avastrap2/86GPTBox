@@ -149,7 +149,6 @@ CLAMP(int16_t in, int16_t min, int16_t max)
                 dest_dat = ~0;                                                                         \
                 break;                                                                                 \
             case 0x03:                                                                                 \
-                dest_dat = dest_dat;                                                                   \
                 break;                                                                                 \
             case 0x04:                                                                                 \
                 dest_dat = ~src_dat;                                                                   \
@@ -4336,7 +4335,7 @@ ibm8514_render_overscan_left(ibm8514_t *dev, svga_t *svga)
         if ((svga->displine + svga->y_add) < 0)
             return;
 
-        if (svga->scrblank || (dev->h_disp == 0))
+        if (!dev->on || (svga->hdisp == 0))
             return;
 
         for (int i = 0; i < svga->x_add; i++)
@@ -4345,7 +4344,7 @@ ibm8514_render_overscan_left(ibm8514_t *dev, svga_t *svga)
         if ((dev->displine + svga->y_add) < 0)
             return;
 
-        if (svga->scrblank || (dev->h_disp == 0))
+        if (!dev->on || (dev->h_disp == 0))
             return;
 
         for (int i = 0; i < svga->x_add; i++)
@@ -4362,17 +4361,17 @@ ibm8514_render_overscan_right(ibm8514_t *dev, svga_t *svga)
         if ((svga->displine + svga->y_add) < 0)
             return;
 
-        if (svga->scrblank || (dev->h_disp == 0))
+        if (!dev->on || (svga->hdisp == 0))
             return;
 
-        right = (overscan_x >> 1);
+        right = overscan_x  - svga->left_overscan;
         for (int i = 0; i < right; i++)
             buffer32->line[svga->displine + svga->y_add][svga->x_add + svga->hdisp + i] = svga->overscan_color;
     } else {
         if ((dev->displine + svga->y_add) < 0)
             return;
 
-        if (svga->scrblank || (dev->h_disp == 0))
+        if (!dev->on || (dev->h_disp == 0))
             return;
 
         right = (overscan_x >> 1);

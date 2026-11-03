@@ -256,11 +256,14 @@ extern const device_t pcnet_am79c973_onboard_device;
 extern const device_t modem_device;
 
 /* LPT */
+extern const device_t pe1_device;
+extern const device_t pe2_device;
 extern const device_t pe3_device;
 extern const device_t plip_device;
 
 /* Realtek RTL8139C+ */
 extern const device_t rtl8139c_plus_device;
+extern const device_t rtl8139c_plus_onboard_device;
 
 /* Intel 8255x */
 extern const device_t i82557_device;

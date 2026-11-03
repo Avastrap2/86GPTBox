@@ -268,6 +268,11 @@ add_library(ui STATIC
     qt_mcadevicelist.cpp
     qt_mcadevicelist.ui
 
+    qt_memoryviewer.hpp
+    qt_memoryviewer.cpp
+    qt_disasm.hpp
+    qt_disasm.cpp
+
     qt_mediahistorymanager.cpp
     qt_mediahistorymanager.hpp
 
@@ -343,6 +348,13 @@ add_library(osd_backend OBJECT ${OSD_DIR}/imgui/imgui_impl_opengl3.cpp ${OSD_DIR
 set_target_properties(osd_backend PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 target_include_directories(osd_backend PRIVATE ${OSD_DIR}/imgui ${Vulkan_INCLUDE_DIRS})
 target_link_libraries(86Box osd_backend)
+
+# The memory viewer's disassembler, Zydis, from its copy in zydis/.
+if(DISASM)
+    add_subdirectory(zydis)
+    target_compile_definitions(ui PRIVATE USE_DISASM)
+    target_link_libraries(ui PRIVATE zydis)
+endif()
 
 target_sources(ui PRIVATE qt_osd.cpp qt_osd.hpp qt_osd_raster.cpp qt_osd_raster.hpp)
 target_include_directories(ui PRIVATE ${OSD_DIR} ${OSD_DIR}/imgui)
@@ -762,3 +774,24 @@ endforeach()
 
 configure_file(qt_translations.qrc.in ${CMAKE_CURRENT_BINARY_DIR}/qt_translations.qrc)
 target_sources(ui PRIVATE ${QM_FILES} ${CMAKE_CURRENT_BINARY_DIR}/qt_translations.qrc)
+
+if(BUILD_TESTING)
+    add_executable(debugger_commands_tests
+        ../../tests/cpu/debugger_commands_test.cpp
+        qt_memoryviewer.cpp qt_memoryviewer.hpp
+    )
+    target_include_directories(debugger_commands_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/src/include
+        ${PROJECT_BINARY_DIR}/src/include
+    )
+    target_link_libraries(debugger_commands_tests PRIVATE Qt${QT_MAJOR}::Widgets GTest::gtest)
+    if(QT_STATIC)
+        if(USE_QT6)
+            qt_import_plugins(debugger_commands_tests INCLUDE Qt6::QOffscreenIntegrationPlugin)
+        else()
+            qt5_import_plugins(debugger_commands_tests INCLUDE Qt5::QOffscreenIntegrationPlugin)
+        endif()
+    endif()
+    add_test(NAME DebuggerCommands COMMAND debugger_commands_tests)
+endif()

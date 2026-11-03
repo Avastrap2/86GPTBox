@@ -154,6 +154,7 @@ opFST(uint32_t fetchdat)
     {
     ST(fetchdat & 7)                              = ST(0);
     cpu_state.tag[(cpu_state.TOP + fetchdat) & 7] = cpu_state.tag[cpu_state.TOP & 7];
+    cpu_state.MM[(cpu_state.TOP + fetchdat) & 7].q = cpu_state.MM[cpu_state.TOP & 7].q;
     /* C1 clear: no rounding to report (SDM 1999, FST) */
     cpu_state.npxs &= ~FPU_SW_C1;
     }
@@ -182,6 +183,7 @@ opFSTP(uint32_t fetchdat)
     {
     ST(fetchdat & 7)                              = ST(0);
     cpu_state.tag[(cpu_state.TOP + fetchdat) & 7] = cpu_state.tag[cpu_state.TOP & 7];
+    cpu_state.MM[(cpu_state.TOP + fetchdat) & 7].q = cpu_state.MM[cpu_state.TOP & 7].q;
     /* C1 clear: no rounding to report (SDM 1999, FST) */
     cpu_state.npxs &= ~FPU_SW_C1;
     }
@@ -973,12 +975,18 @@ x87_fprem_common(int nearest)
         ST(0) = -NAN;
         return 0;
     }
-    if ((a != 0.0) && !isinf(b) && ((ilogb(a) - ilogb(b)) >= 64)) {
-        int d = ilogb(a) - ilogb(b);
-        int n = (d & 0x1f) | 0x20;
-        ST(0) = fmod(a, ldexp(b, d - n));
-        cpu_state.npxs |= FPU_SW_C2;
-        return 0;
+    if ((a != 0.0) && !isinf(b)) {
+        x87_td va = { .d = a }, vb = { .d = b };
+        int ea = (int) ((va.i >> 52) & 0x7ff);
+        int eb = (int) ((vb.i >> 52) & 0x7ff);
+        /* Normal operands have the same exponent bias; subnormals need normalization. */
+        int d = (ea && eb) ? ea - eb : ilogb(a) - ilogb(b);
+        if (d >= 64) {
+            int n = (d & 0x1f) | 0x20;
+            ST(0) = fmod(a, ldexp(b, d - n));
+            cpu_state.npxs |= FPU_SW_C2;
+            return 0;
+        }
     }
     if (nearest)
         ST(0) = remquo(a, b, &q);

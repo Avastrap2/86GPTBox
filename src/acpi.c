@@ -813,11 +813,11 @@ acpi_reg_read_sis_5582(int size, uint16_t addr, void *priv)
             ret = dev->regs.reg_12;
             break;
         case 0x13:
-            ret = acpi_gp_timer_get((acpi_t *) dev) & 0xff;
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
 #endif
+            ret = acpi_gp_timer_get((acpi_t *) dev) & 0xff;
             break;
         case 0x14:
         case 0x15:
@@ -924,11 +924,11 @@ acpi_reg_read_sis_5595(int size, uint16_t addr, void *priv)
             ret = (dev->regs.gpe_pin >> shift32) & 0xff;
             break;
         case 0x1f:
-            ret = acpi_gp_timer_get((acpi_t *) dev) & 0xff;
 #ifdef USE_DYNAREC
             if (cpu_use_dynarec)
                 update_tsc();
 #endif
+            ret = acpi_gp_timer_get((acpi_t *) dev) & 0xff;
             break;
         case 0x20:
         case 0x21:
@@ -1721,17 +1721,13 @@ acpi_reg_write_sis_5582(int size, uint16_t addr, uint8_t val, void *priv)
     }
 }
 
+/* A PMU event enabled in PMU 60h-63h raises SMI# with only SMI_EN set (SiS
+   5595 November 1998, p. 121 / PDF 127). PMU_EN, GPE_EN bit 12, gates the
+   SCI side, from PMU 80h-83h (p. 141 and 143 / PDF 147 and 149). */
 void
 acpi_sis5595_pmu_event(void *priv)
 {
-    acpi_t *dev = (acpi_t *) priv;
-
-    if (dev->vendor == VEN_SIS_5595_1997)
-        acpi_sis5595_smi_raise(dev);
-    else if (dev->regs.gpe_en & 0x00001000) {
-        dev->regs.gpe_sts |= 0x00001000;
-        acpi_sis5595_smi_raise(dev);
-    }
+    acpi_sis5595_smi_raise(priv);
 }
 
 /* USB_STS and USB_EN: ACPI 14h and 16h bit 14 on the 5582 (SiS 5581/5582
@@ -2146,6 +2142,12 @@ acpi_aux_reg_write_common(int size, uint16_t addr, uint8_t val, void *priv)
 static void
 acpi_latch_pmtmr(acpi_t *dev)
 {
+#ifdef USE_DYNAREC
+    /* The compiled block's cycles so far reach the TSC only through
+       update_tsc(): before the read, as RDTSC does. */
+    if (cpu_use_dynarec)
+        update_tsc();
+#endif
     dev->pmtmr_latch = acpi_timer_get(dev);
 
     /* On real hardware, reading the timer takes longer than one of its ticks, so
@@ -2154,11 +2156,6 @@ acpi_latch_pmtmr(acpi_t *dev)
        value plus one when it has not changed: that made the timer go backwards, on
        a third read within the same tick. */
     cycles -= acpi_pmtmr_read_cycles;
-
-#ifdef USE_DYNAREC
-    if (cpu_use_dynarec)
-        update_tsc();
-#endif
 }
 
 static uint32_t
