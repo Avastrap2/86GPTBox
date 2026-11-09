@@ -181,9 +181,14 @@ x86_doabrt(int x86_abrt)
 
     task_eip_pending = 0;
     if (msw & 1) {
+        /* A fault: the EFLAGS image the handler gets has RF set, so that its
+           IRET restarts the instruction without an instruction breakpoint on
+           it firing again. The handler itself runs with RF clear. */
+        cpu_state.eflags |= RF_FLAG;
         task_error_follows = 1;
         op_pmodeint(x86_abrt, 0);
         task_error_follows = 0;
+        cpu_state.eflags &= ~RF_FLAG;
     } else {
         uint32_t addr = (x86_abrt << 2) + idt.base;
         if (stack32) {
@@ -1671,7 +1676,7 @@ pmodeint(int num, int soft)
     if ((addr + 7) > idt.limit) {
         if (num == 0x08) {
             /* Triple fault - reset! */
-            softresetx86();
+            softresetx86_from(SOFT_RESET_SHUTDOWN);
             cpu_set_edx();
         } else if (num == 0x0d) {
             op_pmodeint(8, 0);

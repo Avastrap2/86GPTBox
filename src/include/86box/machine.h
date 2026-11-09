@@ -1144,6 +1144,8 @@ extern const device_t vectra52_device;
 extern int             machine_at_vectra52_init(const machine_t *);
 extern int             machine_at_vectra500mt_init(const machine_t *);
 extern int             machine_at_vectra54_init(const machine_t *);
+extern uint32_t        machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val);
+extern int             machine_at_ibm_pc700_init(const machine_t *);
 extern int             machine_at_atlantis_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  thor_device;
@@ -1206,15 +1208,6 @@ extern int             machine_at_ms5124_init(const machine_t *);
 
 /* VLSI Wildcat */
 extern int             machine_at_zeoswildcat_init(const machine_t *);
-
-/* m_at_ibm_pc700.c */
-extern uint32_t        machine_at_ibm_pc700_gpio_handler(uint8_t write, uint32_t val);
-extern int             machine_at_ibm_pc700_init(const machine_t *);
-
-/* m_at_ibm_pc700_power.c */
-#ifdef EMU_DEVICE_H
-extern const device_t  ibm_pc700_power_device;
-#endif
 
 /* m_at_eisa_pci.c */
 /* i430HX */
@@ -1495,6 +1488,10 @@ extern const device_t  optiplexe1_device;
 #endif
 extern int             machine_at_optiplexe1_init(const machine_t *);
 extern int             machine_at_brio83xx_init(const machine_t *);
+#ifdef EMU_DEVICE_H
+extern const device_t  vectravecs7_device;
+#endif
+extern int             machine_at_vectravecs7_init(const machine_t *);
 extern int             machine_at_p6i440e2_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  como_device;
@@ -1520,6 +1517,7 @@ extern int             machine_at_p3bf_init(const machine_t *);
 extern const device_t  optiplexgx1_device;
 #endif
 extern int             machine_at_optiplexgx1_init(const machine_t *);
+extern int             machine_at_vectrave6s8_init(const machine_t *);
 extern int             machine_at_ergox365_init(const machine_t *);
 #ifdef EMU_DEVICE_H
 extern const device_t  ax6bc_device;
@@ -1829,6 +1827,7 @@ extern const device_t  ibmxt86_device;
 #endif
 extern int             machine_ibmxt86_init(const machine_t *);
 extern int             machine_xt_americxt_init(const machine_t *);
+extern int             machine_xt_cp1000_init(const machine_t *);
 extern int             machine_xt_amixt_init(const machine_t *);
 extern int             machine_xt_ataripc3_init(const machine_t *);
 extern int             machine_xt_bw230_init(const machine_t *);

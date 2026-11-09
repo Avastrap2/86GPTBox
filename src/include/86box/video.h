@@ -61,7 +61,7 @@ enum {
     VIDEO_AGP
 };
 
-typedef enum video_font_format_e 
+typedef enum video_font_format_e
 {
     FONT_FORMAT_MDA = 0,
     FONT_FORMAT_PC200 = 1,
@@ -420,9 +420,7 @@ extern const device_t ati28800_wonder1024d_xl_plus_device;
 extern const device_t ati28800k_device;
 extern const device_t ati28800k_spc4620p_device;
 extern const device_t ati28800k_spc6033p_device;
-#    ifdef USE_XL24
 extern const device_t ati28800_wonderxl24_device;
-#    endif /* USE_XL24 */
 
 /* Bochs */
 extern const device_t bochs_svga_device;
@@ -665,9 +663,6 @@ extern const device_t ps1vga_mca_device;
 
 /* 3DFX Voodoo Graphics */
 extern const device_t voodoo_device;
-
-/* PowerVR PCX1/PCX2 */
-extern const device_t powervr_pcx_device;
 extern const device_t voodoo_banshee_pci_device;
 extern const device_t voodoo_banshee_agp_device;
 extern const device_t voodoo_3_1000_device;
@@ -680,6 +675,9 @@ extern const device_t voodoo_3_3000_agp_device;
 extern const device_t voodoo_3_3500_agp_device;
 extern const device_t velocity_100_agp_device;
 extern const device_t velocity_200_agp_device;
+
+/* PowerVR PCX1/PCX2 */
+extern const device_t powervr_pcx_device;
 
 /* Wyse 700 */
 extern const device_t wy700_device;
@@ -695,6 +693,10 @@ extern const device_t tandy_1000sl_video_device;
 /* Hitachi HD44780 character LCD */
 extern const device_t hd44780_device;
 extern const device_t hd44780_cobalt3k_device;
+/* The board's own LCD bus, for an HD44780 whose port is set to it: 'e' has a
+   bit for each E line a cycle drives, bit 0 for E0. */
+extern uint8_t hd44780_bus_read(uint8_t e, int rs);
+extern void    hd44780_bus_write(uint8_t e, int rs, uint8_t val);
 enum {
     HD44780_COLOR_GREEN = 0,
     HD44780_COLOR_BLUE,

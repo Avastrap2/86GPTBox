@@ -34,7 +34,7 @@
 #include <86box/timer.h>
 #include <86box/io.h>
 #include <86box/device.h>
-#include <86box/machine.h>
+#include <86box/chipset.h>
 #include <86box/plat.h>
 #include <86box/plat_unused.h>
 

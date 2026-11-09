@@ -53,6 +53,11 @@ if (CMAKE_C_BYTE_ORDER STREQUAL "BIG_ENDIAN")
     message(FATAL_ERROR "Big-endian builds are not supported.")
 endif()
 
+# Make the build directory ignore itself in git, regardless of its name
+if(NOT CMAKE_BINARY_DIR STREQUAL CMAKE_SOURCE_DIR AND NOT EXISTS "${CMAKE_BINARY_DIR}/.gitignore")
+    file(WRITE "${CMAKE_BINARY_DIR}/.gitignore" "*\n")
+endif()
+
 include(CPack)
 include(CMakeDependentOption)
 include(FetchContent)
@@ -198,13 +203,12 @@ cmake_dependent_option(ISAMEM_BRAT    "BocaRAM/AT"                              
 cmake_dependent_option(OPL4ML         "OPL4-ML daughterboard"                    ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(SIO_DETECT     "Super I/O Detection Helper"               ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(WACOM          "Wacom Input Devices"                      ON    "DEV_BRANCH"  OFF)
-cmake_dependent_option(XL24           "ATI VGA Wonder XL24 (ATI-28800-6)"        ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(VFIO           "Virtual Function I/O"                     ON    "DEV_BRANCH"  OFF)
 cmake_dependent_option(SOFTMODEM      "AC'97 Softmodem"                          ON    "DEV_BRANCH"  OFF)
 
 # Defaults to DEV_BRANCH like the options above, but can also be enabled on its own
 option(RAGE128_MAXX "ATI Rage Fury MAXX" ${DEV_BRANCH})
-option(POWERVR_PCX_DEV "PowerVR PCX: developer/test settings in the device" ${DEV_BRANCH})
+option(POWERVR_PCX_DEV "PowerVR PCX: developer/test settings in the device" OFF)
 
 # Ditto but for Qt
 if(QT)
