@@ -25,6 +25,7 @@ add_library(fdd OBJECT
     fdc_cromemco.c
     fdc_magitronic.c
     fdc_monster.c
+    fdc_qd6500.c
     fdc_pii15xb.c
     fdc_tarbell.c
     fdc_wd179x.c
