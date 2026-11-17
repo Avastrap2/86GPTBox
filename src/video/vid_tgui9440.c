@@ -260,6 +260,7 @@ tgui_remove_io(tgui_t *tgui)
         io_removehandler(0x2142, 0x0002, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_removehandler(0x2144, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_removehandler(0x2148, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
+        io_removehandler(0x214c, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_removehandler(0x2168, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_removehandler(0x2178, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_removehandler(0x217c, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
@@ -294,6 +295,7 @@ tgui_set_io(tgui_t *tgui)
         io_sethandler(0x2142, 0x0002, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_sethandler(0x2144, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_sethandler(0x2148, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
+        io_sethandler(0x214c, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_sethandler(0x2168, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_sethandler(0x2178, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
         io_sethandler(0x217c, 0x0004, tgui_accel_in, tgui_accel_in_w, tgui_accel_in_l, tgui_accel_out, tgui_accel_out_w, tgui_accel_out_l, tgui);
@@ -1724,7 +1726,7 @@ enum {
 
 enum {
     TGUI_SRCCPU    = 0,
-    TGUI_SRCPAT    = 0x02,   /*Source is from pattern*/
+    TGUI_SRCPAT    = 0x02,   /*Pattern is read from display memory at GER_PATLOC * 64 (XFree86 PAT2SCR)*/
     TGUI_SRCDISP   = 0x04,   /*Source is from display*/
     TGUI_PATMONO   = 0x20,   /*Pattern is monochrome and needs expansion*/
     TGUI_SRCMONO   = 0x40,   /*Source is monochrome from CPU and needs expansion*/
@@ -2574,32 +2576,50 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             }
         }
         pattern_data = tgui->accel.fill_pattern;
-    } else if (tgui->accel.flags & TGUI_PATMONO) {
-        for (y = 0; y < 8; y++) {
-            for (x = 0; x < 8; x++) {
-                tgui->accel.mono_pattern[(y * 8) + (7 - x)] = (tgui->accel.pattern[y] & (1 << x)) ? tgui->accel.fg_col : tgui->accel.bg_col;
-            }
-        }
-        pattern_data = tgui->accel.mono_pattern;
     } else {
-        if (tgui->accel.bpp == 0) {
+        /* The 8x8 pattern comes from the pattern registers, or with
+           TGUI_SRCPAT from display memory at GER_PATLOC in 64-byte units
+           (XFree86 tgui driver, PAT2SCR). The Olivetti M4 User Disk uses
+           this for its mono pattern fill test. */
+        const uint8_t *pat    = tgui->accel.pattern;
+        const uint8_t *pat32  = tgui->accel.pattern_32bpp;
+        uint8_t        vpat[0x100];
+
+        if ((tgui->type >= TGUI_9440) && (tgui->accel.flags & TGUI_SRCPAT)) {
+            uint32_t base = (uint32_t) tgui->accel.patloc << 6;
+            int      len  = (tgui->accel.flags & TGUI_PATMONO) ? 8 : (64 << ((tgui->accel.bpp == 3) ? 2 : tgui->accel.bpp));
+
+            for (x = 0; x < len; x++)
+                vpat[x] = svga->vram[(base + x) & tgui->vram_mask];
+            pat   = vpat;
+            pat32 = vpat;
+        }
+
+        if (tgui->accel.flags & TGUI_PATMONO) {
             for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_8[(y * 8) + x] = tgui->accel.pattern[x + y * 8];
+                    tgui->accel.mono_pattern[(y * 8) + (7 - x)] = (pat[y] & (1 << x)) ? tgui->accel.fg_col : tgui->accel.bg_col;
+                }
+            }
+            pattern_data = tgui->accel.mono_pattern;
+        } else if (tgui->accel.bpp == 0) {
+            for (y = 0; y < 8; y++) {
+                for (x = 0; x < 8; x++) {
+                    tgui->accel.pattern_8[(y * 8) + x] = pat[x + y * 8];
                 }
             }
             pattern_data = tgui->accel.pattern_8;
         } else if (tgui->accel.bpp == 1) {
             for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_16[(y * 8) + x] = tgui->accel.pattern[x * 2 + y * 16] | (tgui->accel.pattern[x * 2 + y * 16 + 1] << 8);
+                    tgui->accel.pattern_16[(y * 8) + x] = pat[x * 2 + y * 16] | (pat[x * 2 + y * 16 + 1] << 8);
                 }
             }
             pattern_data = tgui->accel.pattern_16;
         } else {
             for (y = 0; y < 8; y++) {
                 for (x = 0; x < 8; x++) {
-                    tgui->accel.pattern_32[(y * 8) + x] = tgui->accel.pattern_32bpp[x * 4 + y * 32] | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 1] << 8) | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 2] << 16) | (tgui->accel.pattern_32bpp[x * 4 + y * 32 + 3] << 24);
+                    tgui->accel.pattern_32[(y * 8) + x] = pat32[x * 4 + y * 32] | (pat32[x * 4 + y * 32 + 1] << 8) | (pat32[x * 4 + y * 32 + 2] << 16) | (pat32[x * 4 + y * 32 + 3] << 24);
                 }
             }
             pattern_data = tgui->accel.pattern_32;
@@ -2660,7 +2680,13 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
             switch (tgui->accel.flags & (TGUI_SRCMONO | TGUI_SRCDISP)) {
                 case TGUI_SRCCPU:
                     if (count == -1) {
-                        if (svga->crtc[0x21] & 0x20)
+                        /* On the TGUI9440 and later, host data is taken from
+                           writes to the display memory aperture whether or not
+                           linear addressing is on: the Olivetti M4 User Disk
+                           feeds the on-board TGUI9660 through A0000h with
+                           CRTC 21h = 0, and XFree86's tgui driver writes it
+                           to FbBase, which is A0000h in banked mode. */
+                        if ((svga->crtc[0x21] & 0x20) || (tgui->type >= TGUI_9440))
                             tgui->write_blitter = 1;
                         if (tgui->accel.use_src)
                             return;
@@ -2726,8 +2752,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                             tgui->accel.y++;
 
                             if (tgui->accel.y > tgui->accel.size_y) {
-                                if (svga->crtc[0x21] & 0x20)
-                                    tgui->write_blitter = 0;
+                                tgui->write_blitter = 0;
                                 return;
                             }
                             if (tgui->accel.use_src)
@@ -2739,7 +2764,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
 
                 case TGUI_SRCMONO | TGUI_SRCCPU:
                     if (count == -1) {
-                        if (svga->crtc[0x21] & 0x20)
+                        if ((svga->crtc[0x21] & 0x20) || (tgui->type >= TGUI_9440))
                             tgui->write_blitter = 1;
                         if (tgui->accel.use_src)
                             return;
@@ -2794,8 +2819,7 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
                             tgui->accel.y++;
 
                             if (tgui->accel.y > tgui->accel.size_y) {
-                                if (svga->crtc[0x21] & 0x20)
-                                    tgui->write_blitter = 0;
+                                tgui->write_blitter = 0;
                                 return;
                             }
                             if (tgui->accel.use_src)
@@ -3143,8 +3167,9 @@ tgui_accel_command(int count, uint32_t cpu_dat, tgui_t *tgui)
 static void
 tgui_accel_out(uint16_t addr, uint8_t val, void *priv)
 {
-    tgui_t *tgui = (tgui_t *) priv;
-    svga_t *svga = &tgui->svga;
+    tgui_t  *tgui      = (tgui_t *) priv;
+    svga_t  *svga      = &tgui->svga;
+    uint16_t old_ger22 = tgui->accel.ger22;
 
     switch (addr) {
         case 0x2122:
@@ -3486,6 +3511,13 @@ tgui_accel_out(uint16_t addr, uint8_t val, void *priv)
         default:
             break;
     }
+
+    /* tgui_recalctimings() reads GER22 (pitch/clock doubling), so a new
+       value must take effect at once, not at the next CRTC write. The
+       Olivetti M4 User Disk writes CRTC 13h before GER22 and then blits
+       straight away. */
+    if (tgui->accel.ger22 != old_ger22)
+        svga_recalctimings(svga);
 }
 
 static void
@@ -4159,6 +4191,44 @@ tgui_accel_write_fb_l(uint32_t addr, uint32_t val, void *priv)
         svga_writel_linear(addr, val, svga);
 }
 
+/* Banked (A0000h) window: while a CPU-sourced blit waits for data, writes
+   here feed the graphics engine, as through the linear aperture. */
+static void
+tgui_accel_write_bank_b(uint32_t addr, uint8_t val, void *priv)
+{
+    svga_t *svga = (svga_t *) priv;
+    tgui_t *tgui = (tgui_t *) svga->priv;
+
+    if (tgui->write_blitter)
+        tgui_accel_command(8, val << 24, tgui);
+    else
+        svga_write(addr, val, svga);
+}
+
+static void
+tgui_accel_write_bank_w(uint32_t addr, uint16_t val, void *priv)
+{
+    svga_t *svga = (svga_t *) priv;
+    tgui_t *tgui = (tgui_t *) svga->priv;
+
+    if (tgui->write_blitter)
+        tgui_accel_command(16, (((val & 0xff00) >> 8) | ((val & 0x00ff) << 8)) << 16, tgui);
+    else
+        svga_writew(addr, val, svga);
+}
+
+static void
+tgui_accel_write_bank_l(uint32_t addr, uint32_t val, void *priv)
+{
+    svga_t *svga = (svga_t *) priv;
+    tgui_t *tgui = (tgui_t *) svga->priv;
+
+    if (tgui->write_blitter)
+        tgui_accel_command(32, ((val & 0xff000000) >> 24) | ((val & 0x00ff0000) >> 8) | ((val & 0x0000ff00) << 8) | ((val & 0x000000ff) << 24), tgui);
+    else
+        svga_writel(addr, val, svga);
+}
+
 static void
 tgui_mmio_write(uint32_t addr, uint8_t val, void *priv)
 {
@@ -4326,6 +4396,14 @@ tgui_init(const device_t *info)
 
     if (tgui->type == TGUI_9400CXI)
         svga->ramdac = device_add(&tkd8001_ramdac_device);
+
+    if (tgui->type >= TGUI_9440) {
+        svga->write  = tgui_accel_write_bank_b;
+        svga->writew = tgui_accel_write_bank_w;
+        svga->writel = tgui_accel_write_bank_l;
+        mem_mapping_set_handler(&svga->mapping, svga->read, svga->readw, svga->readl,
+                                svga->write, svga->writew, svga->writel);
+    }
 
     mem_mapping_add(&tgui->linear_mapping, 0, 0, svga_read_linear, svga_readw_linear, svga_readl_linear, tgui_accel_write_fb_b, tgui_accel_write_fb_w, tgui_accel_write_fb_l, NULL, MEM_MAPPING_EXTERNAL, svga);
     mem_mapping_add(&tgui->accel_mapping, 0, 0, tgui_accel_read, tgui_accel_read_w, tgui_accel_read_l, tgui_accel_write, tgui_accel_write_w, tgui_accel_write_l, NULL, MEM_MAPPING_EXTERNAL, tgui);
