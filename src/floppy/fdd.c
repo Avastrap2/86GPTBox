@@ -60,6 +60,7 @@
    Bit  8:  invert DENSEL polarity;
    Bit  9:  ignore DENSEL;
    Bit 10:  drive is a PS/2 drive;
+   Bit 11:  drive is an 8" drive;
 */
 #define FLAG_RPM_300       1
 #define FLAG_RPM_360       2
@@ -72,6 +73,7 @@
 #define FLAG_INVERT_DENSEL 256
 #define FLAG_IGNORE_DENSEL 512
 #define FLAG_PS2           1024
+#define FLAG_8INCH         2048
 
 enum {
     FDD_OP_NONE = 0,
@@ -163,6 +165,10 @@ static const struct {
     { 86, FLAG_RPM_300 | FLAG_DS | FLAG_HOLE0 | FLAG_HOLE1 | FLAG_HOLE2 | FLAG_DOUBLE_STEP,                        "3.5\" 2.88M",             "35_2ed"          },
     /* 3.5" ED Dual RPM, Equivalent to TEAC FD-335J */
     { 86, FLAG_RPM_300 | FLAG_RPM_360 | FLAG_DS | FLAG_HOLE0 | FLAG_HOLE1 | FLAG_HOLE2 | FLAG_DOUBLE_STEP,         "3.5\" 2.88M 300/360 RPM", "35_2ed_dualrpm"  },
+    /* 8" single sided, 77 tracks at 360 RPM, Shugart SA800 type */
+    { 80, FLAG_RPM_360 | FLAG_HOLE1 | FLAG_8INCH,                                                                  "8\" single sided",        "8_1"             },
+    /* 8" double sided, Shugart SA850 or Qume DataTrak 8 type */
+    { 80, FLAG_RPM_360 | FLAG_DS | FLAG_HOLE1 | FLAG_8INCH,                                                        "8\" double sided",        "8_2"             },
     /* End of list */
     { -1, -1,                                                                                                      "",                        ""                }
 };
@@ -672,6 +678,12 @@ fdd_is_525(void *priv)
 }
 
 int
+fdd_type_is_8inch(int type)
+{
+    return drive_types[type].flags & FLAG_8INCH;
+}
+
+int
 fdd_supports_360_rpm(void *priv)
 {
     fdd_drive_t *drv = (fdd_drive_t *) priv;
@@ -1084,6 +1096,10 @@ fdd_poll(void *priv)
 
     if (drv->fmt.poll)
         drv->fmt.poll((void *) drv);
+
+    /* Drives on another kind of controller report nothing to it. */
+    if (drv->ctrl == NULL)
+        return;
 
     if (drv->changed)
         drv->ctrl->diskchange_interrupt(drv->ctrl_priv, drv->id);

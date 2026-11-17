@@ -22,10 +22,13 @@ add_library(fdd OBJECT
     fdc_common_upd765.c
     fdc_common_ctrl.c
     fdc_compaticard.c
+    fdc_cromemco.c
     fdc_magitronic.c
     fdc_monster.c
     fdc_qd6500.c
     fdc_pii15xb.c
+    fdc_tarbell.c
+    fdc_wd179x.c
     fdd.c
     fdi2raw.c
     fdd_common.c
