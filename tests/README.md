@@ -271,6 +271,12 @@ Build with `BUILD_TESTING=ON`, then run `ctest --test-dir build --output-on-fail
 
 The tests include `src/mem/mem.c`, with and without `USE_DYNAREC`; the interpreter target tests the non-dynarec branches, it does not run an interpreter. They check direct RAM access, code at either end of a page, the page being compiled, several virtual aliases of one page, unrelated pages with the same translation bias, the highest virtual page and the replacement ring wrapping around. Invalidating a physical page must work with an unaligned address and with a zero or unrelated virtual address. They are lookup and dirty-tracking tests, not a self-modifying code test in a guest.
 
+# IDE task file
+
+Build `ide_task_file_test` with `BUILD_TESTING=ON`, then run `ctest --test-dir build --output-on-failure -R '^ide_task_file$'`.
+
+The test includes `src/disk/hdc_ide.c` and drives a board and a hard disc through the task-file registers, with an image whose sectors start with their own numbers. A command written while a PIO data-in transfer is unfinished must run on the registers written for it, as when HWiNFO32 reads only part of IDENTIFY DEVICE and Windows 95 then issues its next read; a transfer the host finishes keeps its own registers.
+
 # Sony CDU31A / CDU33A
 
 Build `sony_cdrom_tests` with `BUILD_TESTING=ON`, then run:
