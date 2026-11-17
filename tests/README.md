@@ -265,6 +265,12 @@ Build `mouse_microtouch_tests` with `BUILD_TESTING=ON`, then run:
 ctest --test-dir build --output-on-failure -R '^MicroTouch\.'
 ```
 
+# Memory write lookups
+
+Build with `BUILD_TESTING=ON`, then run `ctest --test-dir build --output-on-failure -R '^mem_write_lookup_'`. The two `mem_write_lookup_*_test` targets need interprocedural optimization, which removes the device and platform functions the lookups do not reach; without it they are skipped.
+
+The tests include `src/mem/mem.c`, with and without `USE_DYNAREC`; the interpreter target tests the non-dynarec branches, it does not run an interpreter. They check direct RAM access, code at either end of a page, the page being compiled, several virtual aliases of one page, unrelated pages with the same translation bias, the highest virtual page and the replacement ring wrapping around. Invalidating a physical page must work with an unaligned address and with a zero or unrelated virtual address. They are lookup and dirty-tracking tests, not a self-modifying code test in a guest.
+
 # Sony CDU31A / CDU33A
 
 Build `sony_cdrom_tests` with `BUILD_TESTING=ON`, then run:
