@@ -6,18 +6,21 @@
  *
  *          This file is part of the 86Box distribution.
  *
- *          Implementation of the IBM PC 730/750 Rapid Resume power
- *          controller, a preprogrammed Philips 83C750 (IBM US patent
- *          5,530,879).
+ *          Implementation of the IBM Rapid Resume power controller of
+ *          the PC 730/750, a preprogrammed Philips 83C750, and of the
+ *          Aptiva 2144/2168 (IBM US patent 5,530,879 describes the
+ *          Aptiva design).
  *
  *          Its program is not available, so the commands are taken
- *          from how the LQKT47A BIOS uses them. A command is sent as
- *          nibbles in bits 3-0 of port 48h with bit 4 set. Ch, Dh and
- *          Eh take a data byte; for the others, bits 7-6 select clear,
- *          set or read of a flag in the 80C51's bit-addressable RAM,
- *          and a read returns the flag in bit 0 of port 48h. Bit 0 of
- *          port 49h is the patent's PROC_RDY ANDed with its CMD_STATE#
- *          heartbeat.
+ *          from how the PC 7x0 LQKT47A and the Aptiva 96G0926 BIOSes
+ *          use them; both drive it the same way, the PC 7x0 at ports
+ *          48h/49h and the Aptiva at ECh/EDh. A command is sent as
+ *          nibbles in bits 3-0 of the even port with bit 4 set. Ch, Dh
+ *          and Eh take a data byte; for the others, bits 7-6 select
+ *          clear, set or read of a flag in the 80C51's bit-addressable
+ *          RAM, and a read returns the flag in bit 0 of the even port.
+ *          Bit 0 of the odd port is the patent's PROC_RDY ANDed with
+ *          its CMD_STATE# heartbeat.
  *
  * Authors: Avastrap2, <110710503+Avastrap2@users.noreply.github.com>
  *
@@ -85,7 +88,7 @@ ibm_pc700_power_command(ibm_pc700_power_t *dev)
         case 0x00:
             *flags &= ~mask;
             if (dev->cmd == PWR_FLAG_POWER) {
-                ibm_pc700_power_log("IBM PC 700 power: Supply off\n");
+                ibm_pc700_power_log("IBM Rapid Resume power: Supply off\n");
                 plat_power_off();
             }
             break;
@@ -175,14 +178,16 @@ ibm_pc700_power_close(void *priv)
 }
 
 static void *
-ibm_pc700_power_init(UNUSED(const device_t *info))
+ibm_pc700_power_init(const device_t *info)
 {
-    ibm_pc700_power_t *dev = (ibm_pc700_power_t *) calloc(1, sizeof(ibm_pc700_power_t));
+    ibm_pc700_power_t *dev  = (ibm_pc700_power_t *) calloc(1, sizeof(ibm_pc700_power_t));
+    /* The port pair is passed as the device's parameter: 48h on the PC 7x0, ECh on the Aptiva. */
+    uint16_t           base = (info->local & 0xfffe) ? (info->local & 0xfffe) : 0x0048;
 
     ibm_pc700_power_set_flag(dev, PWR_FLAG_POWER);
     ibm_pc700_power_set_flag(dev, PWR_FLAG_SWITCH);
 
-    io_sethandler(0x0048, 0x0002,
+    io_sethandler(base, 0x0002,
                   ibm_pc700_power_read, NULL, NULL, ibm_pc700_power_write, NULL, NULL, dev);
 
     return dev;

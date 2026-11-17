@@ -37,6 +37,7 @@ add_library(chipset OBJECT
     compaq_386.c
     contaq_82c59x.c
     cs4031.c
+    ftdi_82c3480.c
     grid1520.c
     gc100.c
     headland.c

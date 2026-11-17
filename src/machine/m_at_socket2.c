@@ -209,6 +209,42 @@ machine_at_winbios1429_init(const machine_t *model)
     return ret;
 }
 
+/* FTDI 82C3480 */
+int
+machine_at_aptiva2144_init(const machine_t *model)
+{
+    int ret;
+
+    /* The lower 64 KB hold compressed modules, the video BIOS among them. */
+    ret = bios_load_linear("roms/machines/aptiva2144/96g0926.bin",
+                           0x000e0000, 131072, 0);
+
+    if (bios_only || !ret)
+        return ret;
+
+    machine_at_common_init(model);
+
+    device_add(&ftdi_82c3480_device);
+
+    device_add_params(machine_get_kbc_device(machine), (void *) model->kbc_params);
+
+    /*
+       The primary IDE channel is the OPTi 82C611's on the local bus, the
+       secondary the UM82C863F's on the ISA bus (the BIOS Setup lists drives
+       1-2 on the local bus and 3-4 on the ISA bus).
+     */
+    device_add(machine_get_ide_device(machine));
+    device_add_params(&um866x_device, (void *) (UM82C863F | UM866X_IDE_SEC));
+
+    /* The Rapid Resume power controller, at ECh/EDh on this board. */
+    device_add_params(&ibm_pc700_power_device, (void *) 0x00ec);
+
+    if (gfxcard[0] == VID_INTERNAL)
+        device_add(machine_get_vid_device(machine));
+
+    return ret;
+}
+
 /* i420TX */
 int
 machine_at_pci400ca_init(const machine_t *model)
