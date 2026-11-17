@@ -310,7 +310,10 @@ um866x_init(UNUSED(const device_t *info))
     lpt_set_cnfgb_readout(dev->lpt, 0x00);
 
     dev->ide = info->local & 0xff;
-    if (dev->ide < IDE_BUS_MAX)
+    /* The IDE interface as the secondary needs that board, not the primary. */
+    if (dev->ide == UM866X_IDE_SEC)
+        device_add(&ide_isa_sec_device);
+    else if (dev->ide < IDE_BUS_MAX)
         device_add(&ide_isa_device);
 
     dev->max_reg = info->local >> 8;

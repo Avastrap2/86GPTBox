@@ -244,6 +244,7 @@ enum {
     MACHINE_CHIPSET_CONTAQ_82C596,
     MACHINE_CHIPSET_CONTAQ_82C597,
     MACHINE_CHIPSET_CYRIX_CX5530,
+    MACHINE_CHIPSET_FTDI_82C3480,
     MACHINE_CHIPSET_IMS_8848,
     MACHINE_CHIPSET_INTEL_82335,
     MACHINE_CHIPSET_INTEL_420TX,
@@ -854,6 +855,9 @@ extern int             machine_at_pb410a_init(const machine_t *);
 extern int             machine_at_ali1429_init(const machine_t *);
 extern int             machine_at_acera1g_init(const machine_t *);
 extern int             machine_at_winbios1429_init(const machine_t *);
+
+/* FTDI 82C3480 */
+extern int             machine_at_aptiva2144_init(const machine_t *);
 
 /* i420TX */
 extern int             machine_at_pci400ca_init(const machine_t *);

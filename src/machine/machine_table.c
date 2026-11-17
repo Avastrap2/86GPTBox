@@ -109,6 +109,7 @@ const machine_filter_t machine_chipsets[] = {
     { "Contaq 82C596",              MACHINE_CHIPSET_CONTAQ_82C596       },
     { "Contaq 82C597",              MACHINE_CHIPSET_CONTAQ_82C597       },
     { "Cyrix MediaGX MMX/Cx5530",   MACHINE_CHIPSET_CYRIX_CX5530        },
+    { "FTDI 82C3480",               MACHINE_CHIPSET_FTDI_82C3480        },
     { "IMS 8848",                   MACHINE_CHIPSET_IMS_8848            },
     { "Intel 82335",                MACHINE_CHIPSET_INTEL_82335         },
     { "Intel 420TX",                MACHINE_CHIPSET_INTEL_420TX         },
@@ -11048,6 +11049,58 @@ const machine_t machines[] = {
         .vid_device               = NULL,
         .snd_device               = NULL,
         .net_device               = NULL,
+        .aliases                  = { "" }
+    },
+    /* Has a discrete 8042 with PS/2 keyboard and mouse ports; the BIOS is treated as
+       wanting IBM PS/2 (Type 1) KBC firmware, as on the PS/ValuePoint.
+       With a single 1 MB SIMM the 96G0926 BIOS fails POST (201, 164, 107) and reports
+       640 KB; from 2 MB up it sizes the memory correctly. */
+    {
+        .name              = "[FTDI 82C3480] IBM Aptiva 2144/2168",
+        .internal_name     = "aptiva2144",
+        .type              = MACHINE_TYPE_SOCKET2,
+        .chipset           = MACHINE_CHIPSET_FTDI_82C3480,
+        .init              = machine_at_aptiva2144_init,
+        .p1_handler        = machine_generic_p1_handler,
+        .gpio_handler      = NULL,
+        .available_flag    = MACHINE_AVAILABLE,
+        .gpio_acpi_handler = NULL,
+        .cpu               = {
+            .package     = CPU_PKG_SOCKET3,
+            .block       = CPU_BLOCK_NONE,
+            .min_bus     = 25000000,
+            .max_bus     = 33333333,
+            .min_voltage = 5000,
+            .max_voltage = 5000,
+            .min_multi   = 0,
+            .max_multi   = 0
+        },
+        .bus_flags = MACHINE_PS2,
+        .flags     = MACHINE_IDE_DUAL | MACHINE_VIDEO | MACHINE_APM,
+        .ram       = {
+            .min  = 2048,
+            .max  = 65536,
+            .step = 1024
+        },
+        .nvrmask                  = 127,
+        .jumpered_ecp_dma         = 0,
+        .default_jumpered_ecp_dma = -1,
+        .kbc_device               = &kbc_at_device,
+        .kbc_params               = 0x00000000,
+        .nvr_device               = &nvr_at_device,
+        .nvr_params               = NVR_AT_ZERO_DEFAULT,
+        .sio_device               = NULL,
+        .sio_params               = 0x00000000,
+        .kbc_p1                   = 0x00000cf0,
+        .gpio                     = 0xffffffff,
+        .gpio_acpi                = 0xffffffff,
+        .device                   = NULL,
+        .kbd_device               = NULL,
+        .fdc_device               = NULL,
+        .vid_device               = &gd5426_onboard_device,
+        .snd_device               = NULL,
+        .net_device               = NULL,
+        .ide_device               = &ide_opti611_vlb_device,
         .aliases                  = { "" }
     },
     /* Has AMI 'H' KBC.  */

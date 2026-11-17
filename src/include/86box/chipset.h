@@ -67,6 +67,9 @@ extern const device_t cs8220_device;
 extern const device_t cs8230_device;
 extern const device_t cs4031_device;
 
+/* FTDI */
+extern const device_t ftdi_82c3480_device;
+
 /* G2 */
 extern const device_t gc100_device;
 extern const device_t gc100a_device;
