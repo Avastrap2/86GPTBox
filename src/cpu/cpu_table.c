@@ -524,6 +524,51 @@ const cpu_family_t cpu_families[] = {
         }
     },
     {
+        /* SCP-200B: an 8284 divides the board's 24 MHz oscillator by three or
+           six, selected by switch S1-3 (manual 2.1). */
+        .package       = CPU_PKG_8086_SCP,
+        .manufacturer  = "Intel",
+        .name          = "8086",
+        .internal_name = "8086_scp",
+        .cpus          = (const CPU[]) {
+            {
+                .name               = "4",
+                .cpu_type           = CPU_8086,
+                .fpus               = fpus_8088,
+                .rspeed             = 4000000,
+                .multi              = 1,
+                .voltage            = 5000,
+                .edx_reset          = 0,
+                .cpuid_model        = 0,
+                .cyrix_id           = 0,
+                .cpu_flags          = 0,
+                .mem_read_cycles    = 0,
+                .mem_write_cycles   = 0,
+                .cache_read_cycles  = 0,
+                .cache_write_cycles = 0,
+                .atclk_div          = 1
+            },
+            {
+                .name               = "8",
+                .cpu_type           = CPU_8086,
+                .fpus               = fpus_8088,
+                .rspeed             = 8000000,
+                .multi              = 1,
+                .voltage            = 5000,
+                .edx_reset          = 0,
+                .cpuid_model        = 0,
+                .cyrix_id           = 0,
+                .cpu_flags          = 0,
+                .mem_read_cycles    = 0,
+                .mem_write_cycles   = 0,
+                .cache_read_cycles  = 0,
+                .cache_write_cycles = 0,
+                .atclk_div          = 1
+            },
+            { .name = "", 0 }
+        }
+    },
+    {
         .package       = CPU_PKG_188,
         .manufacturer  = "Intel",
         .name          = "80188",

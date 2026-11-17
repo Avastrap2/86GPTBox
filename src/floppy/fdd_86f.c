@@ -1253,6 +1253,25 @@ d86f_put_bit(void *priv, const int side, const int bit)
     }
 }
 
+uint16_t
+d86f_last_word(void *priv, const int side)
+{
+    fdd_drive_t * drv = (fdd_drive_t *) priv;
+    const d86f_t *dev = (d86f_t *) drv->d86f_priv;
+
+    return dev->last_word[side];
+}
+
+/* Whether the cell under the head is the one at the index hole. */
+int
+d86f_at_index(void *priv, const int side)
+{
+    fdd_drive_t * drv = (fdd_drive_t *) priv;
+    const d86f_t *dev = (d86f_t *) drv->d86f_priv;
+
+    return dev->track_pos == drv->d86f_handler.index_hole_pos(drv, side);
+}
+
 static uint8_t
 decodefm(UNUSED(void *priv), const uint16_t dat)
 {
@@ -2667,6 +2686,13 @@ d86f_poll(void *priv)
     int side = fdd_get_head(drv);
     if (!fdd_is_double_sided(drv))
         side = 0;
+
+    /* Another kind of controller works the bits itself. */
+    if (drv->bit_ctrl != NULL) {
+        drv->bit_ctrl(drv->bit_ctrl_priv, drv, side);
+        d86f_advance_bit(drv, side);
+        return;
+    }
 
     const int mfm = drv->ctrl->is_mfm(drv->ctrl_priv);
 

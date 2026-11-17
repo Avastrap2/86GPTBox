@@ -94,6 +94,7 @@ extern void pic_ibm5140_diag_write(uint8_t value);
 extern void pic_ibm5140_diag_enable(int enabled);
 extern uint8_t pic_irq_ack_instance(pic_t *dev);
 extern void pic_init_tandy2k(void);
+extern void pic_init_scp300f(void);
 extern void pic2_init(void);
 extern void pic_reset(void);
 
@@ -116,6 +117,8 @@ extern int     picinterrupt(void);
 #define PIC_FREEZE                      0x02
 #define PIC_MASTER_CLEAR                0x04
 #define PIC_IBM5140                 0x08
+/* An 8259A made before 1985, whose Automatic EOI does not work as a slave. */
+#define PIC_EARLY_8259A             0x10
 
 /* Legacy defines. */
 #define picint(num)                     picint_common(num, PIC_IRQ_EDGE,  1, NULL)
